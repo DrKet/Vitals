@@ -18,6 +18,7 @@
 - **Memory is reported as `phys_footprint`**, never RSS.
 - **Package root:** `VitalsCore/`. All paths in this plan are relative to `/Users/george/Developer/Vitals`.
 - **Test command:** `cd VitalsCore && swift test`.
+- **Build and test output must be pristine** — no warnings. In particular `String(cString:)` is deprecated in Swift 6: decode C strings with `String(decoding:as: UTF8.self)` after truncating at the first NUL byte. Where a code block below still shows `String(cString:)`, use the non-deprecated form instead; the surrounding logic is unchanged.
 
 ## Out of scope for this plan
 
