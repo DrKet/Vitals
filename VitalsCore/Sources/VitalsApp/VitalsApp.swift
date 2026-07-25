@@ -15,10 +15,10 @@ struct VitalsApp: App {
         WindowGroup("Vitals") {
             Group {
                 if let store {
-                    Text("CPU: \(store.cpu.map { "\(Int($0.total * 100))%" } ?? "—")")
-                        .task { await store.stream(.cpu) }
+                    AppShell(store: store)
                 } else if let startupError {
                     Text(startupError)
+                        .padding()
                 } else {
                     ProgressView()
                 }
