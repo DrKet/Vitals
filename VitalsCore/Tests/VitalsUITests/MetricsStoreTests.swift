@@ -85,14 +85,21 @@ struct MetricsStoreTests {
         let second = Task { await store.stream(.cpu) }
         try await waitUntil { store.cpuHistory.count >= 6 }
 
+        // Both snapshots are taken back-to-back, before cancelling either
+        // task. `Task.cancel()` is asynchronous — the stream doesn't stop
+        // instantly — so if `elapsedTicks` were read after cancelling (as
+        // this used to do), ticks landing in that window would inflate
+        // `elapsedTicks` relative to the already-captured `observed`,
+        // weakening the assertion in the passing direction and letting a
+        // real duplication bug slip through.
         let observed = store.cpuHistory.count
+        let elapsedTicks = await engine.sampleCount(for: .cpu)
         first.cancel()
         second.cancel()
 
         // Both tasks ran for the same wall-clock window against a 5ms interval.
         // If each subscriber appended independently, history would be ~2x the
         // number of ticks that actually elapsed.
-        let elapsedTicks = await engine.sampleCount(for: .cpu)
         #expect(observed <= elapsedTicks)
     }
 
@@ -122,7 +129,13 @@ struct MetricsStoreTests {
     }
 }
 
-/// Vends prerecorded samples, then throws so the series goes quiet.
+/// Vends prerecorded samples, then repeats the final one forever once
+/// exhausted — it only throws if constructed with an empty array to begin
+/// with, in which case there is no "final sample" to fall back to.
+/// `historyIsCapped` depends on the repeating behaviour: it needs the stream
+/// to keep producing ticks past its 100 recorded samples so history actually
+/// fills past the cap, rather than the series going quiet once the recording
+/// runs out.
 final class ValueBox: @unchecked Sendable {
     private let lock = NSLock()
     private var remaining: [CPULoadSample]

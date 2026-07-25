@@ -14,15 +14,17 @@ struct GlassSurfaceTests {
                 Text("18%").font(Vitals.Typography.readout)
             }
         }
-        let url = try renderPNG(panel, size: CGSize(width: 240, height: 140), named: "glass-panel")
-        #expect(FileManager.default.fileExists(atPath: url.path))
+        // No region probe: the fallback material (`.regularMaterial`, see
+        // `renderPNG`'s doc comment) fills the whole panel, so there is no
+        // sub-region that would distinguish a working panel from a broken
+        // one any better than the harness's own blank check already does.
+        _ = try renderPNG(panel, size: CGSize(width: 240, height: 140), named: "glass-panel")
     }
 
     @Test("the surface modifier composes onto an arbitrary view")
     func modifierComposes() throws {
         let view = Text("42").padding().glassSurface()
-        let url = try renderPNG(view, size: CGSize(width: 120, height: 80), named: "glass-modifier")
-        #expect(FileManager.default.fileExists(atPath: url.path))
+        _ = try renderPNG(view, size: CGSize(width: 120, height: 80), named: "glass-modifier")
     }
 
     @Test("real glass is the default; only the harness turns it off")

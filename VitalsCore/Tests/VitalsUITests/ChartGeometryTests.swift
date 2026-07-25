@@ -96,8 +96,22 @@ struct ChartGeometryTests {
     @Test("values above the bound are clamped inside the rect")
     func valuesAboveBoundAreClamped() {
         let rect = CGRect(x: 0, y: 0, width: 100, height: 50)
-        let points = ChartGeometry.points([2.0], in: rect, upperBound: 1.0)
+        // Multi-value, not just a single point: an earlier version of this
+        // test only exercised the single-value branch, which could not catch
+        // a clamp that broke for anything past index 0.
+        let points = ChartGeometry.points([2.0, 3.0, 0.5], in: rect, upperBound: 1.0)
+        #expect(points.count == 3)
         #expect(points[0].y == 0)
+        #expect(points[1].y == 0)
+        #expect(points[2].y == 25)
+    }
+
+    @Test("a negative value is clamped to the baseline, never drawing below the rect")
+    func negativeValuesAreClampedToBaseline() {
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 50)
+        let points = ChartGeometry.points([-1.0, -0.5], in: rect, upperBound: 1.0)
+        #expect(points[0].y == rect.maxY)
+        #expect(points[1].y == rect.maxY)
     }
 
     // MARK: sampleX

@@ -16,6 +16,10 @@ public struct MetricTile: View {
 
     /// An absent reading shows an em dash. Never "0", never blank — a monitor
     /// that cannot measure something must not appear to have measured zero.
+    ///
+    /// House rule, split by shape: large numeric readouts (this) use the em
+    /// dash; labelled label/value rows (`StatRow.displayValue`) use the word
+    /// "Unavailable". Both must be styled as absence, never as a reading.
     public static func displayValue(_ value: String?) -> String {
         value ?? "—"
     }

@@ -4,6 +4,12 @@ public enum ChartStyle: Sendable, Equatable {
     /// Smoothed gradient bands. The house style.
     case area(stacked: Bool)
     /// Discrete bars, colour-ramped by load. Reads better at small sizes.
+    ///
+    /// Known limitation: `drawHistogram` only renders `bands.first` — with
+    /// more than one series, every band after the first is silently dropped.
+    /// No UI reaches multi-series histogram mode yet, but the spec allows
+    /// histogram as a selectable style on any chart, and a four-way stack
+    /// (Memory) would hit this today if wired up.
     case histogram
 
     /// The spacing model this style renders samples with. The crosshair uses
@@ -82,7 +88,13 @@ public struct MetricChart: View {
 
     @ViewBuilder
     private func crosshair(in rect: CGRect) -> some View {
-        let sampleCount = series.map(\.values.count).max() ?? 0
+        // Derived from `resolvedBands()` — the same values `body`'s `Canvas`
+        // paints — rather than the raw series lengths. In stacked area mode
+        // `ChartGeometry.stack` truncates ragged series to their shortest
+        // common length, so a count taken from the raw series (as this used
+        // to do) could exceed what was actually drawn, letting the crosshair
+        // land on a sample the renderer never painted.
+        let sampleCount = resolvedBands().map(\.count).max() ?? 0
         let spacing = style.spacing
 
         if let hoverX,
@@ -130,7 +142,11 @@ public struct MetricChart: View {
     }
 
     /// Stacked mode accumulates; unstacked draws each series against the baseline.
-    private func resolvedBands() -> [[Double]] {
+    ///
+    /// Internal rather than private so tests can confirm the crosshair's
+    /// sample count (derived from this) can never disagree with what
+    /// actually got painted — see `MetricChartTests`.
+    func resolvedBands() -> [[Double]] {
         switch style {
         case .area(let stacked) where stacked:
             return ChartGeometry.stack(series)
@@ -156,7 +172,13 @@ public struct MetricChart: View {
         in context: inout GraphicsContext,
         rect: CGRect
     ) {
-        // Painted back to front so a lower band never hides the one beneath it.
+        // Painted back to front (highest index first) so series 0 is painted
+        // last. Translucent fills (0.45 alpha fading to 0) are what actually
+        // keep every band visible regardless of paint order — this ordering
+        // instead controls the opaque strokes and the live dot: series 0's
+        // stroke ends up on top of every other band's, and its live dot
+        // (drawn only for index == 0) is never occluded by a band painted
+        // after it.
         for (index, values) in bands.enumerated().reversed() {
             let color = colors.isEmpty ? Vitals.Palette.cpu : colors[index % colors.count]
             let points = ChartGeometry.points(values, in: rect, upperBound: bound)

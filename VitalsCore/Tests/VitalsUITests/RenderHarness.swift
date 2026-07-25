@@ -47,6 +47,44 @@ func renderPNG(
     return url
 }
 
+/// True when any pixel inside `region` (in the point-space coordinates the
+/// view was rendered at, e.g. the `size` passed to `renderPNG`) differs from
+/// the image's background colour.
+///
+/// A narrower complement to `renderPNG`'s whole-image blank check. That check
+/// only proves *something* painted somewhere — for a view like a chart, where
+/// gridlines paint unconditionally across the full width, "something painted
+/// somewhere" is true even if the data-driven drawing (bars, areas) is
+/// completely broken. A region probe lets a test assert that a specific area
+/// — one gridlines don't reach, or one only a correctly-computed value could
+/// reach — has real content.
+///
+/// Deliberately as simple as `isNotBlank`: still just "does anything differ
+/// from the background," scoped to a sub-rectangle. It cannot judge whether
+/// content looks *right*, only that some content exists where it must.
+@MainActor
+func regionHasContent(at url: URL, region: CGRect, scale: CGFloat = 2) throws -> Bool {
+    let data = try Data(contentsOf: url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let background = bitmap.colorAt(x: 0, y: 0)
+    let minX = max(Int((region.minX * scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return false }
+
+    for x in minX..<maxX {
+        for y in minY..<maxY {
+            if bitmap.colorAt(x: x, y: y) != background { return true }
+        }
+    }
+    return false
+}
+
 /// True when the bitmap contains more than one distinct pixel value.
 ///
 /// Deliberately weak: it cannot judge whether a render looks *right*, only that
