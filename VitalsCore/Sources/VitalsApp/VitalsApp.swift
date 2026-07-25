@@ -7,6 +7,9 @@ import VitalsUI
 struct VitalsApp: App {
     @State private var store: MetricsStore?
     @State private var startupError: String?
+    /// Set synchronously before the first suspension point, so a second window
+    /// opening mid-launch cannot run startup a second time.
+    @State private var didStart = false
 
     var body: some Scene {
         WindowGroup("Vitals") {
@@ -27,7 +30,8 @@ struct VitalsApp: App {
     }
 
     private func start() async {
-        guard store == nil, startupError == nil else { return }
+        guard !didStart else { return }
+        didStart = true
         do {
             let profile = try HardwareProfile.detect()
             let engine = MetricsEngine()

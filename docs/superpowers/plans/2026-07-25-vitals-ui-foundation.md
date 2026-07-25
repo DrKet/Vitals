@@ -316,6 +316,7 @@ Expected: FAIL — `no such module 'VitalsUI'`.
 Create `VitalsCore/Sources/VitalsUI/MetricsStore.swift`:
 
 ```swift
+import Foundation
 import MetricsEngine
 import Observation
 import SystemMetrics

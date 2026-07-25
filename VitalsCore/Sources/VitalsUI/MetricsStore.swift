@@ -1,3 +1,4 @@
+import Foundation
 import MetricsEngine
 import Observation
 import SystemMetrics
@@ -33,6 +34,11 @@ public final class MetricsStore {
     private let engine: MetricsEngine
     private let historyLimit: Int
 
+    /// Newest sample timestamp already folded into state, per series. Guards
+    /// against the same tick being applied twice when two views subscribe to
+    /// one series concurrently.
+    private var lastAppliedTimestamp: [SeriesKey: TimeInterval] = [:]
+
     public init(engine: MetricsEngine, profile: HardwareProfile?, historyLimit: Int = 600) {
         self.engine = engine
         self.profile = profile
@@ -50,6 +56,18 @@ public final class MetricsStore {
     }
 
     private func apply(_ value: MetricValue, for key: SeriesKey) {
+        // Two views can legitimately subscribe to the same series at once — the
+        // Overview grid and a hardware page overlap during a sidebar switch, and
+        // both call `stream(_:)`. The engine fans out one sample to every
+        // subscriber, so without this each tick would be appended once per
+        // subscriber and the chart would show duplicated history. Keying on the
+        // sample's own timestamp makes the store idempotent no matter how many
+        // streams are open.
+        guard value.timestamp > (lastAppliedTimestamp[key] ?? -.greatestFiniteMagnitude) else {
+            return
+        }
+        lastAppliedTimestamp[key] = value.timestamp
+
         // A payload of an unexpected type is dropped rather than crashing or
         // substituted with a zero — an unreadable series shows as absent.
         switch key {
@@ -69,9 +87,12 @@ public final class MetricsStore {
     }
 
     private func append<Sample>(_ sample: Sample, to history: inout [Sample]) {
+        // `max(historyLimit, 1)` so a nonsensical limit trims to one sample
+        // rather than trapping in `removeFirst` with a count past the end.
+        let limit = max(historyLimit, 1)
         history.append(sample)
-        if history.count > historyLimit {
-            history.removeFirst(history.count - historyLimit)
+        if history.count > limit {
+            history.removeFirst(history.count - limit)
         }
     }
 }

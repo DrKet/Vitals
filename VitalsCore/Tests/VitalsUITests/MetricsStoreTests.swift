@@ -73,6 +73,41 @@ struct MetricsStoreTests {
         #expect(store.cpuHistory.isEmpty)
     }
 
+    @Test("two concurrent subscribers to one series do not duplicate its history")
+    func concurrentSubscribersDoNotDuplicateHistory() async throws {
+        // The Overview grid and a hardware page overlap during a sidebar switch,
+        // and both stream .cpu. The engine fans one sample out to both, so the
+        // store must fold each tick in exactly once.
+        let engine = await engineYielding(Array(repeating: Self.load(0.3), count: 200))
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let first = Task { await store.stream(.cpu) }
+        let second = Task { await store.stream(.cpu) }
+        try await waitUntil { store.cpuHistory.count >= 6 }
+
+        let observed = store.cpuHistory.count
+        first.cancel()
+        second.cancel()
+
+        // Both tasks ran for the same wall-clock window against a 5ms interval.
+        // If each subscriber appended independently, history would be ~2x the
+        // number of ticks that actually elapsed.
+        let elapsedTicks = await engine.sampleCount(for: .cpu)
+        #expect(observed <= elapsedTicks)
+    }
+
+    @Test("a nonsensical history limit trims instead of trapping")
+    func nonsensicalLimitDoesNotTrap() async throws {
+        let engine = await engineYielding(Array(repeating: Self.load(0.1), count: 20))
+        let store = MetricsStore(engine: engine, profile: nil, historyLimit: 0)
+
+        let task = Task { await store.stream(.cpu) }
+        try await waitUntil { store.cpuHistory.isEmpty == false }
+        task.cancel()
+
+        #expect(store.cpuHistory.count == 1)
+    }
+
     @Test("cancelling the streaming task releases the engine subscription")
     func cancellationReleasesSubscription() async throws {
         let engine = await engineYielding(Array(repeating: Self.load(0.1), count: 100))
