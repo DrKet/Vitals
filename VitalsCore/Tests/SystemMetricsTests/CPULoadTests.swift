@@ -96,10 +96,40 @@ struct CPULoadTests {
     }
 
     @Test("live system load reports a plausible uptime and load average")
-    func liveSystemLoad() {
+    func liveSystemLoad() throws {
         let load = SystemLoad.current()
         #expect(load.uptimeSeconds > 0)
-        #expect(load.loadAverage1 >= 0)
-        #expect(load.loadAverage15 >= 0)
+        let avg1 = try #require(load.loadAverage1)
+        let avg15 = try #require(load.loadAverage15)
+        #expect(avg1 >= 0)
+        #expect(avg15 >= 0)
+    }
+
+    @Test("nil load averages are distinct from zero")
+    func nilLoadAveragesDistinctFromZero() {
+        // Construct with nil averages
+        let nilLoad = SystemLoad(
+            uptimeSeconds: 1000,
+            loadAverage1: nil,
+            loadAverage5: nil,
+            loadAverage15: nil
+        )
+        #expect(nilLoad.loadAverage1 == nil)
+        #expect(nilLoad.loadAverage5 == nil)
+        #expect(nilLoad.loadAverage15 == nil)
+
+        // Construct with zero averages
+        let zeroLoad = SystemLoad(
+            uptimeSeconds: 1000,
+            loadAverage1: 0,
+            loadAverage5: 0,
+            loadAverage15: 0
+        )
+        #expect(zeroLoad.loadAverage1 == 0)
+        #expect(zeroLoad.loadAverage5 == 0)
+        #expect(zeroLoad.loadAverage15 == 0)
+
+        // Verify they are not equal
+        #expect(nilLoad != zeroLoad)
     }
 }
