@@ -747,8 +747,14 @@ struct ChartGeometryTests {
             CGPoint(x: 50, y: 0), CGPoint(x: 75, y: 50),
         ]
         let bounds = ChartGeometry.smoothPath(through: points).boundingRect
-        #expect(bounds.minY >= -10)
-        #expect(bounds.maxY <= 60)
+
+        // The bound is deliberately loose enough to be independent of whether
+        // `boundingRect` includes control points: at tension 0.25 the highest
+        // control point is y=62.5, while classic tension 0.5 would put it at
+        // y=75. So this still fails if the smoothing is retuned to overshoot,
+        // which is the regression it exists to catch.
+        #expect(bounds.minY >= -15)
+        #expect(bounds.maxY <= 65)
     }
 }
 ```
