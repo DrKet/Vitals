@@ -933,9 +933,36 @@ func renderPNG(
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let url = directory.appendingPathComponent("\(name).png")
     try png.write(to: url)
+
+    // A render that produced a uniformly blank image drew nothing. Asserting
+    // only that the file exists would pass for a chart that silently failed to
+    // paint, which is exactly the bug these tests exist to catch.
+    try #require(isNotBlank(bitmap), "\(name) rendered a uniformly blank image")
+
     return url
 }
+
+/// True when the bitmap contains more than one distinct pixel value.
+///
+/// Deliberately weak: it cannot judge whether a render looks *right*, only that
+/// something was drawn. Appearance is judged by opening the PNG.
+private func isNotBlank(_ bitmap: NSBitmapImageRep) -> Bool {
+    guard bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0 else { return false }
+
+    let first = bitmap.colorAt(x: 0, y: 0)
+    let stepX = max(bitmap.pixelsWide / 16, 1)
+    let stepY = max(bitmap.pixelsHigh / 16, 1)
+
+    for x in stride(from: 0, to: bitmap.pixelsWide, by: stepX) {
+        for y in stride(from: 0, to: bitmap.pixelsHigh, by: stepY) {
+            if bitmap.colorAt(x: x, y: y) != first { return true }
+        }
+    }
+    return false
+}
 ```
+
+**Note on the blank check:** it samples a 16×16 grid rather than every pixel, so it is fast enough to run on every render. It proves something was drawn, not that the drawing is correct — that judgement comes from opening the PNG, which each task's verification step asks you to do.
 
 - [ ] **Step 2: Write the failing test**
 
