@@ -82,7 +82,7 @@ public enum StandardSamplers {
 }
 
 /// A process listing paired with the CPU percentages derived from it.
-public struct ProcessSeriesSample: @unchecked Sendable {
+public struct ProcessSeriesSample: Sendable {
     public let processes: [ProcessSnapshot]
     public let cpuUsage: [pid_t: Double]
 }

@@ -3459,7 +3459,20 @@ struct OverheadTests {
         let cpuUsed = consumedCPUSeconds() - cpuBefore
         let wallElapsed = ProcessInfo.processInfo.systemUptime - wallBefore
 
+        // Prove sampling actually happened before trusting the budget figure.
+        // The utilisation assertion only bounds overhead from above, so a
+        // registerAll that silently registered nothing would sail through it.
+        var sampledSeries: [SeriesKey] = []
+        for key in SeriesKey.allCases where await engine.sampleCount(for: key) > 0 {
+            sampledSeries.append(key)
+        }
+
         consumers.forEach { $0.cancel() }
+
+        #expect(
+            sampledSeries.count == SeriesKey.allCases.count,
+            "Only \(sampledSeries.count) of \(SeriesKey.allCases.count) series produced samples"
+        )
 
         let utilisation = cpuUsed / wallElapsed
 
@@ -3584,7 +3597,7 @@ public enum StandardSamplers {
 }
 
 /// A process listing paired with the CPU percentages derived from it.
-public struct ProcessSeriesSample: @unchecked Sendable {
+public struct ProcessSeriesSample: Sendable {
     public let processes: [ProcessSnapshot]
     public let cpuUsage: [pid_t: Double]
 }
