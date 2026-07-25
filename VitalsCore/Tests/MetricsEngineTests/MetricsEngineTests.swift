@@ -28,6 +28,27 @@ final class CountingSampler: @unchecked Sendable {
     enum SamplerError: Error { case failed }
 }
 
+/// Polls `condition` until it returns `true` or `timeout` elapses, checking
+/// on `pollInterval` cadence. Returns the final result of `condition`, so a
+/// caller that wraps this in `#expect` gets an ordinary, informative test
+/// failure -- not a hang -- if a genuine regression stops the condition from
+/// ever becoming true.
+private func waitUntil(
+    timeout: Duration = .seconds(1),
+    pollInterval: Duration = .milliseconds(10),
+    _ condition: () async -> Bool
+) async -> Bool {
+    let clock = ContinuousClock()
+    let deadline = clock.now + timeout
+    while clock.now < deadline {
+        if await condition() {
+            return true
+        }
+        try? await Task.sleep(for: pollInterval)
+    }
+    return await condition()
+}
+
 @Suite("MetricsEngine")
 struct MetricsEngineTests {
 
@@ -75,17 +96,37 @@ struct MetricsEngineTests {
         await engine.register(AnySampler { try sampler.sample() }, for: .cpu, cadence: .fast)
 
         let stream = await engine.subscribe(to: .cpu)
-        var received = 0
-        for await _ in stream {
-            received += 1
-            if received == 2 { break }
+
+        // Mirror the pattern real consumers use: a view or widget owns a Task
+        // that iterates the stream for as long as it's visible, and cancels
+        // that Task when it goes away. `AsyncStream.onTermination` only fires
+        // on an explicit `finish()` or on cancellation of the *consuming*
+        // Task -- breaking out of a `for await` loop while the stream value
+        // is still in scope does neither, so it can't be used to exercise
+        // detach here.
+        let consumer = Task {
+            for await _ in stream {}
         }
 
-        try await Task.sleep(for: .milliseconds(100))
-        let countAfterCancel = sampler.callCount
+        // Sampling should be running while the subscriber is attached.
+        let sampledWhileAttached = await waitUntil { sampler.callCount >= 3 }
+        #expect(sampledWhileAttached)
+        #expect(await engine.activeSeries.contains(.cpu))
+
+        consumer.cancel()
+
+        // Cancellation propagates asynchronously: it unblocks the stream's
+        // iteration, which fires `onTermination`, which hops onto the engine
+        // to detach and cancel the per-series sampling task. Poll for that
+        // rather than sleeping a fixed amount, but still fail (rather than
+        // hang) if it never happens.
+        let stoppedInTime = await waitUntil { await engine.activeSeries.contains(.cpu) == false }
+        #expect(stoppedInTime)
+
+        let countAfterStop = sampler.callCount
         try await Task.sleep(for: .milliseconds(200))
 
-        #expect(sampler.callCount == countAfterCancel)
+        #expect(sampler.callCount == countAfterStop)
         #expect(await engine.activeSeries.contains(.cpu) == false)
     }
 
@@ -152,7 +193,17 @@ struct MetricsEngineTests {
         }
 
         #expect(healthyReceived == 3)
-        #expect(failing.callCount >= 3)  // kept trying
+
+        // The failing series' sampling task runs independently of the
+        // healthy one -- both start microseconds apart, but under parallel
+        // test execution (several other 20ms-cadence tasks competing for the
+        // same cooperative thread pool) they aren't guaranteed to have ticked
+        // the same number of times by the instant the healthy series hits
+        // its target. Poll instead of asserting immediately, with a bounded
+        // timeout so a genuine regression (the throwing sampler's task
+        // getting disabled) still fails the test.
+        let failingKeptRetrying = await waitUntil { failing.callCount >= 3 }
+        #expect(failingKeptRetrying)  // kept trying
         #expect(await engine.sampleCount(for: .gpu) == 0)  // but stored nothing
 
         _ = failingStream
