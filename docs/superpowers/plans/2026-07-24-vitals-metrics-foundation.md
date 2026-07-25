@@ -326,10 +326,12 @@ struct CPUTopologyTests {
     }
 
     @Test("live detection matches the running machine")
-    func liveDetection() {
+    func liveDetection() throws {
         let topology = CPUTopology.detect(using: SystemSysctl())
-        #expect(topology.physicalCores > 0)
-        #expect(topology.logicalCores >= topology.physicalCores)
+        let physical = try #require(topology.physicalCores)
+        let logical = try #require(topology.logicalCores)
+        #expect(physical > 0)
+        #expect(logical >= physical)
         #expect(topology.brand.isEmpty == false)
     }
 }
@@ -410,8 +412,10 @@ public struct CPUCluster: Sendable, Equatable {
 /// Static description of the processor. Sampled once at launch.
 public struct CPUTopology: Sendable, Equatable {
     public let brand: String
-    public let physicalCores: Int
-    public let logicalCores: Int
+    /// `nil` when the sysctl is absent. Never `0` — a machine with zero cores
+    /// is a failed reading, not a real one.
+    public let physicalCores: Int?
+    public let logicalCores: Int?
     public let clusters: [CPUCluster]
     public let l1DataCacheBytes: Int?
     public let l2CacheBytes: Int?
@@ -443,8 +447,8 @@ public struct CPUTopology: Sendable, Equatable {
 
         return CPUTopology(
             brand: sysctl.string("machdep.cpu.brand_string") ?? "Unknown Processor",
-            physicalCores: Int(sysctl.integer("hw.physicalcpu") ?? 0),
-            logicalCores: Int(sysctl.integer("hw.logicalcpu") ?? 0),
+            physicalCores: sysctl.integer("hw.physicalcpu").map(Int.init),
+            logicalCores: sysctl.integer("hw.logicalcpu").map(Int.init),
             clusters: clusters,
             l1DataCacheBytes: sysctl.integer("hw.l1dcachesize").map(Int.init),
             l2CacheBytes: sysctl.integer("hw.l2cachesize").map(Int.init),
@@ -2583,7 +2587,8 @@ struct HardwareProfileTests {
     @Test("detects this machine's CPU and at least one GPU")
     func detectsThisMachine() throws {
         let profile = try HardwareProfile.detect()
-        #expect(profile.cpu.physicalCores > 0)
+        // `physicalCores` is `Int?` — absent sysctls read as nil, never 0.
+        #expect(try #require(profile.cpu.physicalCores) > 0)
         #expect(profile.gpus.isEmpty == false)
         #expect(profile.memory.totalBytes > 0)
     }
@@ -3579,7 +3584,10 @@ guard let profile = try? HardwareProfile.detect() else {
 }
 
 print("CPU:          \(profile.cpu.brand)")
-print("Cores:        \(profile.cpu.physicalCores) physical, \(profile.cpu.logicalCores) logical")
+// Core counts are `Int?`: an absent sysctl prints as unavailable, never as 0.
+let physical = profile.cpu.physicalCores.map(String.init) ?? "unavailable"
+let logical = profile.cpu.logicalCores.map(String.init) ?? "unavailable"
+print("Cores:        \(physical) physical, \(logical) logical")
 for cluster in profile.cpu.clusters {
     print("  \(cluster.name): \(cluster.coreCount) cores")
 }
