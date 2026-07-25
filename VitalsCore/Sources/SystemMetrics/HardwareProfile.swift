@@ -1,7 +1,8 @@
 import Foundation
 
-public enum HardwareProfileError: Error {
+public enum HardwareProfileError: Error, Equatable {
     case installedMemoryUnavailable
+    case memoryProfilerFailed(status: Int32)
 }
 
 /// Static description of the machine, built once at launch. Consumers use it to
@@ -69,8 +70,18 @@ public struct HardwareProfile: Sendable {
         process.standardError = FileHandle.nullDevice
 
         try process.run()
+        // Read before waiting: draining the pipe as the child writes is what
+        // keeps a large payload from filling the kernel buffer and deadlocking.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+
+        // A non-zero exit can still leave partial output on stdout. Treating
+        // that as a successful read would let degraded data through as though
+        // it were a clean measurement.
+        guard process.terminationStatus == 0 else {
+            throw HardwareProfileError.memoryProfilerFailed(status: process.terminationStatus)
+        }
+
         return data
     }
 }
