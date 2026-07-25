@@ -26,23 +26,74 @@ public struct MetricChart: View {
         self.colors = colors
     }
 
+    @State private var hoverX: CGFloat?
+
     public var body: some View {
-        Canvas { context, size in
-            let rect = CGRect(origin: .zero, size: size)
-            drawGridlines(in: &context, rect: rect)
+        GeometryReader { proxy in
+            let rect = CGRect(origin: .zero, size: proxy.size)
 
-            let bands = resolvedBands()
-            guard !bands.isEmpty else { return }
-            let bound = ChartGeometry.upperBound(for: bands)
+            Canvas { context, size in
+                let canvasRect = CGRect(origin: .zero, size: size)
+                drawGridlines(in: &context, rect: canvasRect)
 
-            switch style {
-            case .area:
-                drawAreas(bands, bound: bound, in: &context, rect: rect)
-            case .histogram:
-                drawHistogram(bands, bound: bound, in: &context, rect: rect)
+                let bands = resolvedBands()
+                guard !bands.isEmpty else { return }
+                let bound = ChartGeometry.upperBound(for: bands)
+
+                switch style {
+                case .area:
+                    drawAreas(bands, bound: bound, in: &context, rect: canvasRect)
+                case .histogram:
+                    drawHistogram(bands, bound: bound, in: &context, rect: canvasRect)
+                }
+            }
+            .overlay { crosshair(in: rect) }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location): hoverX = location.x
+                case .ended: hoverX = nil
+                }
             }
         }
         .frame(height: Vitals.Metrics.chartHeight)
+    }
+
+    @ViewBuilder
+    private func crosshair(in rect: CGRect) -> some View {
+        let sampleCount = series.map(\.values.count).max() ?? 0
+
+        if let hoverX,
+           let index = ChartGeometry.sampleIndex(atX: hoverX, in: rect, count: sampleCount),
+           let readout = ChartGeometry.readout(at: index, series: series) {
+
+            let step = sampleCount > 1 ? rect.width / CGFloat(sampleCount - 1) : 0
+            let x = rect.minX + CGFloat(index) * step
+
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(.white.opacity(0.25))
+                    .frame(width: 1)
+                    .position(x: x, y: rect.midY)
+                    .frame(height: rect.height)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(readout.values, id: \.name) { entry in
+                        Text("\(entry.name)  \(Self.format(entry.value))")
+                            .font(Vitals.Typography.label)
+                    }
+                }
+                .padding(6)
+                .glassSurface(cornerRadius: 8)
+                // Kept inside the chart so the readout never clips off the edge.
+                .offset(x: min(max(x + 8, 0), max(rect.width - 130, 0)), y: 6)
+            }
+        }
+    }
+
+    private static func format(_ value: Double) -> String {
+        value <= 1.0
+            ? "\(Int((value * 100).rounded()))%"
+            : String(format: "%.2f", value)
     }
 
     /// Stacked mode accumulates; unstacked draws each series against the baseline.
