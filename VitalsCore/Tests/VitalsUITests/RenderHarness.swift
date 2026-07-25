@@ -51,15 +51,21 @@ func renderPNG(
 ///
 /// Deliberately weak: it cannot judge whether a render looks *right*, only that
 /// something was drawn. Appearance is judged by opening the PNG.
+///
+/// Scans every pixel rather than a coarse grid. A fixed 16x16 stride sampled a
+/// chart that drew only its three quarter-fraction gridlines at exactly the
+/// rows the stride skips (132pt height -> 264px at scale 2, gridlines at rows
+/// 66/132/198, none a multiple of the resulting 16px step) — a legitimately
+/// non-blank render reported as blank. Full-scan closes that blind spot; it
+/// exits on the first difference, so any render with real content anywhere
+/// returns near-instantly, and only a truly blank image pays the full cost
+/// (well under a second at the sizes these tests render).
 private func isNotBlank(_ bitmap: NSBitmapImageRep) -> Bool {
     guard bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0 else { return false }
 
     let first = bitmap.colorAt(x: 0, y: 0)
-    let stepX = max(bitmap.pixelsWide / 16, 1)
-    let stepY = max(bitmap.pixelsHigh / 16, 1)
-
-    for x in stride(from: 0, to: bitmap.pixelsWide, by: stepX) {
-        for y in stride(from: 0, to: bitmap.pixelsHigh, by: stepY) {
+    for x in 0..<bitmap.pixelsWide {
+        for y in 0..<bitmap.pixelsHigh {
             if bitmap.colorAt(x: x, y: y) != first { return true }
         }
     }
