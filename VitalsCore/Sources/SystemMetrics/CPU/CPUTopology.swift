@@ -17,8 +17,8 @@ public struct CPUCluster: Sendable, Equatable {
 /// Static description of the processor. Sampled once at launch.
 public struct CPUTopology: Sendable, Equatable {
     public let brand: String
-    public let physicalCores: Int
-    public let logicalCores: Int
+    public let physicalCores: Int?
+    public let logicalCores: Int?
     public let clusters: [CPUCluster]
     public let l1DataCacheBytes: Int?
     public let l2CacheBytes: Int?
@@ -50,8 +50,8 @@ public struct CPUTopology: Sendable, Equatable {
 
         return CPUTopology(
             brand: sysctl.string("machdep.cpu.brand_string") ?? "Unknown Processor",
-            physicalCores: Int(sysctl.integer("hw.physicalcpu") ?? 0),
-            logicalCores: Int(sysctl.integer("hw.logicalcpu") ?? 0),
+            physicalCores: sysctl.integer("hw.physicalcpu").map(Int.init),
+            logicalCores: sysctl.integer("hw.logicalcpu").map(Int.init),
             clusters: clusters,
             l1DataCacheBytes: sysctl.integer("hw.l1dcachesize").map(Int.init),
             l2CacheBytes: sysctl.integer("hw.l2cachesize").map(Int.init),

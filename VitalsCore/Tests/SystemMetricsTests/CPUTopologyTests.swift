@@ -70,6 +70,17 @@ struct CPUTopologyTests {
         #expect(topology.l2CacheBytes == 4_194_304)
     }
 
+    @Test("reports absent core counts as nil rather than zero")
+    func absentCoreCountsAreNil() {
+        let stubSysctl = StubSysctl(
+            integers: [:],
+            strings: ["machdep.cpu.brand_string": "Unknown Processor"]
+        )
+        let topology = CPUTopology.detect(using: stubSysctl)
+        #expect(topology.physicalCores == nil)
+        #expect(topology.logicalCores == nil)
+    }
+
     @Test("parses Intel topology with no clusters and a real L3")
     func parsesIntel() {
         let topology = CPUTopology.detect(using: StubSysctl.intelCoreI9)
@@ -86,10 +97,12 @@ struct CPUTopologyTests {
     }
 
     @Test("live detection matches the running machine")
-    func liveDetection() {
+    func liveDetection() throws {
         let topology = CPUTopology.detect(using: SystemSysctl())
-        #expect(topology.physicalCores > 0)
-        #expect(topology.logicalCores >= topology.physicalCores)
+        let physicalCores = try #require(topology.physicalCores)
+        let logicalCores = try #require(topology.logicalCores)
+        #expect(physicalCores > 0)
+        #expect(logicalCores >= physicalCores)
         #expect(topology.brand.isEmpty == false)
     }
 }
