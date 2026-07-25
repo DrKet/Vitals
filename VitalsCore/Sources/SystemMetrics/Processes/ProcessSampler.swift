@@ -59,9 +59,7 @@ public enum ProcessSampler {
         let name = withUnsafePointer(to: process.kp_proc.p_comm) { pointer in
             pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXCOMLEN) + 1) { charPointer in
                 let buffer = UnsafeBufferPointer(start: charPointer, count: Int(MAXCOMLEN) + 1)
-                let nullTerminatorIndex = buffer.firstIndex(of: 0) ?? buffer.count
-                let utf8Buffer = buffer[0..<nullTerminatorIndex].map { UInt8(bitPattern: $0) }
-                return String(decoding: utf8Buffer, as: UTF8.self)
+                return decodeCString(buffer)
             }
         }
 
