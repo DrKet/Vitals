@@ -729,26 +729,28 @@ public struct CPULoadSample: Sendable, Equatable {
 /// schedule, since both change slowly.
 public struct SystemLoad: Sendable, Equatable {
     public let uptimeSeconds: TimeInterval
-    public let loadAverage1: Double
-    public let loadAverage5: Double
-    public let loadAverage15: Double
+
+    /// `nil` when `getloadavg` failed. Never `0` — a genuinely idle system also
+    /// reports `0`, and conflating the two would hide a failed reading behind a
+    /// plausible number.
+    public let loadAverage1: Double?
+    public let loadAverage5: Double?
+    public let loadAverage15: Double?
 
     public static func current() -> SystemLoad {
         let averages = loadAverages()
         return SystemLoad(
             uptimeSeconds: ProcessInfo.processInfo.systemUptime,
-            loadAverage1: averages.0,
-            loadAverage5: averages.1,
-            loadAverage15: averages.2
+            loadAverage1: averages?.0,
+            loadAverage5: averages?.1,
+            loadAverage15: averages?.2
         )
     }
 
     /// `getloadavg` is the supported interface and needs no sysctl plumbing.
-    /// Returns zeroes if the call fails, which is what the kernel reports on an
-    /// idle system anyway, so there is no risk of a misleading value.
-    private static func loadAverages() -> (Double, Double, Double) {
+    private static func loadAverages() -> (Double, Double, Double)? {
         var averages = [Double](repeating: 0, count: 3)
-        guard getloadavg(&averages, 3) == 3 else { return (0, 0, 0) }
+        guard getloadavg(&averages, 3) == 3 else { return nil }
         return (averages[0], averages[1], averages[2])
     }
 }
@@ -1901,14 +1903,19 @@ public enum StorageSampler {
         ) else { return [] }
 
         return urls.compactMap { url in
+            // A volume whose capacity or free space we cannot read is omitted
+            // rather than reported with zeroes — zero available space would
+            // read as a full disk, which is a lie, not a missing value.
             guard let values = try? url.resourceValues(forKeys: Set(keys)),
-                  let total = values.volumeTotalCapacity, total > 0
+                  let total = values.volumeTotalCapacity, total > 0,
+                  let available = values.volumeAvailableCapacityForImportantUsage,
+                  available >= 0
             else { return nil }
 
             return Volume(
                 name: values.volumeName ?? url.lastPathComponent,
                 totalBytes: UInt64(total),
-                availableBytes: UInt64(max(values.volumeAvailableCapacityForImportantUsage ?? 0, 0)),
+                availableBytes: UInt64(available),
                 isInternal: values.volumeIsInternal ?? false
             )
         }
@@ -1944,8 +1951,12 @@ public enum StorageSampler {
                     ) as? String)
                 ?? "unknown"
 
-            let read = (statistics["Bytes (Read)"] as? NSNumber)?.uint64Value ?? 0
-            let written = (statistics["Bytes (Write)"] as? NSNumber)?.uint64Value ?? 0
+            // A driver that does not publish both counters is skipped. Zero
+            // would be indistinguishable from a genuinely idle disk and would
+            // then feed a fabricated throughput of 0 B/s into DeltaCounter.
+            guard let read = (statistics["Bytes (Read)"] as? NSNumber)?.uint64Value,
+                  let written = (statistics["Bytes (Write)"] as? NSNumber)?.uint64Value
+            else { continue }
 
             result[name] = StorageIOCounters(bytesRead: read, bytesWritten: written)
         }
@@ -2720,6 +2731,10 @@ Create `VitalsCore/Sources/SystemMetrics/HardwareProfile.swift`:
 ```swift
 import Foundation
 
+public enum HardwareProfileError: Error {
+    case installedMemoryUnavailable
+}
+
 /// Static description of the machine, built once at launch. Consumers use it to
 /// decide which pages and fields exist at all, so that inapplicable hardware is
 /// absent rather than shown empty.
@@ -2736,7 +2751,14 @@ public struct HardwareProfile: Sendable {
     ) throws -> HardwareProfile {
         let cpu = CPUTopology.detect(using: sysctl)
         let gpus = GPUSampler.devices()
-        let totalBytes = UInt64(sysctl.integer("hw.memsize") ?? 0)
+
+        // Installed memory is not optional in the way a sensor reading is —
+        // a Mac that cannot report `hw.memsize` is not a machine we can
+        // describe, so this throws rather than reporting 0 GB installed.
+        guard let memsize = sysctl.integer("hw.memsize"), memsize > 0 else {
+            throw HardwareProfileError.installedMemoryUnavailable
+        }
+        let totalBytes = UInt64(memsize)
 
         let isUnified = gpus.contains { device in
             if case .unified = device.topology { return true }
@@ -3628,7 +3650,13 @@ print("")
 let systemLoad = SystemLoad.current()
 let uptimeHours = Int(systemLoad.uptimeSeconds / 3600)
 print("Uptime:       \(uptimeHours)h")
-print("Load average: \(systemLoad.loadAverage1), \(systemLoad.loadAverage5), \(systemLoad.loadAverage15)")
+
+let averages = [systemLoad.loadAverage1, systemLoad.loadAverage5, systemLoad.loadAverage15]
+if averages.allSatisfy({ $0 != nil }) {
+    print("Load average: " + averages.compactMap { $0 }.map { String(format: "%.2f", $0) }.joined(separator: ", "))
+} else {
+    print("Load average: unavailable")
+}
 
 print("")
 if case .unavailable(let reason) = profile.sensorsAvailable {

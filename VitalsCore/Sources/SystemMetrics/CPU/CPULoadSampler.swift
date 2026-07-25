@@ -52,26 +52,27 @@ public struct CPULoadSample: Sendable, Equatable {
 /// schedule, since both change slowly.
 public struct SystemLoad: Sendable, Equatable {
     public let uptimeSeconds: TimeInterval
-    public let loadAverage1: Double
-    public let loadAverage5: Double
-    public let loadAverage15: Double
+    public let loadAverage1: Double?
+    public let loadAverage5: Double?
+    public let loadAverage15: Double?
 
     public static func current() -> SystemLoad {
         let averages = loadAverages()
         return SystemLoad(
             uptimeSeconds: ProcessInfo.processInfo.systemUptime,
-            loadAverage1: averages.0,
-            loadAverage5: averages.1,
-            loadAverage15: averages.2
+            loadAverage1: averages?.0,
+            loadAverage5: averages?.1,
+            loadAverage15: averages?.2
         )
     }
 
     /// `getloadavg` is the supported interface and needs no sysctl plumbing.
-    /// Returns zeroes if the call fails, which is what the kernel reports on an
-    /// idle system anyway, so there is no risk of a misleading value.
-    private static func loadAverages() -> (Double, Double, Double) {
+    /// Returns `nil` if the call fails. Note that `0` is a valid result from
+    /// a successfully idle system; `nil` specifically indicates the call failed,
+    /// not that the load average is actually zero.
+    private static func loadAverages() -> (Double, Double, Double)? {
         var averages = [Double](repeating: 0, count: 3)
-        guard getloadavg(&averages, 3) == 3 else { return (0, 0, 0) }
+        guard getloadavg(&averages, 3) == 3 else { return nil }
         return (averages[0], averages[1], averages[2])
     }
 }
