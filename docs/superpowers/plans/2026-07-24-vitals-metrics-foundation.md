@@ -2599,14 +2599,14 @@ git commit -m "feat: add process sampling using phys_footprint and Rosetta detec
 Establishes the common `MetricSampler` interface, the `SensorReading` seam described in "Out of scope", and the `HardwareProfile` that drives capability-based UI.
 
 **Files:**
-- Create: `VitalsCore/Sources/SystemMetrics/MetricSampler.swift`
+- Create: `VitalsCore/Sources/SystemMetrics/MetricAvailability.swift`
 - Create: `VitalsCore/Sources/SystemMetrics/Sensors/SensorReading.swift`
 - Create: `VitalsCore/Sources/SystemMetrics/HardwareProfile.swift`
 - Test: `VitalsCore/Tests/SystemMetricsTests/HardwareProfileTests.swift`
 
 **Interfaces:**
 - Consumes: `CPUTopology` and `SysctlProviding` (Task 2), `MemoryHardware` (Task 5), `GPUDevice` and `GPUSampler` (Task 6), `StorageDevice` (Task 7).
-- Produces: `MetricAvailability` enum with `.available`, `.unavailable(reason: String)`; `MetricSampler` protocol; `SensorReading`; `SensorProviding` protocol; `UnavailableSensorProvider`; `HardwareProfile` with `cpu`, `memory`, `gpus`, `sensorsAvailable`, `frequencyAvailable`, and `static func detect(sysctl:sensors:) throws -> HardwareProfile`. Task 13 uses `HardwareProfile`.
+- Produces: `MetricAvailability` enum with `.available`, `.unavailable(reason: String)`; `SensorReading`; `SensorProviding` protocol; `UnavailableSensorProvider`; `HardwareProfile` with `cpu`, `memory`, `gpus`, `sensorsAvailable`, `frequencyAvailable`, and `static func detect(sysctl:sensors:) throws -> HardwareProfile`. Task 13 uses `HardwareProfile`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2685,17 +2685,10 @@ public enum MetricAvailability: Sendable, Equatable {
     }
 }
 
-/// One source of one kind of measurement.
-///
-/// Implementations must be independently failable: throwing here degrades a
-/// single series to unavailable and must never stop the engine or affect
-/// another sampler.
-public protocol MetricSampler: Sendable {
-    associatedtype Sample: Sendable
-
-    var availability: MetricAvailability { get }
-    func sample() throws -> Sample
-}
+// NOTE: an earlier draft specified a `MetricSampler` protocol here. It was
+// dropped: `associatedtype Sample` made it unusable as an existential, so the
+// engine could never store heterogeneous samplers in one collection — the only
+// thing it would have been for. Task 12's `AnySampler` erases them instead.
 ```
 
 - [ ] **Step 4: Write the sensor seam**
@@ -2755,8 +2748,9 @@ Create `VitalsCore/Sources/SystemMetrics/HardwareProfile.swift`:
 ```swift
 import Foundation
 
-public enum HardwareProfileError: Error {
+public enum HardwareProfileError: Error, Equatable {
     case installedMemoryUnavailable
+    case memoryProfilerFailed(status: Int32)
 }
 
 /// Static description of the machine, built once at launch. Consumers use it to
@@ -2824,8 +2818,17 @@ public struct HardwareProfile: Sendable {
         process.standardError = FileHandle.nullDevice
 
         try process.run()
+        // Read before waiting: draining the pipe as the child writes is what
+        // keeps a large payload from deadlocking on a full kernel buffer.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+
+        // A non-zero exit can still leave partial output on stdout; treating
+        // that as success would let degraded data through as a clean reading.
+        guard process.terminationStatus == 0 else {
+            throw HardwareProfileError.memoryProfilerFailed(status: process.terminationStatus)
+        }
+
         return data
     }
 }
