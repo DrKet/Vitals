@@ -66,7 +66,7 @@ public enum ProcessSampler {
         }
 
         let nanosecondsPerSecond = 1_000_000_000.0
-        let cpuTime: Double
+        let cpuTime: Double?
         if usageResult == 0 {
             cpuTime = Double(usage.ri_user_time + usage.ri_system_time) / nanosecondsPerSecond
         } else if taskResult > 0 {
@@ -74,7 +74,7 @@ public enum ProcessSampler {
         } else {
             // Neither privileged call succeeded (permission denied); there is
             // no CPU time to report for this process.
-            cpuTime = 0
+            cpuTime = nil
         }
 
         return ProcessSnapshot(
