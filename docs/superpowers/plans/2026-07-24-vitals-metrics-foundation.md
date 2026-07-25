@@ -18,6 +18,7 @@
 - **Memory is reported as `phys_footprint`**, never RSS.
 - **Package root:** `VitalsCore/`. All paths in this plan are relative to `/Users/george/Developer/Vitals`.
 - **Test command:** `cd VitalsCore && swift test`.
+- **`swift test --filter` matches type identifiers, not `@Suite` display names.** `--filter CPULoadTests` works; `--filter "CPU load"` silently matches zero tests and still reports success. Always confirm the run reports a non-zero test count — "Test run with 0 tests ... passed" is a failure to run, not a pass.
 - **Build and test output must be pristine** — no warnings. In particular `String(cString:)` is deprecated in Swift 6: decode C strings with `String(decoding:as: UTF8.self)` after truncating at the first NUL byte. Where a code block below still shows `String(cString:)`, use the non-deprecated form instead; the surrounding logic is unchanged.
 
 ## Out of scope for this plan
@@ -156,7 +157,7 @@ struct DeltaCounterTests {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter DeltaCounter`
+Run: `cd VitalsCore && swift test --filter DeltaCounterTests`
 Expected: FAIL — `cannot find 'DeltaCounter' in scope`.
 
 - [ ] **Step 4: Write the implementation**
@@ -208,7 +209,7 @@ public struct DeltaCounter<Value: FixedWidthInteger & Sendable>: Sendable {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter DeltaCounter`
+Run: `cd VitalsCore && swift test --filter DeltaCounterTests`
 Expected: PASS — 7 tests passing.
 
 - [ ] **Step 6: Commit**
@@ -339,7 +340,7 @@ struct CPUTopologyTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter CPUTopology`
+Run: `cd VitalsCore && swift test --filter CPUTopologyTests`
 Expected: FAIL — `cannot find type 'SysctlProviding' in scope`.
 
 - [ ] **Step 3: Write the sysctl wrapper**
@@ -460,7 +461,7 @@ public struct CPUTopology: Sendable, Equatable {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter CPUTopology`
+Run: `cd VitalsCore && swift test --filter CPUTopologyTests`
 Expected: PASS — 5 tests passing.
 
 - [ ] **Step 6: Commit**
@@ -599,7 +600,7 @@ struct CPULoadTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter "CPU load"`
+Run: `cd VitalsCore && swift test --filter CPULoadTests`
 Expected: FAIL — `cannot find 'CPUTicks' in scope`.
 
 - [ ] **Step 3: Write the tick types and Mach reader**
@@ -797,7 +798,7 @@ public enum CPULoadCalculator {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter "CPU load"`
+Run: `cd VitalsCore && swift test --filter CPULoadTests`
 Expected: PASS — 10 tests passing.
 
 - [ ] **Step 6: Commit**
@@ -935,7 +936,7 @@ struct MemorySampleTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter "Memory sample"`
+Run: `cd VitalsCore && swift test --filter MemorySampleTests`
 Expected: FAIL — `cannot find 'VMCounters' in scope`.
 
 - [ ] **Step 3: Write the sample types and calculator**
@@ -1107,12 +1108,12 @@ public enum MemorySampler {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter "Memory sample"`
+Run: `cd VitalsCore && swift test --filter MemorySampleTests`
 Expected: PASS — 8 tests passing.
 
 - [ ] **Step 6: Verify against Activity Monitor**
 
-Run: `cd VitalsCore && swift test --filter liveSamplerIsPlausible -v`
+Run: `cd VitalsCore && swift test --filter MemorySampleTests/liveSamplerIsPlausible -v`
 
 Open Activity Monitor's Memory tab and confirm the app's "Memory Used" figure is within roughly 5% of what the live test observes. The calculator is deliberately built to agree with Activity Monitor; a large divergence means the page-bucket arithmetic is wrong, not that Activity Monitor is.
 
@@ -1298,7 +1299,7 @@ struct MemoryHardwareTests {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter "Memory hardware"`
+Run: `cd VitalsCore && swift test --filter MemoryHardwareTests`
 Expected: FAIL — `cannot find 'MemoryHardwareParser' in scope`.
 
 - [ ] **Step 4: Write the SoC bandwidth table**
@@ -1424,7 +1425,7 @@ public enum MemoryHardwareParser {
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter "Memory hardware"`
+Run: `cd VitalsCore && swift test --filter MemoryHardwareTests`
 Expected: PASS — 8 tests passing.
 
 - [ ] **Step 7: Commit**
@@ -1526,7 +1527,7 @@ struct GPUSampleTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter "GPU sample"`
+Run: `cd VitalsCore && swift test --filter GPUSampleTests`
 Expected: FAIL — `cannot find 'GPUStatisticsParser' in scope`.
 
 - [ ] **Step 3: Write the sample types and parser**
@@ -1658,7 +1659,7 @@ public enum GPUSampler {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter "GPU sample"`
+Run: `cd VitalsCore && swift test --filter GPUSampleTests`
 Expected: PASS — 7 tests passing.
 
 - [ ] **Step 6: Commit**
@@ -1796,7 +1797,7 @@ struct StorageTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter Storage`
+Run: `cd VitalsCore && swift test --filter StorageTests`
 Expected: FAIL — `cannot find 'StorageDeviceParser' in scope`.
 
 - [ ] **Step 3: Write the storage types and parser**
@@ -1967,7 +1968,7 @@ public enum StorageSampler {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter Storage`
+Run: `cd VitalsCore && swift test --filter StorageTests`
 Expected: PASS — 8 tests passing.
 
 If `liveIOCountersAreMonotonic` reports an empty dictionary, print the available statistics keys with `ioreg -rc IOBlockStorageDriver -d1 | grep -A20 Statistics` and correct the `"Bytes (Read)"` / `"Bytes (Write)"` key names to match what this macOS version publishes.
@@ -2070,7 +2071,7 @@ struct NetworkTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter Network`
+Run: `cd VitalsCore && swift test --filter NetworkTests`
 Expected: FAIL — `cannot find 'InterfaceCounters' in scope`.
 
 - [ ] **Step 3: Write the interface types and tracker**
@@ -2230,7 +2231,7 @@ public enum NetworkSampler {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter Network`
+Run: `cd VitalsCore && swift test --filter NetworkTests`
 Expected: PASS — 6 tests passing.
 
 - [ ] **Step 6: Commit**
@@ -2366,7 +2367,7 @@ struct ProcessTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter Processes`
+Run: `cd VitalsCore && swift test --filter ProcessTests`
 Expected: FAIL — `cannot find 'ProcessSnapshot' in scope`.
 
 - [ ] **Step 3: Write the process types and CPU tracker**
@@ -2552,12 +2553,12 @@ public enum ProcessSampler {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter Processes`
+Run: `cd VitalsCore && swift test --filter ProcessTests`
 Expected: PASS — 10 tests passing.
 
 - [ ] **Step 6: Verify footprint against Activity Monitor**
 
-Run: `cd VitalsCore && swift test --filter liveSnapshotIncludesSelf`
+Run: `cd VitalsCore && swift test --filter ProcessTests/liveSnapshotIncludesSelf`
 
 Open Activity Monitor, find a large process such as a browser, and compare its Memory column with what `vitals-dump` reports for the same PID after Task 13. They should agree closely. If Vitals reads noticeably higher, `pti_resident_size` has crept in somewhere in place of `ri_phys_footprint`.
 
@@ -2638,7 +2639,7 @@ struct HardwareProfileTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter "Hardware profile"`
+Run: `cd VitalsCore && swift test --filter HardwareProfileTests`
 Expected: FAIL — `cannot find 'HardwareProfile' in scope`.
 
 - [ ] **Step 3: Write the sampler protocol**
@@ -2809,7 +2810,7 @@ public struct HardwareProfile: Sendable {
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter "Hardware profile"`
+Run: `cd VitalsCore && swift test --filter HardwareProfileTests`
 Expected: PASS — 5 tests passing.
 
 - [ ] **Step 7: Commit**
@@ -2902,7 +2903,7 @@ struct RingBufferTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter RingBuffer`
+Run: `cd VitalsCore && swift test --filter RingBufferTests`
 Expected: FAIL — `cannot find 'RingBuffer' in scope`.
 
 - [ ] **Step 3: Write the implementation**
@@ -2955,7 +2956,7 @@ public struct RingBuffer<Element: Sendable>: Sendable {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter RingBuffer`
+Run: `cd VitalsCore && swift test --filter RingBufferTests`
 Expected: PASS — 7 tests passing.
 
 - [ ] **Step 5: Commit**
@@ -3164,7 +3165,7 @@ struct MetricsEngineTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter MetricsEngine`
+Run: `cd VitalsCore && swift test --filter MetricsEngineTests`
 Expected: FAIL — `cannot find 'MetricsEngine' in scope`.
 
 - [ ] **Step 3: Write the series key and cadence**
@@ -3361,7 +3362,7 @@ public actor MetricsEngine {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd VitalsCore && swift test --filter MetricsEngine`
+Run: `cd VitalsCore && swift test --filter MetricsEngineTests`
 Expected: PASS — 8 tests passing.
 
 - [ ] **Step 6: Commit**
@@ -3465,7 +3466,7 @@ struct OverheadTests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd VitalsCore && swift test --filter "Sampling overhead"`
+Run: `cd VitalsCore && swift test --filter OverheadTests`
 Expected: FAIL — `cannot find 'StandardSamplers' in scope`.
 
 - [ ] **Step 3: Write the sampler registration**
