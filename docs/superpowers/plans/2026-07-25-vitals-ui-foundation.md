@@ -2516,6 +2516,29 @@ git commit -m "feat: add CPU page with progressive disclosure"
 
 ---
 
+## Capturing the running app
+
+A SwiftPM executable has no bundle, so AppKit launches it background-only and no
+window is ever ordered on screen — the app looks like it runs fine while being
+invisible. `AppDelegate` in `VitalsApp.swift` fixes that by setting the
+activation policy explicitly. With a window on screen, capture it like this
+(no Screen Recording permission needed, since it targets a known region):
+
+```bash
+cd VitalsCore && swift build --product VitalsApp
+"$(swift build --product VitalsApp --show-bin-path)/VitalsApp" &
+sleep 6
+PID=$(pgrep -n VitalsApp)
+BOUNDS=$(osascript -e "tell application \"System Events\" to tell (first process whose unix id is $PID) to get {position, size} of window 1")
+R=$(echo "$BOUNDS" | tr -d ' ' | awk -F, '{print $1","$2","$3","$4}')
+screencapture -x -o -R"$R" /tmp/vitals-render/app.png
+pkill VitalsApp
+```
+
+Then open `/tmp/vitals-render/app.png`. Sanity-check first: if
+`osascript ... get background only of ...` returns `true` or the window count is
+`0`, the activation policy regressed and nothing on screen is being verified.
+
 ## Completion criteria
 
 - `cd VitalsCore && swift test` passes with no failures and no warnings.

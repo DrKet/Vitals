@@ -1,10 +1,32 @@
+import AppKit
 import MetricsEngine
 import SwiftUI
 import SystemMetrics
 import VitalsUI
 
+/// Promotes the process to a normal windowed app.
+///
+/// A SwiftPM executable has no bundle and no `Info.plist`, so AppKit launches it
+/// as a background-only process: `WindowGroup` builds its scene but no window is
+/// ever ordered on screen, and the app is invisible while appearing to run
+/// perfectly. Setting the policy explicitly is what a bundle's `Info.plist`
+/// would otherwise do. Remove this when the app gains a real bundle in M2.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Quit when the window closes — this is a single-window utility, and a
+    /// lingering invisible process is exactly the failure mode above.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+}
+
 @main
 struct VitalsApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store: MetricsStore?
     @State private var startupError: String?
     /// Set synchronously before the first suspension point, so a second window
