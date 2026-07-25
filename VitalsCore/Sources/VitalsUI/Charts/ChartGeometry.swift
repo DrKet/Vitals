@@ -1,15 +1,50 @@
 import CoreGraphics
 import SwiftUI
 
+/// How a series' values should be read back to the user.
+///
+/// The unit is a property of the data, not something to be guessed from a
+/// value's magnitude — a throughput reading of 0.05 MB/s must never be read
+/// back as "5%" just because it happens to be below 1.
+public enum ChartUnit: Sendable, Equatable {
+    /// A 0...1 fraction, shown as a percentage.
+    case fraction
+    /// An absolute quantity with a unit suffix, e.g. "MB/s".
+    case absolute(suffix: String)
+
+    public func formatted(_ value: Double) -> String {
+        switch self {
+        case .fraction:
+            return "\(Int((value * 100).rounded()))%"
+        case .absolute(let suffix):
+            return String(format: "%.2f %@", value, suffix)
+        }
+    }
+}
+
 /// One named line or band on a chart. Values are oldest-first.
 public struct ChartSeries: Sendable, Equatable {
     public let name: String
     public let values: [Double]
+    public let unit: ChartUnit
 
-    public init(name: String, values: [Double]) {
+    public init(name: String, values: [Double], unit: ChartUnit = .fraction) {
         self.name = name
         self.values = values
+        self.unit = unit
     }
+}
+
+/// How samples are distributed across a chart's width.
+///
+/// The two render styles genuinely differ, and the crosshair must use the same
+/// model the renderer used or it will label the wrong sample.
+public enum ChartSpacing: Sendable, Equatable {
+    /// Samples sit *on* both edges, `width/(count-1)` apart. Area mode.
+    case endpoints
+    /// Samples sit at the centre of `width/count` slots, inset from both
+    /// edges. Histogram mode.
+    case slots
 }
 
 /// The maths behind both chart modes. Pure, and therefore the part that carries
@@ -43,6 +78,28 @@ public enum ChartGeometry {
         return max(peak, 1.0)
     }
 
+    /// Where sample `index` sits along `rect`'s width under a given spacing
+    /// model. `nil` for an out-of-range index or a non-positive count.
+    ///
+    /// This is the one definition of where sample *n* lives: the renderer and
+    /// the crosshair both call it, so they can never disagree about a
+    /// sample's position.
+    public static func sampleX(at index: Int, in rect: CGRect, count: Int, spacing: ChartSpacing) -> CGFloat? {
+        guard count > 0, index >= 0, index < count else { return nil }
+
+        switch spacing {
+        case .endpoints:
+            // A lone value belongs at the trailing edge: it is "now", not "the
+            // whole history".
+            guard count > 1 else { return rect.maxX }
+            let step = rect.width / CGFloat(count - 1)
+            return rect.minX + CGFloat(index) * step
+        case .slots:
+            let slot = rect.width / CGFloat(count)
+            return rect.minX + CGFloat(index) * slot + slot / 2
+        }
+    }
+
     /// Maps values onto a rect, oldest at the leading edge, newest at the
     /// trailing edge. Y is inverted for screen space, and clamped so an
     /// out-of-range value cannot draw outside the chart.
@@ -53,20 +110,12 @@ public enum ChartGeometry {
     ) -> [CGPoint] {
         guard !values.isEmpty, upperBound > 0 else { return [] }
 
-        // A lone value belongs at the trailing edge: it is "now", not "the whole
-        // history".
-        guard values.count > 1 else {
-            let clamped = min(max(values[0] / upperBound, 0), 1)
-            return [CGPoint(x: rect.maxX, y: rect.maxY - clamped * rect.height)]
-        }
-
-        let step = rect.width / CGFloat(values.count - 1)
-        return values.enumerated().map { index, value in
+        return values.enumerated().compactMap { index, value -> CGPoint? in
+            guard let x = sampleX(at: index, in: rect, count: values.count, spacing: .endpoints) else {
+                return nil
+            }
             let clamped = min(max(value / upperBound, 0), 1)
-            return CGPoint(
-                x: rect.minX + CGFloat(index) * step,
-                y: rect.maxY - clamped * rect.height
-            )
+            return CGPoint(x: x, y: rect.maxY - clamped * rect.height)
         }
     }
 

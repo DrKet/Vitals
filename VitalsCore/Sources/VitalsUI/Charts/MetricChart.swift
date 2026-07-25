@@ -5,6 +5,25 @@ public enum ChartStyle: Sendable, Equatable {
     case area(stacked: Bool)
     /// Discrete bars, colour-ramped by load. Reads better at small sizes.
     case histogram
+
+    /// The spacing model this style renders samples with. The crosshair uses
+    /// this so it can never disagree with the renderer about where a sample
+    /// sits.
+    var spacing: ChartSpacing {
+        switch self {
+        case .area: return .endpoints
+        case .histogram: return .slots
+        }
+    }
+}
+
+/// Measures the readout box so its placement can be clamped to the chart's
+/// actual bounds instead of an assumed width.
+private struct ReadoutSizeKey: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
+    }
 }
 
 /// The one chart in Vitals. Two render modes over one geometry.
@@ -27,6 +46,7 @@ public struct MetricChart: View {
     }
 
     @State private var hoverX: CGFloat?
+    @State private var readoutSize: CGSize = .zero
 
     public var body: some View {
         GeometryReader { proxy in
@@ -61,13 +81,14 @@ public struct MetricChart: View {
     @ViewBuilder
     private func crosshair(in rect: CGRect) -> some View {
         let sampleCount = series.map(\.values.count).max() ?? 0
+        let spacing = style.spacing
 
         if let hoverX,
-           let index = ChartGeometry.sampleIndex(atX: hoverX, in: rect, count: sampleCount),
-           let readout = ChartGeometry.readout(at: index, series: series) {
+           let index = ChartGeometry.sampleIndex(atX: hoverX, in: rect, count: sampleCount, spacing: spacing),
+           let readout = ChartGeometry.readout(at: index, series: series),
+           let x = ChartGeometry.sampleX(at: index, in: rect, count: sampleCount, spacing: spacing) {
 
-            let step = sampleCount > 1 ? rect.width / CGFloat(sampleCount - 1) : 0
-            let x = rect.minX + CGFloat(index) * step
+            let origin = ChartGeometry.readoutOrigin(atX: x, in: rect, boxSize: readoutSize)
 
             ZStack(alignment: .topLeading) {
                 Rectangle()
@@ -78,22 +99,32 @@ public struct MetricChart: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(readout.values, id: \.name) { entry in
-                        Text("\(entry.name)  \(Self.format(entry.value))")
+                        Text("\(entry.name)  \(unit(for: entry.name).formatted(entry.value))")
                             .font(Vitals.Typography.label)
                     }
                 }
                 .padding(6)
                 .glassSurface(cornerRadius: 8)
-                // Kept inside the chart so the readout never clips off the edge.
-                .offset(x: min(max(x + 8, 0), max(rect.width - 130, 0)), y: 6)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: ReadoutSizeKey.self, value: proxy.size)
+                    }
+                )
+                // Anchored to whichever side of the crosshair has more room
+                // and clamped in both axes against the box's actual measured
+                // size (ChartGeometry.readoutOrigin), so the readout can
+                // never be pushed outside the chart regardless of its
+                // content's width or height.
+                .offset(x: origin.x - rect.minX, y: origin.y - rect.minY)
             }
+            .onPreferenceChange(ReadoutSizeKey.self) { readoutSize = $0 }
         }
     }
 
-    private static func format(_ value: Double) -> String {
-        value <= 1.0
-            ? "\(Int((value * 100).rounded()))%"
-            : String(format: "%.2f", value)
+    /// The series named `name`'s unit, or `.fraction` if no series matches —
+    /// the crosshair must never guess a unit from a value's magnitude.
+    private func unit(for name: String) -> ChartUnit {
+        series.first(where: { $0.name == name })?.unit ?? .fraction
     }
 
     /// Stacked mode accumulates; unstacked draws each series against the baseline.
@@ -173,12 +204,15 @@ public struct MetricChart: View {
         let barWidth = max(slot * 0.7, 1)
 
         for (index, value) in values.enumerated() {
+            guard let centerX = ChartGeometry.sampleX(at: index, in: rect, count: values.count, spacing: .slots) else {
+                continue
+            }
             let fraction = min(max(value / bound, 0), 1)
             let height = rect.height * fraction
             guard height > 0 else { continue }
 
             let bar = CGRect(
-                x: rect.minX + CGFloat(index) * slot + (slot - barWidth) / 2,
+                x: centerX - barWidth / 2,
                 y: rect.maxY - height,
                 width: barWidth,
                 height: height

@@ -100,6 +100,49 @@ struct ChartGeometryTests {
         #expect(points[0].y == 0)
     }
 
+    // MARK: sampleX
+
+    @Test("endpoints spacing places samples on both edges, evenly stepped between")
+    func sampleXEndpointsSpansEdges() {
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 50)
+        #expect(ChartGeometry.sampleX(at: 0, in: rect, count: 5, spacing: .endpoints) == 0)
+        #expect(ChartGeometry.sampleX(at: 4, in: rect, count: 5, spacing: .endpoints) == 100)
+        #expect(ChartGeometry.sampleX(at: 2, in: rect, count: 5, spacing: .endpoints) == 50)
+    }
+
+    @Test("endpoints spacing with one sample sits at the trailing edge, where 'now' lives")
+    func sampleXEndpointsSingleSampleSitsAtTrailingEdge() {
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 50)
+        #expect(ChartGeometry.sampleX(at: 0, in: rect, count: 1, spacing: .endpoints) == rect.maxX)
+    }
+
+    // MARK: ChartUnit
+
+    @Test("a fraction unit renders as a whole-number percentage")
+    func fractionUnitFormatsAsPercentage() {
+        #expect(ChartUnit.fraction.formatted(0.05) == "5%")
+        #expect(ChartUnit.fraction.formatted(0.5) == "50%")
+    }
+
+    @Test("an absolute unit below 1.0 does not render as a percentage — the regression this exists to prevent")
+    func absoluteUnitBelowOneIsNotAPercentage() {
+        // Before this fix, MetricChart.format guessed the unit from magnitude:
+        // any value <= 1.0 rendered as a percentage, so a 0.05 MB/s download
+        // read as "5%". The unit must now be explicit, not inferred.
+        #expect(ChartUnit.absolute(suffix: "MB/s").formatted(0.05) == "0.05 MB/s")
+    }
+
+    @Test("an absolute unit renders two decimal places plus its suffix")
+    func absoluteUnitFormatsWithSuffix() {
+        #expect(ChartUnit.absolute(suffix: "MB/s").formatted(3.2) == "3.20 MB/s")
+    }
+
+    @Test("a series defaults to the fraction unit so existing call sites keep their behaviour")
+    func seriesDefaultsToFractionUnit() {
+        let series = ChartSeries(name: "CPU", values: [0.5])
+        #expect(series.unit == .fraction)
+    }
+
     // MARK: Smoothing
 
     @Test("no points make no path")
