@@ -645,7 +645,11 @@ struct ChartGeometryTests {
             ChartSeries(name: "p", values: [0.2, 0.3]),
             ChartSeries(name: "e", values: [0.1, 0.1]),
         ])
-        #expect(stacked == [[0.2, 0.3], [0.3, 0.4]])
+        // Compared with a tolerance: 0.2 + 0.1 is not exactly 0.3 in IEEE-754,
+        // so an exact array comparison could never hold. The tolerance is ~1e-7
+        // of the error's magnitude but orders of magnitude below what a real
+        // stacking bug would produce, so it still discriminates.
+        #expect(approximatelyEqual(stacked, [[0.2, 0.3], [0.3, 0.4]]))
     }
 
     @Test("series of differing lengths stack over their common prefix")
@@ -654,7 +658,21 @@ struct ChartGeometryTests {
             ChartSeries(name: "p", values: [0.2, 0.3, 0.4]),
             ChartSeries(name: "e", values: [0.1, 0.1]),
         ])
-        #expect(stacked == [[0.2, 0.3], [0.3, 0.4]])
+        #expect(approximatelyEqual(stacked, [[0.2, 0.3], [0.3, 0.4]]))
+    }
+
+    /// Element-wise comparison with a tolerance, for values that are summed
+    /// before being compared.
+    private func approximatelyEqual(
+        _ lhs: [[Double]],
+        _ rhs: [[Double]],
+        tolerance: Double = 1e-9
+    ) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { left, right in
+            left.count == right.count
+                && zip(left, right).allSatisfy { abs($0 - $1) < tolerance }
+        }
     }
 
     @Test("stacking nothing yields nothing")
@@ -877,7 +895,7 @@ public enum ChartGeometry {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd VitalsCore && swift test --filter ChartGeometryTests`
-Expected: PASS — 14 tests passing.
+Expected: PASS — 15 tests passing.
 
 - [ ] **Step 5: Commit**
 
