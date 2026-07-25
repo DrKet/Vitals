@@ -40,7 +40,20 @@ struct OverheadTests {
         let cpuUsed = consumedCPUSeconds() - cpuBefore
         let wallElapsed = ProcessInfo.processInfo.systemUptime - wallBefore
 
+        // Prove sampling actually happened before trusting the budget figure.
+        // The utilisation assertion only bounds overhead from above, so a
+        // registerAll that silently registered nothing would sail through it.
+        var sampledSeries: [SeriesKey] = []
+        for key in SeriesKey.allCases where await engine.sampleCount(for: key) > 0 {
+            sampledSeries.append(key)
+        }
+
         consumers.forEach { $0.cancel() }
+
+        #expect(
+            sampledSeries.count == SeriesKey.allCases.count,
+            "Only \(sampledSeries.count) of \(SeriesKey.allCases.count) series produced samples: \(sampledSeries)"
+        )
 
         let utilisation = cpuUsed / wallElapsed
 
