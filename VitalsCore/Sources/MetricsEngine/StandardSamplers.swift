@@ -74,6 +74,11 @@ public enum StandardSamplers {
         let tracker = SamplerState(ProcessCPUTracker())
         return AnySampler {
             let processes = ProcessSampler.snapshot()
+            // A machine with zero processes does not exist; an empty snapshot
+            // means the underlying sysctl calls failed, not that the system is
+            // idle. Degrade like every other sampler rather than publishing a
+            // fabricated "no processes" state.
+            guard !processes.isEmpty else { throw SamplerError.unavailable }
             let now = ProcessInfo.processInfo.systemUptime
             let usage = tracker.withLock { $0.update(processes, at: now) }
             return ProcessSeriesSample(processes: processes, cpuUsage: usage)

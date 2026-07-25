@@ -34,9 +34,6 @@ public struct SystemSysctl: SysctlProviding {
         guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
         var buffer = [CChar](repeating: 0, count: size)
         guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
-        // Truncate at NUL terminator before decoding (CChar is Int8; convert to UInt8 for UTF8 decoding)
-        let nullTerminatorIndex = buffer.firstIndex(of: 0) ?? buffer.count
-        let utf8Buffer = buffer[0..<nullTerminatorIndex].map { UInt8(bitPattern: $0) }
-        return String(decoding: utf8Buffer, as: UTF8.self)
+        return decodeCString(buffer)
     }
 }

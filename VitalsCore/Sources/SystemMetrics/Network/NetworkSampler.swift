@@ -54,9 +54,7 @@ public enum NetworkSampler {
                 guard if_indextoname(UInt32(message.ifm_index), &nameBuffer) != nil else {
                     continue
                 }
-                let nullTerminatorIndex = nameBuffer.firstIndex(of: 0) ?? nameBuffer.count
-                let utf8Buffer = nameBuffer[0..<nullTerminatorIndex].map { UInt8(bitPattern: $0) }
-                let name = String(decoding: utf8Buffer, as: UTF8.self)
+                let name = decodeCString(nameBuffer)
                 guard !name.isEmpty else { continue }
 
                 let data = message.ifm_data

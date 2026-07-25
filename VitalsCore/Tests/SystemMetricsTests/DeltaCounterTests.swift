@@ -57,4 +57,24 @@ struct DeltaCounterTests {
         counter.reset()
         #expect(counter.update(1500, at: 12.0) == nil)
     }
+
+    @Test("Delta with a positive interval computes the expected rate")
+    func deltaWithPositiveIntervalComputesRate() {
+        let delta = Delta(amount: UInt64(500), interval: 2.0)
+        #expect(delta.perSecond == 250.0)
+    }
+
+    @Test("Delta traps on a zero interval rather than producing Infinity")
+    func deltaTrapsOnZeroInterval() async {
+        await #expect(processExitsWith: .failure) {
+            _ = Delta(amount: UInt64(500), interval: 0)
+        }
+    }
+
+    @Test("Delta traps on a negative interval rather than producing NaN")
+    func deltaTrapsOnNegativeInterval() async {
+        await #expect(processExitsWith: .failure) {
+            _ = Delta(amount: UInt64(500), interval: -1)
+        }
+    }
 }
