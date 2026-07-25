@@ -6,6 +6,15 @@ import Foundation
 /// as such. An unrecognised brand string returns `nil`; the UI then omits the
 /// bandwidth line entirely rather than showing a guess.
 public enum SoCBandwidth {
+    /// A SoC is listed only when its brand string identifies exactly one
+    /// bandwidth. Apple M3 Max is deliberately absent: its 14-core and 16-core
+    /// binnings publish 300 and 400 GB/s respectively but report the identical
+    /// `machdep.cpu.brand_string`, so the figure cannot be resolved from the
+    /// brand alone. Omitting it yields `nil` and the UI drops the line, which
+    /// is honest; listing one of the two values would state a confidently
+    /// wrong number to half the owners of that chip.
+    ///
+    /// Any future SoC with the same ambiguity must be omitted for this reason.
     private static let table: [String: Double] = [
         "Apple M1": 68.25,
         "Apple M1 Pro": 200,
@@ -17,7 +26,6 @@ public enum SoCBandwidth {
         "Apple M2 Ultra": 800,
         "Apple M3": 100,
         "Apple M3 Pro": 150,
-        "Apple M3 Max": 300,
         "Apple M4": 120,
         "Apple M4 Pro": 273,
     ]
