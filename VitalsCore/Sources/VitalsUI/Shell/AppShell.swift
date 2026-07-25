@@ -60,10 +60,3 @@ struct NotYetBuilt: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
-
-// Temporary stub so this task builds standalone. Task 9 replaces CPUPage and
-// deletes its stub from this file.
-struct CPUPage: View {
-    let store: MetricsStore
-    var body: some View { Text("CPU") }
-}

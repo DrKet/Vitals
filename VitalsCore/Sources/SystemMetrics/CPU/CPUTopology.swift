@@ -31,6 +31,24 @@ public struct CPUTopology: Sendable, Equatable {
     /// Consumers must hide frequency UI while this is `false`.
     public var frequencyAvailable: Bool { false }
 
+    public init(
+        brand: String,
+        physicalCores: Int?,
+        logicalCores: Int?,
+        clusters: [CPUCluster],
+        l1DataCacheBytes: Int?,
+        l2CacheBytes: Int?,
+        l3CacheBytes: Int?
+    ) {
+        self.brand = brand
+        self.physicalCores = physicalCores
+        self.logicalCores = logicalCores
+        self.clusters = clusters
+        self.l1DataCacheBytes = l1DataCacheBytes
+        self.l2CacheBytes = l2CacheBytes
+        self.l3CacheBytes = l3CacheBytes
+    }
+
     public static func detect(using sysctl: some SysctlProviding) -> CPUTopology {
         var clusters: [CPUCluster] = []
         let levelCount = Int(sysctl.integer("hw.nperflevels") ?? 0)
