@@ -22,7 +22,10 @@ public struct ProcessSnapshot: Sendable, Equatable {
     /// running process as using no memory.
     public let memoryFootprintBytes: UInt64?
 
-    public let cpuTimeSeconds: Double
+    /// `nil` when neither `proc_pid_rusage` nor `proc_pidinfo` could read it,
+    /// typically because the process is owned by another user. Never `0`,
+    /// which would misreport an unreadable process as genuinely idle.
+    public let cpuTimeSeconds: Double?
     /// `nil` when `proc_pidinfo` failed for this process.
     public let threadCount: Int?
     /// `nil` when `proc_pid_rusage` failed for this process.
@@ -32,7 +35,7 @@ public struct ProcessSnapshot: Sendable, Equatable {
 
     public init(
         pid: pid_t, parentPID: pid_t, name: String, userID: uid_t,
-        memoryFootprintBytes: UInt64?, cpuTimeSeconds: Double, threadCount: Int?,
+        memoryFootprintBytes: UInt64?, cpuTimeSeconds: Double?, threadCount: Int?,
         diskBytesRead: UInt64?, diskBytesWritten: UInt64?,
         architecture: ProcessArchitecture
     ) {
@@ -64,16 +67,22 @@ public struct ProcessCPUTracker: Sendable {
         var current: [pid_t: (cpuTime: Double, timestamp: TimeInterval)] = [:]
 
         for process in processes {
-            current[process.pid] = (process.cpuTimeSeconds, timestamp)
+            // A process whose CPU time can't be read yields no utilisation
+            // figure. Leaving it out of `current` too means that if the same
+            // PID later becomes readable, it starts fresh rather than
+            // computing a delta against a sample that was never real.
+            guard let cpuTimeSeconds = process.cpuTimeSeconds else { continue }
+
+            current[process.pid] = (cpuTimeSeconds, timestamp)
 
             guard let last = previous[process.pid] else { continue }
             let elapsed = timestamp - last.timestamp
             guard elapsed > 0 else { continue }
 
             // Decreasing CPU time means the PID was recycled onto a new process.
-            guard process.cpuTimeSeconds >= last.cpuTime else { continue }
+            guard cpuTimeSeconds >= last.cpuTime else { continue }
 
-            result[process.pid] = (process.cpuTimeSeconds - last.cpuTime) / elapsed
+            result[process.pid] = (cpuTimeSeconds - last.cpuTime) / elapsed
         }
 
         // Replacing rather than merging is what makes an exited PID start fresh

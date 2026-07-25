@@ -5,7 +5,7 @@ import Testing
 @Suite("Processes")
 struct ProcessTests {
 
-    private func snapshot(pid: pid_t, cpuTime: Double) -> ProcessSnapshot {
+    private func snapshot(pid: pid_t, cpuTime: Double?) -> ProcessSnapshot {
         ProcessSnapshot(
             pid: pid, parentPID: 1, name: "test", userID: 501,
             memoryFootprintBytes: nil, cpuTimeSeconds: cpuTime, threadCount: nil,
@@ -72,7 +72,7 @@ struct ProcessTests {
         let me = try #require(processes.first { $0.pid == selfPID })
 
         #expect(try #require(me.memoryFootprintBytes) > 1_000_000)
-        #expect(me.cpuTimeSeconds > 0)
+        #expect(try #require(me.cpuTimeSeconds) > 0)
         #expect(try #require(me.threadCount) > 0)
     }
 
@@ -81,6 +81,25 @@ struct ProcessTests {
         // Zero would mean "we failed to read it" masquerading as "uses no
         // memory". Failed reads must be nil.
         #expect(ProcessSampler.snapshot().allSatisfy { $0.memoryFootprintBytes != 0 })
+    }
+
+    @Test("CPU time is either a real value or nil, never zero")
+    func cpuTimeIsNeverZero() {
+        // Zero would mean "we couldn't read it" masquerading as "genuinely
+        // idle". Permission-denied reads must be nil, not zero.
+        #expect(ProcessSampler.snapshot().allSatisfy { $0.cpuTimeSeconds != 0 })
+    }
+
+    @Test("a process with unreadable CPU time is absent from the tracker's result")
+    func unreadableCPUTimeExcludedFromResult() {
+        var tracker = ProcessCPUTracker()
+        _ = tracker.update([snapshot(pid: 100, cpuTime: 5.0)], at: 10.0)
+        let usage = tracker.update(
+            [snapshot(pid: 100, cpuTime: nil), snapshot(pid: 200, cpuTime: nil)], at: 11.0
+        )
+        #expect(usage[100] == nil)
+        #expect(usage[200] == nil)
+        #expect(usage.isEmpty)
     }
 
     @Test("live snapshot includes launchd as PID 1")
