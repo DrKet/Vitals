@@ -1274,13 +1274,18 @@ struct MemoryHardwareTests {
         #expect(SoCBandwidth.peakGBs(forBrand: "Apple M1") == 68.25)
         #expect(SoCBandwidth.peakGBs(forBrand: "Apple M1 Max") == 400)
         #expect(SoCBandwidth.peakGBs(forBrand: "Apple M2 Pro") == 200)
-        #expect(SoCBandwidth.peakGBs(forBrand: "Apple M3 Max") == 300)
+        #expect(SoCBandwidth.peakGBs(forBrand: "Apple M3 Pro") == 150)
     }
 
     @Test("an unrecognised SoC yields nil rather than a guess")
     func unknownSoCYieldsNil() {
         #expect(SoCBandwidth.peakGBs(forBrand: "Apple M9 Ultra Extreme") == nil)
         #expect(SoCBandwidth.peakGBs(forBrand: "") == nil)
+
+        // Deliberate: the two M3 Max binnings publish different bandwidth
+        // (300 and 400 GB/s) behind one brand string, so there is no honest
+        // single answer. Do not add it to the table.
+        #expect(SoCBandwidth.peakGBs(forBrand: "Apple M3 Max") == nil)
     }
 
     @Test("malformed JSON throws rather than returning zeroed hardware")
@@ -1326,7 +1331,6 @@ public enum SoCBandwidth {
         "Apple M2 Ultra": 800,
         "Apple M3": 100,
         "Apple M3 Pro": 150,
-        "Apple M3 Max": 300,
         "Apple M4": 120,
         "Apple M4 Pro": 273,
     ]
