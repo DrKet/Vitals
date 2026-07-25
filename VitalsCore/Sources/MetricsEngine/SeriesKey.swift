@@ -32,9 +32,22 @@ public struct MetricValue: @unchecked Sendable {
     public let timestamp: TimeInterval
     public let value: Any
 
-    public init(timestamp: TimeInterval, value: Any) {
+    public init<Value: Sendable>(timestamp: TimeInterval, value: Value) {
         self.timestamp = timestamp
         self.value = value
+    }
+
+    /// Construction path for values already boxed as `Any` by `AnySampler`,
+    /// whose own initializer constrained the original payload to `Sendable`
+    /// before erasure. By the time that value reaches here its static type
+    /// is `Any`, so the generic, checked initializer above can't accept it --
+    /// this internal entry point exists so the engine can carry it forward
+    /// without re-deriving a static Sendable proof the type system can no
+    /// longer express. Not public: nothing outside this module can use it to
+    /// smuggle an unverified value.
+    init(timestamp: TimeInterval, uncheckedValue: Any) {
+        self.timestamp = timestamp
+        self.value = uncheckedValue
     }
 }
 
