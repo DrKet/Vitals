@@ -61,13 +61,8 @@ struct NotYetBuilt: View {
     }
 }
 
-// Temporary stubs so this task builds standalone. Task 8 replaces OverviewPage,
-// Task 9 replaces CPUPage, and both delete their stub from this file.
-struct OverviewPage: View {
-    let store: MetricsStore
-    var body: some View { Text("Overview") }
-}
-
+// Temporary stub so this task builds standalone. Task 9 replaces CPUPage and
+// deletes its stub from this file.
 struct CPUPage: View {
     let store: MetricsStore
     var body: some View { Text("CPU") }
