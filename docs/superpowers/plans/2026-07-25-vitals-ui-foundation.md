@@ -1245,6 +1245,11 @@ public struct MetricChart: View {
     private let style: ChartStyle
     private let colors: [Color]
 
+    /// - Parameter series: **Order is load-bearing.** In stacked area mode the
+    ///   first series is the base band and every later one accumulates on top of
+    ///   it. The first series is also the one the live dot marks and the one
+    ///   painted frontmost, so list the series a reader should track first.
+    /// - Parameter colors: matched to `series` by index; wraps if shorter.
     public init(series: [ChartSeries], style: ChartStyle, colors: [Color]) {
         self.series = series
         self.style = style
@@ -1368,7 +1373,7 @@ public struct MetricChart: View {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd VitalsCore && swift test --filter MetricChartTests`
-Expected: PASS — 4 tests passing.
+Expected: PASS — 6 tests passing.
 
 - [ ] **Step 5: Look at the renders**
 

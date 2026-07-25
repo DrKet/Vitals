@@ -13,6 +13,13 @@ public struct MetricChart: View {
     private let style: ChartStyle
     private let colors: [Color]
 
+    /// - Parameter series: **Order is load-bearing.** In stacked area mode the
+    ///   first series is the base band and every later one accumulates on top of
+    ///   it, so listing them in the wrong order silently redraws the
+    ///   decomposition. The first series is also the one the live dot marks and
+    ///   the one painted frontmost, so put the series a reader should track
+    ///   first — Performance cores before Efficiency, download before upload.
+    /// - Parameter colors: matched to `series` by index; wraps if shorter.
     public init(series: [ChartSeries], style: ChartStyle, colors: [Color]) {
         self.series = series
         self.style = style

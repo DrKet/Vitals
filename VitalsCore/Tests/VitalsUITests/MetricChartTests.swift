@@ -38,6 +38,30 @@ struct MetricChartTests {
         #expect(FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test("renders a histogram, the default at small widget sizes")
+    func rendersHistogram() throws {
+        let chart = MetricChart(
+            series: [ChartSeries(name: "CPU", values: Self.wave(40, phase: 0, scale: 0.9))],
+            style: .histogram,
+            colors: [Vitals.Palette.cpu]
+        )
+        let url = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-histogram")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test("a histogram of all-zero values draws no bars but still renders")
+    func histogramOfZeroesRenders() throws {
+        // Exercises the `height > 0` guard: every bar is skipped, so only the
+        // gridlines remain. Still non-uniform, so the blank check holds.
+        let chart = MetricChart(
+            series: [ChartSeries(name: "Idle", values: Array(repeating: 0, count: 20))],
+            style: .histogram,
+            colors: [Vitals.Palette.cpu]
+        )
+        let url = try renderPNG(chart, size: CGSize(width: 300, height: 132), named: "chart-histogram-zero")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test("an empty series renders without crashing")
     func emptySeriesRenders() throws {
         let chart = MetricChart(
