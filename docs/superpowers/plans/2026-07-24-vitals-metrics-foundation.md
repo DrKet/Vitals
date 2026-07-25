@@ -2272,7 +2272,9 @@ git commit -m "feat: add network interface counters and throughput tracking"
 - Consumes: `DeltaCounter` from Task 1.
 - Produces: `ProcessArchitecture` enum with `.native`, `.translated`; `ProcessSnapshot` with `pid`, `parentPID`, `name`, `userID`, `cpuTimeSeconds`, `architecture`, plus **optional** `memoryFootprintBytes: UInt64?`, `threadCount: Int?`, `diskBytesRead: UInt64?`, `diskBytesWritten: UInt64?`; `ProcessCPUTracker` with `mutating func update(_:at:) -> [pid_t: Double]`; `ProcessSampler.snapshot() -> [ProcessSnapshot]`. Task 13 uses `ProcessSampler`.
 
-**Global constraint note:** the four fields are optional because a process that exits mid-scan, or one we lack rights to inspect, must read as unknown rather than as a process using no memory and no threads.
+**Global constraint note:** these fields are optional because a process that exits mid-scan, or one we lack rights to inspect, must read as unknown rather than as a process using no memory, no threads, and no CPU time. On a live system roughly a third of processes are unreadable this way.
+
+**Two SDK realities discovered during implementation:** `PROC_FLAG_TRANSLATED` does not exist in this SDK — Rosetta detection reads `P_TRANSLATED` (0x00020000) from `kinfo_proc.kp_proc.p_flag` instead. And the guard must distinguish `ESRCH` (process genuinely exited, drop it) from `EPERM` (owned by another user, keep it with `nil` privileged fields); the simpler guard silently dropped every root-owned process including `launchd`.
 
 **Spec constraint:** memory must come from `ri_phys_footprint`, never `pti_resident_size`. A test asserts this by checking the reported value differs from RSS for the test process itself.
 
@@ -2417,7 +2419,10 @@ public struct ProcessSnapshot: Sendable, Equatable {
     /// running process as using no memory.
     public let memoryFootprintBytes: UInt64?
 
-    public let cpuTimeSeconds: Double
+    /// `nil` when neither `proc_pid_rusage` nor `proc_pidinfo` could read it,
+    /// typically because the process is owned by another user. Never `0`,
+    /// which would misreport a busy daemon as idle.
+    public let cpuTimeSeconds: Double?
     /// `nil` when `proc_pidinfo` failed for this process.
     public let threadCount: Int?
     /// `nil` when `proc_pid_rusage` failed for this process.
@@ -2427,7 +2432,7 @@ public struct ProcessSnapshot: Sendable, Equatable {
 
     public init(
         pid: pid_t, parentPID: pid_t, name: String, userID: uid_t,
-        memoryFootprintBytes: UInt64?, cpuTimeSeconds: Double, threadCount: Int?,
+        memoryFootprintBytes: UInt64?, cpuTimeSeconds: Double?, threadCount: Int?,
         diskBytesRead: UInt64?, diskBytesWritten: UInt64?,
         architecture: ProcessArchitecture
     ) {
