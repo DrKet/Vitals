@@ -2199,12 +2199,20 @@ public enum NetworkSampler {
             var offset = 0
 
             while offset < length {
+                // Confirm a whole header is present before binding memory to
+                // it. `offset < length` only promises one remaining byte, and
+                // reading a partially-present struct is undefined behaviour.
+                guard length - offset >= MemoryLayout<if_msghdr>.size else { break }
+
                 let header = base.advanced(by: offset)
                     .assumingMemoryBound(to: if_msghdr.self).pointee
-                guard header.ifm_msglen > 0 else { break }
-                defer { offset += Int(header.ifm_msglen) }
+
+                let recordLength = Int(header.ifm_msglen)
+                guard recordLength > 0, recordLength <= length - offset else { break }
+                defer { offset += recordLength }
 
                 guard header.ifm_type == RTM_IFINFO2 else { continue }
+                guard recordLength >= MemoryLayout<if_msghdr2>.size else { continue }
 
                 let message = base.advanced(by: offset)
                     .assumingMemoryBound(to: if_msghdr2.self).pointee
