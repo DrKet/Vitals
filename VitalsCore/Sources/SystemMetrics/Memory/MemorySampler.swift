@@ -1,5 +1,14 @@
-import Darwin
+// `@preconcurrency` is required to read `vm_kernel_page_size` below: Swift 6
+// strict concurrency otherwise flags any access to this C mutable global as
+// concurrency-unsafe, regardless of how the reading declaration is annotated.
+@preconcurrency import Darwin
 import Foundation
+
+/// `host_statistics64` reports page counts in kernel page units, which can
+/// differ from this process's page size under Rosetta translation. Capturing
+/// the kernel global is therefore required for correctness, not a stylistic
+/// choice. Immutable after libsystem initialisation.
+private let kernelPageSize = vm_kernel_page_size
 
 public enum MemorySampler {
     public static func read() -> MemorySample? {
@@ -26,13 +35,6 @@ public enum MemorySampler {
         }
         guard result == KERN_SUCCESS else { return nil }
 
-        // `vm_kernel_page_size` is a mutable C global and Swift 6's strict
-        // concurrency checking will not let us read it directly. Ask the host
-        // for its page size via a Mach call instead, which reports the same
-        // value without the concurrency-safety diagnostic.
-        var pageSize: vm_size_t = 0
-        guard host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS else { return nil }
-
         return VMCounters(
             free: UInt64(stats.free_count),
             wired: UInt64(stats.wire_count),
@@ -40,7 +42,7 @@ public enum MemorySampler {
             purgeable: UInt64(stats.purgeable_count),
             external: UInt64(stats.external_page_count),
             internalPages: UInt64(stats.internal_page_count),
-            pageSize: UInt64(pageSize)
+            pageSize: UInt64(kernelPageSize)
         )
     }
 
