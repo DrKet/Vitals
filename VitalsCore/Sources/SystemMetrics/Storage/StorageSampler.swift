@@ -62,12 +62,19 @@ public enum StorageSampler {
                   let statistics = dictionary["Statistics"] as? [String: Any]
             else { continue }
 
-            let name = (dictionary["BSD Name"] as? String)
+            // A driver with no discoverable BSD name is skipped rather than
+            // filed under a placeholder key. Two nameless drivers would
+            // otherwise collide, and — worse — successive samples could key
+            // different physical devices identically, feeding DeltaCounter a
+            // delta between unrelated disks. An unidentifiable device is
+            // omitted, exactly as an unreadable volume is.
+            guard let name = (dictionary["BSD Name"] as? String)
                 ?? (IORegistryEntrySearchCFProperty(
                         service, kIOServicePlane, "BSD Name" as CFString,
                         kCFAllocatorDefault, IOOptionBits(kIORegistryIterateRecursively)
-                    ) as? String)
-                ?? "unknown"
+                    ) as? String),
+                !name.isEmpty
+            else { continue }
 
             // A driver that does not publish both counters is skipped. Zero
             // would be indistinguishable from a genuinely idle disk and would

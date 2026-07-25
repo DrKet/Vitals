@@ -91,6 +91,16 @@ struct StorageTests {
         #expect(volumes.contains { $0.isInternal && $0.totalBytes > 0 })
     }
 
+    @Test("no IO counter is filed under a placeholder device name")
+    func noPlaceholderDeviceKeys() {
+        // A driver with no discoverable BSD name must be omitted, not filed
+        // under a shared placeholder — two such drivers would collide, and
+        // successive samples could key different devices identically.
+        let devices = StorageSampler.ioCounters().keys
+        #expect(devices.contains("unknown") == false)
+        #expect(devices.allSatisfy { $0.isEmpty == false })
+    }
+
     @Test("live IO counters are non-empty and monotonic across two reads")
     func liveIOCountersAreMonotonic() {
         let first = StorageSampler.ioCounters()
