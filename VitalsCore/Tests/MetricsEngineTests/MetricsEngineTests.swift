@@ -130,7 +130,7 @@ struct MetricsEngineTests {
         #expect(await engine.activeSeries.contains(.cpu) == false)
     }
 
-    @Test("keeps sampling while a second subscriber remains")
+    @Test("keeps sampling for the remaining subscriber when one departs")
     func keepsSamplingForRemainingSubscriber() async throws {
         let engine = MetricsEngine(intervalOverride: .milliseconds(20))
         let sampler = CountingSampler()
@@ -139,19 +139,46 @@ struct MetricsEngineTests {
         let first = await engine.subscribe(to: .cpu)
         let second = await engine.subscribe(to: .cpu)
 
-        var firstCount = 0
-        for await _ in first {
-            firstCount += 1
-            if firstCount == 2 { break }
+        // Mirror the pattern real consumers use, same as
+        // `stopsWhenLastSubscriberLeaves`: a view or widget owns a Task that
+        // iterates the stream for as long as it's visible, and cancels that
+        // Task when it goes away. Breaking out of a `for await` loop while
+        // the stream value is still in scope does not fire `onTermination`,
+        // so it can't be used to exercise a genuine departure here -- only
+        // consuming-Task cancellation does.
+        let firstConsumer = Task {
+            for await _ in first {}
+        }
+        let secondConsumer = Task {
+            for await _ in second {}
         }
 
-        var secondCount = 0
-        for await _ in second {
-            secondCount += 1
-            if secondCount == 2 { break }
-        }
+        // Sampling should be running while both subscribers are attached.
+        let sampledWithBoth = await waitUntil { sampler.callCount >= 3 }
+        #expect(sampledWithBoth)
+        #expect(await engine.activeSeries.contains(.cpu))
 
-        #expect(secondCount == 2)
+        firstConsumer.cancel()
+
+        // Give the first subscriber's detach a chance to land. Detaching one
+        // of two subscribers must not stop the series -- only the departure
+        // of the *last* one does that (covered by
+        // `stopsWhenLastSubscriberLeaves`). Poll on the surviving
+        // subscriber's count actually advancing, rather than sleeping a
+        // fixed amount, so this doesn't hang if a regression stalls it, but
+        // still gives real time for the (incorrect) idle path to kick in if
+        // one existed.
+        let countAfterFirstLeaves = sampler.callCount
+        let keptSamplingForSecond = await waitUntil {
+            sampler.callCount > countAfterFirstLeaves
+        }
+        #expect(keptSamplingForSecond)
+        #expect(await engine.activeSeries.contains(.cpu))
+
+        secondConsumer.cancel()
+
+        let bothGoneStoppedIt = await waitUntil { await engine.activeSeries.contains(.cpu) == false }
+        #expect(bothGoneStoppedIt)
     }
 
     @Test("subscribing to one series never samples another")

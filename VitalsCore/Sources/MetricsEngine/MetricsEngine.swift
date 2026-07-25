@@ -32,6 +32,18 @@ public actor MetricsEngine {
         self.historyCapacity = historyCapacity
     }
 
+    /// The per-series loop in `startIfNeeded` captures `self` weakly, so a
+    /// running task does not keep the engine alive -- but the inverse isn't
+    /// true either: nothing about the engine going away cancels a task that's
+    /// still spinning. Without this, an engine deallocated while any series
+    /// is active leaks that series' sample-and-sleep loop forever, since
+    /// `stopIfIdle` (the only other canceller) requires a live `self` to run.
+    deinit {
+        for entry in series.values {
+            entry.task?.cancel()
+        }
+    }
+
     public func register(_ sampler: AnySampler, for key: SeriesKey, cadence: SamplingCadence) {
         series[key] = Series(
             registration: Registration(sampler: sampler, cadence: cadence),
@@ -114,7 +126,7 @@ public actor MetricsEngine {
 
         let value = MetricValue(
             timestamp: ProcessInfo.processInfo.systemUptime,
-            value: raw
+            uncheckedValue: raw
         )
 
         series[key]?.history.append(value)
