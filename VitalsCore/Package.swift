@@ -7,7 +7,9 @@ let package = Package(
     products: [
         .library(name: "SystemMetrics", targets: ["SystemMetrics"]),
         .library(name: "MetricsEngine", targets: ["MetricsEngine"]),
+        .library(name: "VitalsUI", targets: ["VitalsUI"]),
         .executable(name: "vitals-dump", targets: ["vitals-dump"]),
+        .executable(name: "VitalsApp", targets: ["VitalsApp"]),
     ],
     targets: [
         .target(
@@ -19,9 +21,19 @@ let package = Package(
             dependencies: ["SystemMetrics"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        .target(
+            name: "VitalsUI",
+            dependencies: ["SystemMetrics", "MetricsEngine"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .executableTarget(
             name: "vitals-dump",
             dependencies: ["SystemMetrics", "MetricsEngine"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .executableTarget(
+            name: "VitalsApp",
+            dependencies: ["VitalsUI", "SystemMetrics", "MetricsEngine"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
@@ -32,6 +44,10 @@ let package = Package(
         .testTarget(
             name: "MetricsEngineTests",
             dependencies: ["MetricsEngine"]
+        ),
+        .testTarget(
+            name: "VitalsUITests",
+            dependencies: ["VitalsUI"]
         ),
     ]
 )
