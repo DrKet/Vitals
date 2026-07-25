@@ -11,26 +11,45 @@ public struct OverviewPage: View {
         self.store = store
     }
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 240), spacing: Vitals.Metrics.tileSpacing)
-    ]
+    /// One tile's worth of state, so the grid can lay them out generically.
+    private struct Tile: Identifiable {
+        let id: String
+        let label: String
+        let value: String?
+        let accent: Color
+        let series: [ChartSeries]
+    }
 
-    public var body: some View {
-        LazyVGrid(columns: columns, spacing: Vitals.Metrics.tileSpacing) {
-            MetricTile(
+    private var tiles: [Tile] {
+        [
+            Tile(
+                id: "cpu",
                 label: "CPU",
                 value: store.cpu.map { "\(Int(($0.total * 100).rounded()))%" },
                 accent: Vitals.Palette.cpu,
                 series: cpuSeries
-            )
-            MetricTile(
+            ),
+            Tile(
+                id: "memory",
                 label: "Memory",
                 value: store.memory.map { formatBytes($0.used) },
                 accent: Vitals.Palette.memory,
                 series: memorySeries
+            ),
+        ]
+    }
+
+    public var body: some View {
+        // `TileGrid` rather than `LazyVGrid`: a lazy grid sizes its rows to
+        // their content, which strands two tiles at the top of a tall window.
+        TileGrid(items: tiles) { tile in
+            MetricTile(
+                label: tile.label,
+                value: tile.value,
+                accent: tile.accent,
+                series: tile.series
             )
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task { await store.stream(.cpu) }
         .task { await store.stream(.memory) }
     }

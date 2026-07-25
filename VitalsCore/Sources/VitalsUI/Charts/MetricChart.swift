@@ -75,7 +75,9 @@ public struct MetricChart: View {
                 }
             }
         }
-        .frame(height: Vitals.Metrics.chartHeight)
+        // A floor, not a fixed size: the chart claims leftover vertical space
+        // so a tall tile shows more history rather than more emptiness.
+        .frame(minHeight: Vitals.Metrics.chartHeight, maxHeight: .infinity)
     }
 
     @ViewBuilder
