@@ -919,7 +919,9 @@ Establishes the Liquid Glass surface every panel and tile sits on, and the `Imag
 - Consumes: `Vitals.Metrics` from Task 2.
 - Produces: `View.glassSurface(cornerRadius:)` modifier; `GlassPanel<Content>` view; and in tests, `renderPNG(_:size:named:) -> URL` writing to `/tmp/vitals-render/`. Tasks 5, 6, 8, and 9 use the harness.
 
-**On Liquid Glass:** macOS 26 provides `.glassEffect(_:in:)` and `GlassEffectContainer` natively. If the exact signature differs from what is written here, **report the compiler's message and the corrected signature** rather than substituting a hand-rolled `.ultraThinMaterial` blur — the whole point of targeting 26 is getting the real material.
+**On Liquid Glass:** macOS 26 provides `.glassEffect(_:in:)` natively and the signature below compiles as written — this was verified on this machine.
+
+**Why `glassSurface` is switchable.** A first attempt at this task discovered that `.glassEffect` renders *nothing* through `ImageRenderer` — not merely the material, but the entire subtree including child `Text`. Every render came out uniformly blank, which would make each render assertion in Tasks 5, 6, 8, and 9 vacuously true. The environment flag below keeps the real material in the app and swaps an equivalent-geometry material for offscreen capture, so the renders verify what they are meant to verify. The glass itself is judged by running the app.
 
 - [ ] **Step 1: Write the render harness**
 
@@ -936,17 +938,25 @@ import Testing
 /// screen-recording permission that a non-interactive session does not have.
 /// `ImageRenderer` needs no permission and no window.
 ///
-/// Caveat worth knowing: `.glassEffect` samples what is *behind* a view, and
-/// offscreen there is nothing behind it. These renders verify layout,
-/// typography, and chart geometry — not the glass material itself, which must
-/// be judged in the running app.
+/// Caveat worth knowing: these renders verify layout, typography, and chart
+/// geometry — never the glass material, which is switched off here and must be
+/// judged in the running app.
 @MainActor
 func renderPNG(
     _ view: some View,
     size: CGSize,
     named name: String
 ) throws -> URL {
-    let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height))
+    // Glass is switched off for offscreen capture. `.glassEffect` renders
+    // nothing through `ImageRenderer` — not the material, and not its own
+    // children either — so every render would be blank and every assertion
+    // vacuous. The fallback keeps identical geometry, so layout, typography,
+    // and chart drawing are all still verified.
+    let content = view
+        .environment(\.vitalsGlassEnabled, false)
+        .frame(width: size.width, height: size.height)
+
+    let renderer = ImageRenderer(content: content)
     renderer.scale = 2
 
     let image = try #require(renderer.nsImage, "ImageRenderer produced no image")
@@ -1020,6 +1030,13 @@ struct GlassSurfaceTests {
         let url = try renderPNG(view, size: CGSize(width: 120, height: 80), named: "glass-modifier")
         #expect(FileManager.default.fileExists(atPath: url.path))
     }
+
+    @Test("real glass is the default; only the harness turns it off")
+    func glassIsOnByDefault() {
+        // Guards against the test-only fallback ever becoming the app's
+        // appearance by accident.
+        #expect(EnvironmentValues().vitalsGlassEnabled == true)
+    }
 }
 ```
 
@@ -1035,13 +1052,48 @@ Create `VitalsCore/Sources/VitalsUI/Design/GlassSurface.swift`:
 ```swift
 import SwiftUI
 
-extension View {
-    /// The house surface: Liquid Glass in a rounded rectangle.
+private struct VitalsGlassEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// Whether `glassSurface()` uses the real Liquid Glass material.
     ///
-    /// Every panel, tile, and widget in Vitals sits on this, so the app reads as
-    /// one material rather than an assortment of boxes.
+    /// True everywhere in the running app. The offscreen render harness sets it
+    /// false, because `.glassEffect` draws nothing at all through
+    /// `ImageRenderer` — not the material, and not its children either — which
+    /// would make every render test a blank image and every assertion vacuous.
+    public var vitalsGlassEnabled: Bool {
+        get { self[VitalsGlassEnabledKey.self] }
+        set { self[VitalsGlassEnabledKey.self] = newValue }
+    }
+}
+
+/// The house surface: Liquid Glass in a rounded rectangle.
+///
+/// Every panel, tile, and widget in Vitals sits on this, so the app reads as one
+/// material rather than an assortment of boxes.
+struct GlassSurfaceModifier: ViewModifier {
+    @Environment(\.vitalsGlassEnabled) private var glassEnabled
+    let cornerRadius: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if glassEnabled {
+            content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        } else {
+            // Same geometry, a material that renders offscreen. Test-only path.
+            content.background(
+                .regularMaterial,
+                in: RoundedRectangle(cornerRadius: cornerRadius)
+            )
+        }
+    }
+}
+
+extension View {
     public func glassSurface(cornerRadius: CGFloat = Vitals.Metrics.cornerRadius) -> some View {
-        glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        modifier(GlassSurfaceModifier(cornerRadius: cornerRadius))
     }
 }
 
@@ -1070,7 +1122,7 @@ public struct GlassPanel<Content: View>: View {
 - [ ] **Step 5: Run tests and look at the output**
 
 Run: `cd VitalsCore && swift test --filter GlassSurfaceTests`
-Expected: PASS — 2 tests passing.
+Expected: PASS — 3 tests passing.
 
 Then open the renders and confirm the text is laid out and legible (the glass material itself will not appear offscreen — that is expected and documented in the harness):
 
