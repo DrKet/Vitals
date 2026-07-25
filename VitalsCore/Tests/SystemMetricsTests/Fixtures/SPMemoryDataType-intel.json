@@ -1,0 +1,29 @@
+{
+  "_synthesized_note": "Hand-written to match system_profiler's Intel schema. Not a capture.",
+  "SPMemoryDataType": [
+    {
+      "_name": "memory_slots",
+      "ECC": "memory_ecc_disabled",
+      "_items": [
+        {
+          "_name": "BANK 0/ChannelA-DIMM0",
+          "dimm_size": "16 GB",
+          "dimm_type": "DDR4",
+          "dimm_speed": "2667 MHz",
+          "dimm_status": "ok",
+          "dimm_manufacturer": "Micron",
+          "dimm_part_number": "MTA16ATF2G64HZ-2G6E1"
+        },
+        {
+          "_name": "BANK 2/ChannelB-DIMM0",
+          "dimm_size": "16 GB",
+          "dimm_type": "DDR4",
+          "dimm_speed": "2667 MHz",
+          "dimm_status": "ok",
+          "dimm_manufacturer": "Micron",
+          "dimm_part_number": "MTA16ATF2G64HZ-2G6E1"
+        }
+      ]
+    }
+  ]
+}
