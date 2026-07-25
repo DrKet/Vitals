@@ -811,7 +811,9 @@ git commit -m "feat: add CPU load sampling with cluster grouping"
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `VMCounters`; `MemoryPressure` enum with `.normal`, `.warning`, `.critical`; `MemorySample` with byte-valued `wired`, `compressed`, `app`, `cached`, `used`, `free`, `swapUsed`, `swapTotal`, `pressure`; `MemoryCalculator.sample(from:swapUsed:swapTotal:pressure:) -> MemorySample`; `MemorySampler.read() -> MemorySample?`. Tasks 10 and 13 use `MemorySampler`.
+- Produces: `VMCounters`; `MemoryPressure` enum with `.normal`, `.warning`, `.critical`; `MemorySample` with byte-valued `wired`, `compressed`, `app`, `cached`, `used`, `free` plus **optional** `swapUsed: UInt64?`, `swapTotal: UInt64?`, `pressure: MemoryPressure?`; `MemoryCalculator.sample(from:swapUsed:swapTotal:pressure:) -> MemorySample`; `MemorySampler.read() -> MemorySample?`. Tasks 10 and 13 use `MemorySampler`.
+
+**Global constraint note:** swap and pressure are optional because an unreadable value must never be reported as `0` or `.normal`. Zero swap and normal pressure are both real, meaningful readings; conflating them with failure is exactly what the never-fabricate constraint forbids.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -894,6 +896,25 @@ struct MemorySampleTests {
         #expect(sample.pressure == .warning)
     }
 
+    @Test("an unreadable swap or pressure value is nil, not a plausible default")
+    func unreadableValuesAreNil() {
+        let sample = MemoryCalculator.sample(
+            from: counters(), swapUsed: nil, swapTotal: nil, pressure: nil
+        )
+        #expect(sample.swapUsed == nil)
+        #expect(sample.swapTotal == nil)
+        #expect(sample.pressure == nil)
+    }
+
+    @Test("zero swap is preserved as a real reading, distinct from nil")
+    func zeroSwapIsNotNil() {
+        let sample = MemoryCalculator.sample(
+            from: counters(), swapUsed: 0, swapTotal: 0, pressure: .normal
+        )
+        #expect(sample.swapUsed == 0)
+        #expect(sample.swapUsed != nil)
+    }
+
     @Test("live sampler reports plausible values for this machine")
     func liveSamplerIsPlausible() throws {
         let sample = try #require(MemorySampler.read())
@@ -960,9 +981,14 @@ public struct MemorySample: Sendable, Equatable {
     public let compressed: UInt64
     public let cached: UInt64
     public let free: UInt64
-    public let swapUsed: UInt64
-    public let swapTotal: UInt64
-    public let pressure: MemoryPressure
+
+    /// `nil` when the swap sysctl could not be read. Never `0` for an
+    /// unreadable value — zero means genuinely no swap in use.
+    public let swapUsed: UInt64?
+    public let swapTotal: UInt64?
+
+    /// `nil` when the pressure level could not be read or was unrecognised.
+    public let pressure: MemoryPressure?
 
     /// Matches Activity Monitor's "Memory Used".
     public var used: UInt64 { app + wired + compressed }
@@ -971,9 +997,9 @@ public struct MemorySample: Sendable, Equatable {
 public enum MemoryCalculator {
     public static func sample(
         from counters: VMCounters,
-        swapUsed: UInt64,
-        swapTotal: UInt64,
-        pressure: MemoryPressure
+        swapUsed: UInt64?,
+        swapTotal: UInt64?,
+        pressure: MemoryPressure?
     ) -> MemorySample {
         let page = counters.pageSize
 
@@ -1012,8 +1038,8 @@ public enum MemorySampler {
         let swap = readSwap()
         return MemoryCalculator.sample(
             from: counters,
-            swapUsed: swap.used,
-            swapTotal: swap.total,
+            swapUsed: swap?.used,
+            swapTotal: swap?.total,
             pressure: readPressure()
         )
     }
@@ -1042,26 +1068,31 @@ public enum MemorySampler {
         )
     }
 
-    static func readSwap() -> (used: UInt64, total: UInt64) {
+    /// `nil` rather than `(0, 0)` on failure: zero swap is a real, meaningful
+    /// reading and must not be confused with a failed one.
+    static func readSwap() -> (used: UInt64, total: UInt64)? {
         var usage = xsw_usage()
         var size = MemoryLayout<xsw_usage>.size
         guard sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0 else {
-            return (0, 0)
+            return nil
         }
         return (UInt64(usage.xsu_used), UInt64(usage.xsu_total))
     }
 
-    static func readPressure() -> MemoryPressure {
+    /// `nil` rather than `.normal` on failure or on an unrecognised level:
+    /// reporting "normal" for a reading we do not have would be a fabrication.
+    static func readPressure() -> MemoryPressure? {
         var level: Int32 = 0
         var size = MemoryLayout<Int32>.size
         guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 else {
-            return .normal
+            return nil
         }
         // Values from <sys/kern_memorystatus.h>: 1 normal, 2 warning, 4 critical.
         switch level {
-        case 4: return .critical
+        case 1: return .normal
         case 2: return .warning
-        default: return .normal
+        case 4: return .critical
+        default: return nil
         }
     }
 }
@@ -1070,7 +1101,7 @@ public enum MemorySampler {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd VitalsCore && swift test --filter "Memory sample"`
-Expected: PASS — 6 tests passing.
+Expected: PASS — 8 tests passing.
 
 - [ ] **Step 6: Verify against Activity Monitor**
 
@@ -2204,7 +2235,9 @@ git commit -m "feat: add network interface counters and throughput tracking"
 
 **Interfaces:**
 - Consumes: `DeltaCounter` from Task 1.
-- Produces: `ProcessArchitecture` enum with `.native`, `.translated`; `ProcessSnapshot` with `pid`, `parentPID`, `name`, `userID`, `memoryFootprintBytes`, `cpuTimeSeconds`, `threadCount`, `diskBytesRead`, `diskBytesWritten`, `architecture`; `ProcessCPUTracker` with `mutating func update(_:at:) -> [pid_t: Double]`; `ProcessSampler.snapshot() -> [ProcessSnapshot]`. Task 13 uses `ProcessSampler`.
+- Produces: `ProcessArchitecture` enum with `.native`, `.translated`; `ProcessSnapshot` with `pid`, `parentPID`, `name`, `userID`, `cpuTimeSeconds`, `architecture`, plus **optional** `memoryFootprintBytes: UInt64?`, `threadCount: Int?`, `diskBytesRead: UInt64?`, `diskBytesWritten: UInt64?`; `ProcessCPUTracker` with `mutating func update(_:at:) -> [pid_t: Double]`; `ProcessSampler.snapshot() -> [ProcessSnapshot]`. Task 13 uses `ProcessSampler`.
+
+**Global constraint note:** the four fields are optional because a process that exits mid-scan, or one we lack rights to inspect, must read as unknown rather than as a process using no memory and no threads.
 
 **Spec constraint:** memory must come from `ri_phys_footprint`, never `pti_resident_size`. A test asserts this by checking the reported value differs from RSS for the test process itself.
 
@@ -2223,8 +2256,8 @@ struct ProcessTests {
     private func snapshot(pid: pid_t, cpuTime: Double) -> ProcessSnapshot {
         ProcessSnapshot(
             pid: pid, parentPID: 1, name: "test", userID: 501,
-            memoryFootprintBytes: 0, cpuTimeSeconds: cpuTime, threadCount: 1,
-            diskBytesRead: 0, diskBytesWritten: 0, architecture: .native
+            memoryFootprintBytes: nil, cpuTimeSeconds: cpuTime, threadCount: nil,
+            diskBytesRead: nil, diskBytesWritten: nil, architecture: .native
         )
     }
 
@@ -2286,9 +2319,16 @@ struct ProcessTests {
         let selfPID = getpid()
         let me = try #require(processes.first { $0.pid == selfPID })
 
-        #expect(me.memoryFootprintBytes > 1_000_000)
+        #expect(try #require(me.memoryFootprintBytes) > 1_000_000)
         #expect(me.cpuTimeSeconds > 0)
-        #expect(me.threadCount > 0)
+        #expect(try #require(me.threadCount) > 0)
+    }
+
+    @Test("a footprint is either a real value or nil, never zero")
+    func footprintIsNeverZero() {
+        // Zero would mean "we failed to read it" masquerading as "uses no
+        // memory". Failed reads must be nil.
+        #expect(ProcessSampler.snapshot().allSatisfy { $0.memoryFootprintBytes != 0 })
     }
 
     @Test("live snapshot includes launchd as PID 1")
@@ -2336,18 +2376,24 @@ public struct ProcessSnapshot: Sendable, Equatable {
     /// `ri_phys_footprint`. This is what Activity Monitor's Memory column
     /// shows. RSS is deliberately not used: it materially overstates memory on
     /// macOS and would make Vitals disagree with every other tool.
-    public let memoryFootprintBytes: UInt64
+    ///
+    /// `nil` when `proc_pid_rusage` failed — typically because the process
+    /// exited mid-scan, or is protected. Never `0`, which would misreport a
+    /// running process as using no memory.
+    public let memoryFootprintBytes: UInt64?
 
     public let cpuTimeSeconds: Double
-    public let threadCount: Int
-    public let diskBytesRead: UInt64
-    public let diskBytesWritten: UInt64
+    /// `nil` when `proc_pidinfo` failed for this process.
+    public let threadCount: Int?
+    /// `nil` when `proc_pid_rusage` failed for this process.
+    public let diskBytesRead: UInt64?
+    public let diskBytesWritten: UInt64?
     public let architecture: ProcessArchitecture
 
     public init(
         pid: pid_t, parentPID: pid_t, name: String, userID: uid_t,
-        memoryFootprintBytes: UInt64, cpuTimeSeconds: Double, threadCount: Int,
-        diskBytesRead: UInt64, diskBytesWritten: UInt64,
+        memoryFootprintBytes: UInt64?, cpuTimeSeconds: Double, threadCount: Int?,
+        diskBytesRead: UInt64?, diskBytesWritten: UInt64?,
         architecture: ProcessArchitecture
     ) {
         self.pid = pid
@@ -2466,11 +2512,11 @@ public enum ProcessSampler {
             parentPID: process.kp_eproc.e_ppid,
             name: name,
             userID: process.kp_eproc.e_ucred.cr_uid,
-            memoryFootprintBytes: usageResult == 0 ? usage.ri_phys_footprint : 0,
+            memoryFootprintBytes: usageResult == 0 ? usage.ri_phys_footprint : nil,
             cpuTimeSeconds: cpuTime,
-            threadCount: taskResult > 0 ? Int(taskInfo.pti_threadnum) : 0,
-            diskBytesRead: usageResult == 0 ? usage.ri_diskio_bytesread : 0,
-            diskBytesWritten: usageResult == 0 ? usage.ri_diskio_byteswritten : 0,
+            threadCount: taskResult > 0 ? Int(taskInfo.pti_threadnum) : nil,
+            diskBytesRead: usageResult == 0 ? usage.ri_diskio_bytesread : nil,
+            diskBytesWritten: usageResult == 0 ? usage.ri_diskio_byteswritten : nil,
             architecture: architecture(of: pid)
         )
     }
@@ -2491,7 +2537,7 @@ public enum ProcessSampler {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd VitalsCore && swift test --filter Processes`
-Expected: PASS — 9 tests passing.
+Expected: PASS — 10 tests passing.
 
 - [ ] **Step 6: Verify footprint against Activity Monitor**
 
@@ -2692,7 +2738,7 @@ public struct HardwareProfile: Sendable {
         }
 
         let memory = try MemoryHardwareParser.parse(
-            profilerJSON: memoryProfilerOutput(),
+            profilerJSON: try memoryProfilerOutput(),
             totalBytes: totalBytes,
             isUnified: isUnified,
             brand: cpu.brand
@@ -2711,7 +2757,12 @@ public struct HardwareProfile: Sendable {
 
     /// `system_profiler` is the only supported source for memory type and DIMM
     /// layout. It is slow, so it is read once at launch and never polled.
-    private static func memoryProfilerOutput() -> Data {
+    ///
+    /// Throws rather than substituting placeholder JSON: a failure to launch
+    /// the tool is a real error, and silently converting it into "memory with
+    /// no stated type" would hide a broken installation behind plausible
+    /// output.
+    private static func memoryProfilerOutput() throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
         process.arguments = ["-json", "SPMemoryDataType"]
@@ -2720,16 +2771,10 @@ public struct HardwareProfile: Sendable {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
 
-        do {
-            try process.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return data
-        } catch {
-            // An empty object parses into hardware with nil type and no slots,
-            // which is the correct representation of "we could not find out".
-            return Data(#"{"SPMemoryDataType":[{}]}"#.utf8)
-        }
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return data
     }
 }
 ```
@@ -3363,9 +3408,12 @@ struct OverheadTests {
 
         let utilisation = cpuUsed / wallElapsed
 
-        // The spec targets under 1%. The threshold here is 3% to absorb CI
-        // noise while still catching a real regression such as an accidental
-        // busy-loop or per-tick process enumeration.
+        // The spec's design goal is under 1%. The assertion threshold is 3% so
+        // the test is not flaky on a loaded machine — a flaky test gets
+        // deleted, which would leave no budget enforced at all. The measured
+        // figure is always printed so drift toward the 1% goal stays visible
+        // even while the test passes.
+        print("Sampling overhead: \(String(format: "%.3f", utilisation * 100))% CPU (goal <1%, fails >3%)")
         #expect(utilisation < 0.03, "Sampling used \(utilisation * 100)% CPU")
     }
 
@@ -3604,7 +3652,8 @@ let memoryStream = await engine.subscribe(to: .memory)
 let memoryTask = Task {
     for await value in memoryStream {
         guard let sample = value.value as? MemorySample else { continue }
-        print("  memory: \(formatBytes(sample.used)) used, \(formatBytes(sample.compressed)) compressed, pressure \(sample.pressure)")
+        let pressure = sample.pressure.map(String.init(describing:)) ?? "unavailable"
+        print("  memory: \(formatBytes(sample.used)) used, \(formatBytes(sample.compressed)) compressed, pressure \(pressure)")
     }
 }
 
@@ -3628,13 +3677,16 @@ memoryTask.cancel()
 print("")
 print("=== Top 10 processes by memory ===")
 
+// Unknown footprints sort last; the `?? 0` affects ordering only, never what
+// is printed.
 let processes = ProcessSampler.snapshot()
-    .sorted { $0.memoryFootprintBytes > $1.memoryFootprintBytes }
+    .sorted { ($0.memoryFootprintBytes ?? 0) > ($1.memoryFootprintBytes ?? 0) }
     .prefix(10)
 
 for process in processes {
     let architecture = process.architecture == .translated ? " (Rosetta)" : ""
-    print("  \(process.pid)\t\(formatBytes(process.memoryFootprintBytes))\t\(process.name)\(architecture)")
+    let footprint = process.memoryFootprintBytes.map(formatBytes) ?? "unavailable"
+    print("  \(process.pid)\t\(footprint)\t\(process.name)\(architecture)")
 }
 ```
 
