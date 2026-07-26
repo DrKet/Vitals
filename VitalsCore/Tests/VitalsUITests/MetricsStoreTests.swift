@@ -180,6 +180,20 @@ struct MetricsStoreTests {
         #expect(store.network?["en0"]?.bytesInPerSecond == 2048)
     }
 
+    @Test("publishes disk IO throughput with history")
+    func publishesDiskIO() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let throughput = ["disk0": DiskThroughput(bytesReadPerSecond: 2048, bytesWrittenPerSecond: 1024)]
+        await engine.register(AnySampler { throughput }, for: .diskIO, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.diskIO) }
+        try await waitUntil { store.diskIOHistory.count >= 2 }
+        task.cancel()
+
+        #expect(store.diskIO?["disk0"]?.bytesReadPerSecond == 2048)
+    }
+
     @Test("a wrong-typed payload on a new series is ignored, not crashed on")
     func wrongTypeOnNewSeriesIgnored() async throws {
         let engine = MetricsEngine(intervalOverride: .milliseconds(5))
