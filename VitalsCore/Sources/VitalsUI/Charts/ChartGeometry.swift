@@ -26,12 +26,36 @@ public enum ChartUnit: Sendable, Equatable {
 public struct ChartSeries: Sendable, Equatable {
     public let name: String
     public let values: [Double]
+
+    /// When each value was sampled, parallel to `values`.
+    ///
+    /// Empty means the series carries no time information: gap detection is
+    /// skipped and the crosshair omits the age. That is the honest reading of
+    /// "we don't know when", rather than inventing timestamps.
+    public let timestamps: [TimeInterval]
+
     public let unit: ChartUnit
 
-    public init(name: String, values: [Double], unit: ChartUnit = .fraction) {
+    /// Mismatched `values` and `timestamps` are truncated to their common
+    /// prefix, never padded — the same rule `stack` uses, for the same reason:
+    /// a padded entry would claim a measurement that was never taken.
+    public init(
+        name: String,
+        values: [Double],
+        timestamps: [TimeInterval] = [],
+        unit: ChartUnit = .fraction
+    ) {
         self.name = name
-        self.values = values
         self.unit = unit
+
+        if timestamps.isEmpty {
+            self.values = values
+            self.timestamps = []
+        } else {
+            let common = min(values.count, timestamps.count)
+            self.values = Array(values.prefix(common))
+            self.timestamps = Array(timestamps.prefix(common))
+        }
     }
 }
 
@@ -148,5 +172,91 @@ public enum ChartGeometry {
             path.addCurve(to: p2, control1: control1, control2: control2)
         }
         return path
+    }
+}
+
+// MARK: - Time axis
+
+extension ChartGeometry {
+
+    /// The largest interval between consecutive samples that still counts as
+    /// continuous.
+    ///
+    /// Derived from the data rather than hard-coded, so it adapts if the
+    /// sampling cadence changes. Uses the **median** interval, not the mean: a
+    /// single hour-long absence would drag a mean far enough up to swallow
+    /// every other gap, which is precisely the case this exists to catch.
+    ///
+    /// `nil` when there are fewer than two timestamps — not enough information
+    /// to judge, and guessing would be fabrication.
+    public static func gapThreshold(for timestamps: [TimeInterval]) -> TimeInterval? {
+        guard timestamps.count >= 2 else { return nil }
+
+        let intervals = zip(timestamps, timestamps.dropFirst())
+            .map { $1 - $0 }
+            .filter { $0 > 0 }
+            .sorted()
+        guard !intervals.isEmpty else { return nil }
+
+        let median = intervals[intervals.count / 2]
+        return median * 3
+    }
+
+    /// Index ranges of contiguously-sampled runs.
+    ///
+    /// Sampling is subscription-driven, so leaving a page stops it: a chart
+    /// that drew straight through the resulting hole would assert a continuity
+    /// the machine never reported. Splitting into segments lets the renderer
+    /// leave the gap empty.
+    ///
+    /// Untimestamped series yield one range covering everything, so they render
+    /// exactly as before.
+    public static func segments(
+        timestamps: [TimeInterval],
+        threshold: TimeInterval
+    ) -> [Range<Int>] {
+        guard !timestamps.isEmpty else { return [] }
+        guard timestamps.count > 1, threshold > 0 else { return [0..<timestamps.count] }
+
+        var result: [Range<Int>] = []
+        var start = 0
+
+        for index in 1..<timestamps.count {
+            if timestamps[index] - timestamps[index - 1] > threshold {
+                result.append(start..<index)
+                start = index
+            }
+        }
+        result.append(start..<timestamps.count)
+        return result
+    }
+
+    /// Segments for a series, using its own timestamps. One full-coverage range
+    /// when the series carries no time information.
+    public static func segments(for series: ChartSeries) -> [Range<Int>] {
+        guard !series.values.isEmpty else { return [] }
+        guard let threshold = gapThreshold(for: series.timestamps) else {
+            return [0..<series.values.count]
+        }
+        return segments(timestamps: series.timestamps, threshold: threshold)
+    }
+
+    /// How long before `now` a sample was taken, phrased for a rolling chart.
+    ///
+    /// Relative rather than a wall clock: on a chart of the last ten minutes,
+    /// the reader wants to know how old a point is, not what time it was.
+    public static func relativeAge(of timestamp: TimeInterval, now: TimeInterval) -> String {
+        let age = now - timestamp
+        guard age >= 1 else { return "now" }
+
+        let seconds = Int(age.rounded())
+        if seconds < 60 { return "\(seconds)s ago" }
+
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        return remainder == 0 ? "\(hours)h ago" : "\(hours)h \(remainder)m ago"
     }
 }

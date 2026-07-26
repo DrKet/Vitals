@@ -38,21 +38,29 @@ public struct CPUPage: View {
     /// chart entirely rather than filled with zero — a flat 0% line would be a
     /// measurement the machine never reported.
     public static func clusterSeries(
-        history: [CPULoadSample],
+        history: [Timestamped<CPULoadSample>],
         topology: CPUTopology
     ) -> [ChartSeries] {
         guard !history.isEmpty else { return [] }
+        let timestamps = history.map(\.timestamp)
+
         guard !topology.clusters.isEmpty else {
-            return [ChartSeries(name: "CPU", values: history.map(\.total))]
+            return [
+                ChartSeries(
+                    name: "CPU",
+                    values: history.map(\.sample.total),
+                    timestamps: timestamps
+                )
+            ]
         }
         // Computed once per sample rather than once per cluster per sample —
         // `clusterLoads(for:)` walks every core, so calling it inside the
         // `map` below (as before) made this O(history × clusters²).
-        let loadsPerSample = history.map { $0.clusterLoads(for: topology.clusters) }
+        let loadsPerSample = history.map { $0.sample.clusterLoads(for: topology.clusters) }
         return topology.clusters.compactMap { cluster in
             let values = loadsPerSample.compactMap { $0[cluster.name] }
             guard values.count == history.count else { return nil }
-            return ChartSeries(name: cluster.name, values: values)
+            return ChartSeries(name: cluster.name, values: values, timestamps: timestamps)
         }
     }
 

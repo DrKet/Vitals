@@ -3,6 +3,20 @@ import MetricsEngine
 import Observation
 import SystemMetrics
 
+/// A sample and the moment it was taken.
+///
+/// The engine stamps every sample; keeping the stamp is what lets a chart mark
+/// where sampling stopped instead of drawing straight through the hole.
+public struct Timestamped<Sample: Sendable>: Sendable {
+    public let timestamp: TimeInterval
+    public let sample: Sample
+
+    public init(timestamp: TimeInterval, sample: Sample) {
+        self.timestamp = timestamp
+        self.sample = sample
+    }
+}
+
 /// Bridges `MetricsEngine` to SwiftUI.
 ///
 /// The engine publishes `MetricValue`, whose payload is `Any`. Casting that to a
@@ -19,10 +33,10 @@ import SystemMetrics
 public final class MetricsStore {
 
     public private(set) var cpu: CPULoadSample?
-    public private(set) var cpuHistory: [CPULoadSample] = []
+    public private(set) var cpuHistory: [Timestamped<CPULoadSample>] = []
 
     public private(set) var memory: MemorySample?
-    public private(set) var memoryHistory: [MemorySample] = []
+    public private(set) var memoryHistory: [Timestamped<MemorySample>] = []
 
     /// Uptime and load average. Cheap and slow-moving, so it is read on demand
     /// rather than sampled on a schedule.
@@ -74,11 +88,11 @@ public final class MetricsStore {
         case .cpu:
             guard let sample = value.value as? CPULoadSample else { return }
             cpu = sample
-            append(sample, to: &cpuHistory)
+            append(Timestamped(timestamp: value.timestamp, sample: sample), to: &cpuHistory)
         case .memory:
             guard let sample = value.value as? MemorySample else { return }
             memory = sample
-            append(sample, to: &memoryHistory)
+            append(Timestamped(timestamp: value.timestamp, sample: sample), to: &memoryHistory)
         case .gpu, .storage, .network, .processes:
             // Handled by later plans. Ignored rather than crashed on, so a page
             // that subscribes early does not fault.

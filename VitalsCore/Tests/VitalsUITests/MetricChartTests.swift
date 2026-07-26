@@ -88,6 +88,37 @@ struct MetricChartTests {
         _ = try renderPNG(chart, size: CGSize(width: 300, height: 132), named: "chart-histogram-zero")
     }
 
+    @Test("a break in sampling renders as empty space, not a line drawn through it")
+    func gapRendersAsEmptySpace() throws {
+        // Two runs of samples an hour apart. The chart must show the two runs
+        // with nothing between them — a line across the gap would assert a
+        // continuity the machine never reported.
+        let values = Array(repeating: 0.7, count: 20) + Array(repeating: 0.3, count: 20)
+        var timestamps = (0..<20).map { TimeInterval($0) }
+        timestamps += (0..<20).map { 3600 + TimeInterval($0) }
+
+        let chart = MetricChart(
+            series: [ChartSeries(name: "CPU", values: values, timestamps: timestamps)],
+            style: .area(stacked: false),
+            colors: [Vitals.Palette.cpu]
+        )
+        let url = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-gap")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test("an untimestamped series still renders as one unbroken run")
+    func untimestampedSeriesIsUnbroken() throws {
+        // Regression guard: adding the time axis must not change how a series
+        // without timestamps draws.
+        let chart = MetricChart(
+            series: [ChartSeries(name: "CPU", values: Self.wave(40, phase: 0, scale: 0.7))],
+            style: .area(stacked: false),
+            colors: [Vitals.Palette.cpu]
+        )
+        let url = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-no-timestamps")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test("an empty series renders without crashing")
     func emptySeriesRenders() throws {
         let chart = MetricChart(

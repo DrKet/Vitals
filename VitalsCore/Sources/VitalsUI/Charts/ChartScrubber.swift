@@ -1,9 +1,14 @@
 import CoreGraphics
+import Foundation
 
 /// What the crosshair reports at one position.
 public struct ScrubReadout: Sendable, Equatable {
     public let index: Int
     public let values: [Named]
+
+    /// When the scrubbed sample was taken. `nil` when no series at this index
+    /// carries time information — omitted rather than guessed.
+    public let timestamp: TimeInterval?
 
     public struct Named: Sendable, Equatable {
         public let name: String
@@ -48,7 +53,14 @@ extension ChartGeometry {
             return ScrubReadout.Named(name: entry.name, value: entry.values[index])
         }
         guard !named.isEmpty else { return nil }
-        return ScrubReadout(index: index, values: named)
+
+        // The first series that actually knows when it was sampled. Series are
+        // sampled together, so any one of them answers for the rest.
+        let timestamp = series
+            .first { index < $0.timestamps.count }
+            .map { $0.timestamps[index] }
+
+        return ScrubReadout(index: index, values: named, timestamp: timestamp)
     }
 
     /// Where the readout box's top-left origin should land so it never

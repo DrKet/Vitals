@@ -55,7 +55,13 @@ public struct OverviewPage: View {
     }
 
     private var cpuSeries: [ChartSeries] {
-        [ChartSeries(name: "CPU", values: store.cpuHistory.map(\.total))]
+        [
+            ChartSeries(
+                name: "CPU",
+                values: store.cpuHistory.map(\.sample.total),
+                timestamps: store.cpuHistory.map(\.timestamp)
+            )
+        ]
     }
 
     private var memorySeries: [ChartSeries] {
@@ -63,7 +69,8 @@ public struct OverviewPage: View {
         return [
             ChartSeries(
                 name: "Used",
-                values: store.memoryHistory.map { Double($0.used) / Double(total) }
+                values: store.memoryHistory.map { Double($0.sample.used) / Double(total) },
+                timestamps: store.memoryHistory.map(\.timestamp)
             )
         ]
     }

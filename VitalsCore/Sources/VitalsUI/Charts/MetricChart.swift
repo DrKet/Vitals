@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 public enum ChartStyle: Sendable, Equatable {
@@ -112,6 +113,14 @@ public struct MetricChart: View {
                     .frame(height: rect.height)
 
                 VStack(alignment: .leading, spacing: 2) {
+                    if let timestamp = readout.timestamp {
+                        Text(ChartGeometry.relativeAge(
+                            of: timestamp,
+                            now: ProcessInfo.processInfo.systemUptime
+                        ))
+                        .font(Vitals.Typography.label)
+                        .foregroundStyle(.secondary)
+                    }
                     ForEach(readout.values, id: \.name) { entry in
                         Text("\(entry.name)  \(unit(for: entry.name).formatted(entry.value))")
                             .font(Vitals.Typography.label)
@@ -184,25 +193,37 @@ public struct MetricChart: View {
             let points = ChartGeometry.points(values, in: rect, upperBound: bound)
             guard points.count > 1 else { continue }
 
-            let line = ChartGeometry.smoothPath(through: points)
+            // Sampling stops when a page is not on screen, so history can
+            // contain holes. Each contiguously-sampled run is drawn on its own;
+            // nothing is drawn across a gap, because a line there would assert
+            // a continuity the machine never reported.
+            let runs = ChartGeometry.segments(for: seriesForSegmentation(at: index))
 
-            var fill = line
-            fill.addLine(to: CGPoint(x: points[points.count - 1].x, y: rect.maxY))
-            fill.addLine(to: CGPoint(x: points[0].x, y: rect.maxY))
-            fill.closeSubpath()
+            for run in runs {
+                let slice = Array(points[run.clamped(to: 0..<points.count)])
+                guard slice.count > 1 else { continue }
 
-            context.fill(
-                fill,
-                with: .linearGradient(
-                    Gradient(colors: [color.opacity(0.45), color.opacity(0)]),
-                    startPoint: CGPoint(x: rect.midX, y: rect.minY),
-                    endPoint: CGPoint(x: rect.midX, y: rect.maxY)
+                let line = ChartGeometry.smoothPath(through: slice)
+
+                var fill = line
+                fill.addLine(to: CGPoint(x: slice[slice.count - 1].x, y: rect.maxY))
+                fill.addLine(to: CGPoint(x: slice[0].x, y: rect.maxY))
+                fill.closeSubpath()
+
+                context.fill(
+                    fill,
+                    with: .linearGradient(
+                        Gradient(colors: [color.opacity(0.45), color.opacity(0)]),
+                        startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                        endPoint: CGPoint(x: rect.midX, y: rect.maxY)
+                    )
                 )
-            )
-            context.stroke(line, with: .color(color), lineWidth: 2)
+                context.stroke(line, with: .color(color), lineWidth: 2)
+            }
 
             // The live edge: the most recent sample, marked so the eye lands on
-            // "now" rather than hunting for it.
+            // "now" rather than hunting for it. Only on the newest run — a dot
+            // on a stale segment would read as current.
             if index == 0, let last = points.last {
                 context.fill(
                     Path(ellipseIn: CGRect(x: last.x - 9, y: last.y - 9, width: 18, height: 18)),
@@ -214,6 +235,14 @@ public struct MetricChart: View {
                 )
             }
         }
+    }
+
+    /// The series whose timestamps describe band `index`.
+    ///
+    /// Stacking merges series into cumulative bands, but they were all sampled
+    /// at the same moments, so any series' timestamps describe every band.
+    private func seriesForSegmentation(at index: Int) -> ChartSeries {
+        series.indices.contains(index) ? series[index] : (series.first ?? ChartSeries(name: "", values: []))
     }
 
     private func drawHistogram(

@@ -20,6 +20,16 @@ struct CPUPageTests {
         l3CacheBytes: nil
     )
 
+    /// Wraps samples with a steady 1 Hz cadence, matching what the store holds.
+    private static func stamped(
+        _ samples: [CPULoadSample],
+        from start: TimeInterval = 1000
+    ) -> [Timestamped<CPULoadSample>] {
+        samples.enumerated().map { index, sample in
+            Timestamped(timestamp: start + TimeInterval(index), sample: sample)
+        }
+    }
+
     private static func sample(busy: Double) -> CPULoadSample {
         CPULoadSample(
             cores: (0..<10).map { _ in CoreLoad(user: busy, system: 0, idle: 1 - busy, nice: 0) }
@@ -37,7 +47,7 @@ struct CPUPageTests {
 
     @Test("history decomposes into one stacked series per cluster")
     func historySplitsByCluster() {
-        let history = [Self.sample(busy: 0.5), Self.sample(busy: 0.25)]
+        let history = Self.stamped([Self.sample(busy: 0.5), Self.sample(busy: 0.25)])
         let series = CPUPage.clusterSeries(history: history, topology: Self.m2Pro)
 
         #expect(series.count == 2)
@@ -55,7 +65,7 @@ struct CPUPageTests {
             physicalCores: 8, logicalCores: 16, clusters: [],
             l1DataCacheBytes: 32768, l2CacheBytes: 262_144, l3CacheBytes: 16_777_216
         )
-        let series = CPUPage.clusterSeries(history: [Self.sample(busy: 0.4)], topology: intel)
+        let series = CPUPage.clusterSeries(history: Self.stamped([Self.sample(busy: 0.4)]), topology: intel)
 
         #expect(series.count == 1)
         #expect(series[0].name == "CPU")
@@ -90,9 +100,9 @@ struct CPUPageTests {
             ],
             l1DataCacheBytes: nil, l2CacheBytes: nil, l3CacheBytes: nil
         )
-        let history = [
+        let history = Self.stamped([
             CPULoadSample(cores: (0..<6).map { _ in CoreLoad(user: 0.5, system: 0, idle: 0.5, nice: 0) })
-        ]
+        ])
         let series = CPUPage.clusterSeries(history: history, topology: mismatched)
 
         // Efficiency must be dropped entirely, never rendered as a flat 0%
@@ -124,6 +134,32 @@ struct CPUPageTests {
     @Test("an unavailable capability never renders its reason as if it were a reading")
     func unavailableCapabilityRendersNil() {
         #expect(CPUPage.gatedValue(.unavailable(reason: "test reason"), measured: "should be ignored") == nil)
+    }
+
+    @Test("cluster series carry the sample timestamps through to the chart")
+    func clusterSeriesCarryTimestamps() throws {
+        let history = Self.stamped([Self.sample(busy: 0.5), Self.sample(busy: 0.25)])
+        let series = CPUPage.clusterSeries(history: history, topology: Self.m2Pro)
+
+        let performance = try #require(series.first)
+        #expect(performance.timestamps == [1000, 1001])
+        #expect(performance.timestamps.count == performance.values.count)
+    }
+
+    @Test("a break in sampling is detected as a gap rather than drawn through")
+    func samplingBreakBecomesAGap() throws {
+        // Leaving the page stops sampling; returning must not splice the old
+        // run onto the new one as though nothing happened.
+        var history = Self.stamped([Self.sample(busy: 0.5), Self.sample(busy: 0.5)])
+        history += [
+            Timestamped(timestamp: 2000, sample: Self.sample(busy: 0.3)),
+            Timestamped(timestamp: 2001, sample: Self.sample(busy: 0.3)),
+        ]
+
+        let series = CPUPage.clusterSeries(history: history, topology: Self.m2Pro)
+        let performance = try #require(series.first)
+
+        #expect(ChartGeometry.segments(for: performance) == [0..<2, 2..<4])
     }
 
     @Test("renders the core grid")
