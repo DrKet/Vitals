@@ -19,35 +19,24 @@ public struct StoragePage: View {
     /// Read and write throughput per spec §6.3, summed across every device and
     /// expressed in MB/s.
     ///
-    /// A tick's dictionary omits a device entirely rather than reporting a
-    /// zero rate for it (see `DiskThroughputTracker`), so summing whatever
-    /// devices are present in that tick's dictionary already does the right
-    /// thing — a departed device simply stops contributing, rather than
-    /// forcing a fabricated zero into the sum.
+    /// Built on `ChartGeometry.throughputBands`, which sums whatever devices
+    /// are present in each tick's dictionary — see its doc comment for why a
+    /// departed device contributes nothing that tick rather than a
+    /// fabricated zero, and why a returning one is summed fresh rather than
+    /// as a delta against its pre-absence reading.
     ///
     /// The unit is declared rather than inferred: a read rate of 0.05 MB/s must
     /// never be read back as "5%" because it happens to be below 1.
     public static func throughputSeries(
         history: [Timestamped<[String: DiskThroughput]>]
     ) -> [ChartSeries] {
-        guard !history.isEmpty else { return [] }
-        let timestamps = history.map(\.timestamp)
-
-        func band(_ name: String, _ value: @escaping (DiskThroughput) -> Double) -> ChartSeries {
-            ChartSeries(
-                name: name,
-                values: history.map { entry in
-                    entry.sample.values.reduce(0) { $0 + value($1) } / bytesPerMegabyte
-                },
-                timestamps: timestamps,
-                unit: .absolute(suffix: "MB/s")
-            )
-        }
-
-        return [
-            band("Read") { $0.bytesReadPerSecond },
-            band("Write") { $0.bytesWrittenPerSecond },
-        ]
+        ChartGeometry.throughputBands(
+            history: history,
+            bands: [
+                (name: "Read", rate: { $0.bytesReadPerSecond }),
+                (name: "Write", rate: { $0.bytesWrittenPerSecond }),
+            ]
+        )
     }
 
     // MARK: View

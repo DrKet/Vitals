@@ -70,13 +70,18 @@ struct NetworkPageTests {
         #expect(NetworkPage.throughputSeries(history: []).isEmpty)
     }
 
-    @Test("an interface that drops out and returns is summed fresh each tick, not carried forward or zeroed")
+    @Test("an interface that drops out and returns is summed fresh each tick, never carried forward from an earlier one")
     func interfaceDroppingOutAndReturningIsRecomputedEachTick() {
         // Tick 1: en0 and en1 both present.
-        // Tick 2: en0 drops out of the dictionary entirely (not zeroed) —
-        // e.g. it went down, or its counters reset, per
-        // `NetworkThroughputTracker`.
-        // Tick 3: en0 reappears with a different reading than before it left.
+        // Tick 2: en0 drops out of the dictionary entirely — e.g. it went
+        // down, or its counters reset, per `NetworkThroughputTracker`. A
+        // per-tick sum over present keys can't distinguish "omitted" from
+        // "zero-filled" (both contribute 0 to the total), so this doesn't
+        // prove which one happened — only that en0's prior 1 MB/s reading is
+        // not carried forward into this tick's sum.
+        // Tick 3: en0 reappears with a different reading than before it left,
+        // proving it is recomputed fresh rather than treated as a delta
+        // against its pre-absence value.
         let history = Self.stamped([
             [
                 "en0": NetworkThroughput(bytesInPerSecond: 1_048_576, bytesOutPerSecond: 0),

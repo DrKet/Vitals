@@ -22,39 +22,24 @@ public struct NetworkPage: View {
     private static let excludedInterfaces: Set<String> = ["lo0"]
 
     /// Down and up throughput per spec §6.3, summed across every real
-    /// interface and expressed in MB/s.
+    /// interface and expressed in MB/s, loopback excluded.
     ///
-    /// A tick's dictionary omits an interface entirely rather than reporting a
-    /// zero rate for it (see `NetworkThroughputTracker`, which drops an
-    /// interface for the interval whenever either direction's delta is
-    /// invalid — the interface went down, or its counters reset), so summing
-    /// whatever interfaces are present in that tick's dictionary already does
-    /// the right thing — a departed interface simply stops contributing,
-    /// rather than forcing a fabricated zero into the sum.
+    /// Built on `ChartGeometry.throughputBands`, which sums whatever
+    /// interfaces are present in each tick's dictionary — see its doc
+    /// comment for why a departed interface contributes nothing that tick
+    /// rather than a fabricated zero, and why a returning one is summed
+    /// fresh rather than as a delta against its pre-absence reading.
     public static func throughputSeries(
         history: [Timestamped<[String: NetworkThroughput]>]
     ) -> [ChartSeries] {
-        guard !history.isEmpty else { return [] }
-        let timestamps = history.map(\.timestamp)
-
-        func band(_ name: String, _ value: @escaping (NetworkThroughput) -> Double) -> ChartSeries {
-            ChartSeries(
-                name: name,
-                values: history.map { entry in
-                    entry.sample
-                        .filter { !excludedInterfaces.contains($0.key) }
-                        .values
-                        .reduce(0) { $0 + value($1) } / bytesPerMegabyte
-                },
-                timestamps: timestamps,
-                unit: .absolute(suffix: "MB/s")
-            )
-        }
-
-        return [
-            band("Down") { $0.bytesInPerSecond },
-            band("Up") { $0.bytesOutPerSecond },
-        ]
+        ChartGeometry.throughputBands(
+            history: history,
+            excluding: excludedInterfaces,
+            bands: [
+                (name: "Down", rate: { $0.bytesInPerSecond }),
+                (name: "Up", rate: { $0.bytesOutPerSecond }),
+            ]
+        )
     }
 
     /// Interfaces currently carrying traffic, loopback excluded. An idle

@@ -60,11 +60,17 @@ struct StoragePageTests {
         #expect(StoragePage.throughputSeries(history: []).isEmpty)
     }
 
-    @Test("a device that drops out and returns is summed fresh each tick, not carried forward or zeroed")
+    @Test("a device that drops out and returns is summed fresh each tick, never carried forward from an earlier one")
     func deviceDroppingOutAndReturningIsRecomputedEachTick() {
         // Tick 1: disk0 and disk4 both present.
-        // Tick 2: disk0 drops out of the dictionary entirely (not zeroed).
-        // Tick 3: disk0 reappears with a different reading than before it left.
+        // Tick 2: disk0 drops out of the dictionary entirely. A per-tick sum
+        // over present keys can't distinguish "omitted" from "zero-filled"
+        // (both contribute 0 to the total), so this doesn't prove which one
+        // happened — only that disk0's prior 1 MB/s reading is not carried
+        // forward into this tick's sum.
+        // Tick 3: disk0 reappears with a different reading than before it
+        // left, proving it is recomputed fresh rather than treated as a
+        // delta against its pre-absence value.
         let history = Self.stamped([
             [
                 "disk0": DiskThroughput(bytesReadPerSecond: 1_048_576, bytesWrittenPerSecond: 0),
@@ -84,8 +90,8 @@ struct StoragePageTests {
         // Tick 1: disk0 (1 MB/s) + disk4 (1 MB/s) = 2 MB/s.
         #expect(abs(read[0] - 2.0) < 1e-9)
         // Tick 2: disk0 is absent from the dictionary, so only disk4's 1 MB/s
-        // contributes — not a fabricated zero for disk0, and not disk0's
-        // pre-absence 1 MB/s carried forward.
+        // contributes — disk0's pre-absence 1 MB/s reading is not carried
+        // forward into this tick's sum.
         #expect(abs(read[1] - 1.0) < 1e-9)
         // Tick 3: disk0 returns at 3 MB/s (not the 1 MB/s it had before
         // dropping out), so the sum is fresh from this tick's dictionary —
