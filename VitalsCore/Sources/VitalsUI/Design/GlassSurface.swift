@@ -8,9 +8,9 @@ extension EnvironmentValues {
     /// Whether `glassSurface()` uses the real Liquid Glass material.
     ///
     /// True everywhere in the running app. The offscreen render harness sets it
-    /// false, because `.glassEffect` draws nothing at all through
-    /// `ImageRenderer` — not the material, and not its children either — which
-    /// would make every render test a blank image and every assertion vacuous.
+    /// false, because `.glassEffect` has no backdrop to sample when rendered
+    /// offscreen — neither the material nor its children draw — which would
+    /// make every render test a blank image and every assertion vacuous.
     public var vitalsGlassEnabled: Bool {
         get { self[VitalsGlassEnabledKey.self] }
         set { self[VitalsGlassEnabledKey.self] = newValue }

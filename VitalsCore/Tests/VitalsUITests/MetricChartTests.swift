@@ -38,7 +38,7 @@ struct MetricChartTests {
             style: .area(stacked: true),
             colors: Vitals.seriesColors(count: 2)
         )
-        let url = try renderPNG(chart, size: size, named: "chart-area-stacked")
+        let rendered = try renderPNG(chart, size: size, named: "chart-area-stacked")
 
         // Performance alone never exceeds ~0.4999 (its `scale`), which maps
         // to y >= 66pt in a 132pt-tall chart. The stacked total (Performance
@@ -48,7 +48,7 @@ struct MetricChartTests {
         // just because *a* curve got drawn. The region also keeps clear of
         // the gridlines at y = 33/66/99pt, so it can't pass on gridlines alone.
         let stackedOnlyRegion = CGRect(x: 50, y: 40, width: 130, height: 24)
-        #expect(try regionHasContent(at: url, region: stackedOnlyRegion))
+        #expect(try regionHasContent(in: rendered, region: stackedOnlyRegion))
     }
 
     @Test("renders a histogram, the default at small widget sizes")
@@ -59,7 +59,7 @@ struct MetricChartTests {
             style: .histogram,
             colors: [Vitals.Palette.cpu]
         )
-        let url = try renderPNG(chart, size: size, named: "chart-histogram")
+        let rendered = try renderPNG(chart, size: size, named: "chart-histogram")
 
         // Bars grow up from the bottom edge, so a bar's own content always
         // reaches the chart's very bottom slice — but the gridlines never do
@@ -70,7 +70,7 @@ struct MetricChartTests {
         // with `drawHistogram`'s body deleted, since gridlines draw
         // unconditionally and satisfy the whole-image blank check on their own.
         let bottomSlice = CGRect(x: 0, y: size.height * 0.85, width: size.width, height: size.height * 0.15)
-        #expect(try regionHasContent(at: url, region: bottomSlice))
+        #expect(try regionHasContent(in: rendered, region: bottomSlice))
     }
 
     @Test("a histogram of all-zero values draws no bars but still renders")
@@ -102,8 +102,8 @@ struct MetricChartTests {
             style: .area(stacked: false),
             colors: [Vitals.Palette.cpu]
         )
-        let url = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-gap")
-        #expect(FileManager.default.fileExists(atPath: url.path))
+        let rendered = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-gap")
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 
     @Test("an untimestamped series still renders as one unbroken run")
@@ -115,8 +115,8 @@ struct MetricChartTests {
             style: .area(stacked: false),
             colors: [Vitals.Palette.cpu]
         )
-        let url = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-no-timestamps")
-        #expect(FileManager.default.fileExists(atPath: url.path))
+        let rendered = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-no-timestamps")
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 
     @Test("an empty series renders without crashing")

@@ -4,33 +4,25 @@ import Testing
 
 /// Renders a SwiftUI view to a PNG offscreen.
 ///
-/// This exists because verifying a macOS app's appearance normally needs a
-/// screen-recording permission that a non-interactive session does not have.
-/// Hosting the view in a real (off-screen-positioned) window needs no such
-/// permission.
+/// Requires a GUI login session (a WindowServer connection): the view is
+/// hosted in a real, off-screen-positioned `NSWindow`, because `ImageRenderer`
+/// cannot render `ScrollView`-rooted views (reliably blank on this toolchain —
+/// macOS 26.2, Swift 6.3.3 — reproduced with a bare `ScrollView { Text(...) }`
+/// in isolation) and because `.glassEffect` renders nothing at all when drawn
+/// offscreen either way. In a non-interactive session with no WindowServer
+/// (e.g. SSH-only CI), there is nothing for the `NSWindow` to connect to and
+/// this call fails — a requirement the old `ImageRenderer`-only
+/// implementation did not have, since it needed no window at all.
 ///
 /// Caveat worth knowing: these renders verify layout, typography, and chart
 /// geometry — never the glass material, which is switched off here and must be
 /// judged in the running app.
-///
-/// Renders via `NSHostingView` inside an actual (off-screen) `NSWindow`
-/// rather than `ImageRenderer`. `ImageRenderer` cannot be used here: on this
-/// toolchain (macOS 26.2, Swift 6.3.3) it reliably produces a blank image for
-/// any view containing a `ScrollView` — reproduced with a bare
-/// `ScrollView { Text(...) }` in isolation, with no glass, `SceneStorage`, or
-/// `GeometryReader` involved, and unaffected by pumping the run loop before
-/// reading `nsImage`. Every non-`ScrollView` view in this suite (charts,
-/// panels, tiles, stat rows) rendered fine under `ImageRenderer`, so the
-/// failure is specific to `ScrollView`'s AppKit-backed (`NSScrollView`)
-/// implementation, which apparently needs a real window to lay out and paint
-/// into. A window positioned far outside any screen's bounds gives it exactly
-/// that, without ever becoming visible to a user.
 @MainActor
 func renderPNG(
     _ view: some View,
     size: CGSize,
     named name: String
-) throws -> URL {
+) throws -> RenderedImage {
     // Glass is switched off for offscreen capture. `.glassEffect` renders
     // nothing offscreen — not the material, and not its own children either —
     // so every render would be blank and every assertion vacuous. The
@@ -75,7 +67,27 @@ func renderPNG(
     // paint, which is exactly the bug these tests exist to catch.
     try #require(isNotBlank(bitmap), "\(name) rendered a uniformly blank image")
 
-    return url
+    // Derived from the bitmap itself rather than assumed: `cacheDisplay`
+    // inherits its pixel density from the window's `backingScaleFactor`
+    // (ultimately `NSScreen.main`), which is 1x, 2x, or unavailable entirely
+    // depending on the machine. Computing it as pixels-per-point of the
+    // actual bitmap means a 1x, 2x, or any-x render is always self-consistent
+    // — there is no separate constant that could disagree with it.
+    let scale = CGFloat(bitmap.pixelsWide) / size.width
+
+    return RenderedImage(url: url, scale: scale)
+}
+
+/// A PNG rendered by `renderPNG`, paired with the pixel scale it was actually
+/// rendered at.
+///
+/// Carrying the scale alongside the URL — rather than letting callers assume
+/// one — is what makes `regionHasContent` agree with `renderPNG` by
+/// construction: there is no second place a density constant could drift out
+/// of sync with the bitmap it describes.
+struct RenderedImage: Sendable {
+    let url: URL
+    let scale: CGFloat
 }
 
 /// True when any pixel inside `region` (in the point-space coordinates the
@@ -93,19 +105,24 @@ func renderPNG(
 /// Deliberately as simple as `isNotBlank`: still just "does anything differ
 /// from the background," scoped to a sub-rectangle. It cannot judge whether
 /// content looks *right*, only that some content exists where it must.
+///
+/// Takes the whole `RenderedImage` rather than a bare `URL` plus a scale
+/// parameter: pairing the file with the scale it was actually rendered at
+/// forecloses passing a scale from a different render (or a guessed
+/// constant) by mistake.
 @MainActor
-func regionHasContent(at url: URL, region: CGRect, scale: CGFloat = 2) throws -> Bool {
-    let data = try Data(contentsOf: url)
+func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
+    let data = try Data(contentsOf: image.url)
     guard let bitmap = NSBitmapImageRep(data: data) else {
         struct DecodeFailure: Error {}
         throw DecodeFailure()
     }
 
     let background = bitmap.colorAt(x: 0, y: 0)
-    let minX = max(Int((region.minX * scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * scale).rounded(.up)), bitmap.pixelsWide)
-    let minY = max(Int((region.minY * scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * scale).rounded(.up)), bitmap.pixelsHigh)
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
     guard minX < maxX, minY < maxY else { return false }
 
     for x in minX..<maxX {

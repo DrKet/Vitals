@@ -1,0 +1,53 @@
+import AppKit
+import SwiftUI
+import Testing
+@testable import VitalsUI
+
+/// Proves the harness's own scale derivation rather than trusting it by
+/// inspection: `renderPNG` no longer assumes a density, so this checks that
+/// what it derives actually reproduces the bitmap's real pixel dimensions —
+/// on whatever display density this machine happens to have.
+@MainActor
+@Suite("Render harness")
+struct RenderHarnessTests {
+
+    @Test("the derived scale converts the requested logical size into the bitmap's actual pixel size")
+    func scaleMatchesBitmapPixelDimensions() throws {
+        let size = CGSize(width: 240, height: 140)
+        let panel = GlassPanel {
+            Text("PROBE").font(Vitals.Typography.label)
+        }
+        let rendered = try renderPNG(panel, size: size, named: "harness-scale-probe")
+
+        let data = try Data(contentsOf: rendered.url)
+        let bitmap = try #require(NSBitmapImageRep(data: data))
+
+        // A real, positive density — not a zero or negative result from a
+        // broken computation.
+        #expect(rendered.scale > 0)
+
+        // The whole point: `size * scale` must reproduce the bitmap's actual
+        // pixel dimensions exactly, whatever this machine's density is. If
+        // `renderPNG` ever went back to a hardcoded constant, this would only
+        // pass by coincidence on a display matching that constant — this
+        // asserts the relationship itself, not a specific number.
+        #expect(CGFloat(bitmap.pixelsWide) == (size.width * rendered.scale).rounded())
+        #expect(CGFloat(bitmap.pixelsHigh) == (size.height * rendered.scale).rounded())
+    }
+
+    @Test("a region probe against a render agrees with the render's own derived scale")
+    func regionProbeUsesTheSameScaleAsTheRender() throws {
+        // A region covering the whole render must find content exactly when
+        // the whole-image blank check would have — which only holds if
+        // `regionHasContent` converts the region with the same scale
+        // `renderPNG` derived, not a separate assumed constant.
+        let size = CGSize(width: 240, height: 140)
+        let panel = GlassPanel {
+            Text("PROBE").font(Vitals.Typography.label)
+        }
+        let rendered = try renderPNG(panel, size: size, named: "harness-scale-probe-region")
+
+        let wholeRegion = CGRect(origin: .zero, size: size)
+        #expect(try regionHasContent(in: rendered, region: wholeRegion))
+    }
+}

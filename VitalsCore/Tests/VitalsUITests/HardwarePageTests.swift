@@ -34,8 +34,8 @@ struct HardwarePageTests {
                 HardwareStat(label: "Swap", value: "2.1 GB"),
             ]
         )
-        let url = try renderPNG(view, size: CGSize(width: 800, height: 600), named: "hardware-page")
-        #expect(FileManager.default.fileExists(atPath: url.path))
+        let rendered = try renderPNG(view, size: CGSize(width: 800, height: 600), named: "hardware-page")
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 
     @Test("an absent primary value renders an em dash, never a zero")
@@ -71,7 +71,7 @@ struct HardwarePageTests {
         } specifications: {
             EmptyView()
         }
-        let url = try renderPNG(view, size: CGSize(width: 600, height: 400), named: "hardware-page-empty")
-        #expect(FileManager.default.fileExists(atPath: url.path))
+        let rendered = try renderPNG(view, size: CGSize(width: 600, height: 400), named: "hardware-page-empty")
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 }

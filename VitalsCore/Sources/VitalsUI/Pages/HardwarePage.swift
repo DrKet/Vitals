@@ -64,46 +64,59 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Vitals.Metrics.tileSpacing) {
-                header
+        // A plain `Spacer()` inside a bare `ScrollView` does nothing — the
+        // scroll view proposes unbounded height to its content, so a trailing
+        // spacer collapses to zero. `GeometryReader` supplies the visible
+        // height so the content `VStack` can be told to fill at least that
+        // much, which is what lets the spacer push against something on a
+        // tall window instead of leaving blank scroll-view background below
+        // the last panel. Content taller than the window still scrolls
+        // normally.
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Vitals.Metrics.tileSpacing) {
+                    header
 
-                GlassPanel {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(Self.displayPrimary(primaryValue))
-                            .font(Vitals.Typography.readout)
-                            .foregroundStyle(primaryValue == nil ? .secondary : .primary)
-
-                        if !series.isEmpty {
-                            MetricChart(
-                                series: series,
-                                style: .area(stacked: series.count > 1),
-                                colors: Vitals.seriesColors(count: max(series.count, 1))
-                            )
-                        }
-
-                        secondary
-                    }
-                }
-
-                if !stats.isEmpty {
                     GlassPanel {
-                        VStack(spacing: 0) {
-                            ForEach(stats) { stat in
-                                StatRow(label: stat.label, value: stat.value)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(Self.displayPrimary(primaryValue))
+                                .font(Vitals.Typography.readout)
+                                .foregroundStyle(primaryValue == nil ? .secondary : .primary)
+
+                            if !series.isEmpty {
+                                MetricChart(
+                                    series: series,
+                                    style: .area(stacked: series.count > 1),
+                                    colors: Vitals.seriesColors(count: max(series.count, 1))
+                                )
+                            }
+
+                            secondary
+                        }
+                    }
+
+                    if !stats.isEmpty {
+                        GlassPanel {
+                            VStack(spacing: 0) {
+                                ForEach(stats) { stat in
+                                    StatRow(label: stat.label, value: stat.value)
+                                }
                             }
                         }
                     }
-                }
 
-                GlassPanel {
-                    DisclosureGroup(isExpanded: $showFullSpecifications) {
-                        VStack(spacing: 0) { specifications }
-                            .padding(.top, 6)
-                    } label: {
-                        Text("Full specifications").font(Vitals.Typography.label)
+                    GlassPanel {
+                        DisclosureGroup(isExpanded: $showFullSpecifications) {
+                            VStack(spacing: 0) { specifications }
+                                .padding(.top, 6)
+                        } label: {
+                            Text("Full specifications").font(Vitals.Typography.label)
+                        }
                     }
+
+                    Spacer(minLength: 0)
                 }
+                .frame(minHeight: proxy.size.height, alignment: .top)
             }
         }
     }
