@@ -38,13 +38,19 @@ public enum Vitals {
 
     /// The fixed ramp `seriesColors` draws from, in order. Shared by both
     /// overloads below so there is exactly one place that lists the hues.
+    ///
+    /// `Palette.warning` is deliberately excluded. It rotated into two data
+    /// bands (Memory's *Cached files*, Network's *Up*) once charts started
+    /// leading with each page's own accent, and red on a band that is not
+    /// reporting a problem reads as a false alarm. Nothing reads `.warning`
+    /// as a live semantic colour today, so keeping it out of the ramp costs
+    /// nothing and reserves it for an actual warning later.
     private static let seriesRamp: [Color] = [
         Palette.cpu,
         Palette.storage,
         Palette.memory,
         Palette.gpu,
         Palette.network,
-        Palette.warning,
     ]
 
     /// A stable colour per series index, for stacked charts.

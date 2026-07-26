@@ -56,8 +56,46 @@ struct TokensTests {
         // position 0 and its original position — indistinguishable Read/Write
         // bands on the Storage page. Rotation avoids that: every hue from the
         // base ramp appears exactly once, just reordered.
-        let colors = Vitals.seriesColors(startingAt: Vitals.Palette.storage, count: 6)
-        #expect(Set(colors.map(String.init(describing:))).count == 6)
+        //
+        // `count: 5`, not 6: the base ramp is five hues now that
+        // `Palette.warning` is excluded from it (see `seriesRamp`'s doc
+        // comment) — this was `6` before that fix, matching the ramp's
+        // length at the time. Asking for more than the ramp holds is exactly
+        // the wraparound `paletteWrapsRatherThanTruncating` covers, which by
+        // construction cannot stay fully distinct, so this test must ask for
+        // no more than the ramp's actual length to test what it says it
+        // tests.
+        let colors = Vitals.seriesColors(startingAt: Vitals.Palette.storage, count: 5)
+        #expect(Set(colors.map(String.init(describing:))).count == 5)
+    }
+
+    @Test("warning is reserved: it never appears in a chart's colour ramp")
+    func warningIsExcludedFromEveryRamp() {
+        // `Palette.warning` has no live semantic use today, but reserving it
+        // means it stays available for an actual warning later rather than
+        // already being spent on whichever data band happened to land on it
+        // by rotation (Memory's Cached band, Network's Up band, before this
+        // fix). Checked across every page's own accent, plus the default
+        // ramp, so no rotation can reintroduce it.
+        let leads = [
+            Vitals.Palette.cpu, Vitals.Palette.memory, Vitals.Palette.gpu,
+            Vitals.Palette.storage, Vitals.Palette.network,
+        ]
+        for accent in leads {
+            let colors = Vitals.seriesColors(startingAt: accent, count: 5)
+            #expect(!colors.contains(Vitals.Palette.warning))
+        }
+        #expect(!Vitals.seriesColors(count: 5).contains(Vitals.Palette.warning))
+    }
+
+    @Test("Memory's four stacked bands still get four distinguishable colours with warning excluded")
+    func memoryFourBandsStayDistinctWithoutWarning() {
+        // Memory is the widest decomposition any page needs (Wired / App /
+        // Compressed / Cached) — the constraining case for the ramp shrinking
+        // by one colour. Four still fits inside the five-hue ramp without
+        // wrapping, so this must still hold.
+        let colors = Vitals.seriesColors(startingAt: Vitals.Palette.memory, count: 4)
+        #expect(Set(colors.map(String.init(describing:))).count == 4)
     }
 
     @Test("an accent absent from the base ramp still leads, falling back to the unrotated ramp for the rest")
