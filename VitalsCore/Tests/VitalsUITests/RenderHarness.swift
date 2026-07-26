@@ -6,11 +6,25 @@ import Testing
 ///
 /// This exists because verifying a macOS app's appearance normally needs a
 /// screen-recording permission that a non-interactive session does not have.
-/// `ImageRenderer` needs no permission and no window.
+/// Hosting the view in a real (off-screen-positioned) window needs no such
+/// permission.
 ///
 /// Caveat worth knowing: these renders verify layout, typography, and chart
 /// geometry — never the glass material, which is switched off here and must be
 /// judged in the running app.
+///
+/// Renders via `NSHostingView` inside an actual (off-screen) `NSWindow`
+/// rather than `ImageRenderer`. `ImageRenderer` cannot be used here: on this
+/// toolchain (macOS 26.2, Swift 6.3.3) it reliably produces a blank image for
+/// any view containing a `ScrollView` — reproduced with a bare
+/// `ScrollView { Text(...) }` in isolation, with no glass, `SceneStorage`, or
+/// `GeometryReader` involved, and unaffected by pumping the run loop before
+/// reading `nsImage`. Every non-`ScrollView` view in this suite (charts,
+/// panels, tiles, stat rows) rendered fine under `ImageRenderer`, so the
+/// failure is specific to `ScrollView`'s AppKit-backed (`NSScrollView`)
+/// implementation, which apparently needs a real window to lay out and paint
+/// into. A window positioned far outside any screen's bounds gives it exactly
+/// that, without ever becoming visible to a user.
 @MainActor
 func renderPNG(
     _ view: some View,
@@ -18,20 +32,37 @@ func renderPNG(
     named name: String
 ) throws -> URL {
     // Glass is switched off for offscreen capture. `.glassEffect` renders
-    // nothing through `ImageRenderer` — not the material, and not its own
-    // children either — so every render would be blank and every assertion
-    // vacuous. The fallback keeps identical geometry, so layout, typography,
-    // and chart drawing are all still verified.
+    // nothing offscreen — not the material, and not its own children either —
+    // so every render would be blank and every assertion vacuous. The
+    // fallback keeps identical geometry, so layout, typography, and chart
+    // drawing are all still verified.
     let content = view
         .environment(\.vitalsGlassEnabled, false)
         .frame(width: size.width, height: size.height)
 
-    let renderer = ImageRenderer(content: content)
-    renderer.scale = 2
+    let hosting = NSHostingView(rootView: content)
+    hosting.frame = NSRect(origin: .zero, size: size)
 
-    let image = try #require(renderer.nsImage, "ImageRenderer produced no image")
-    let tiff = try #require(image.tiffRepresentation)
-    let bitmap = try #require(NSBitmapImageRep(data: tiff))
+    // `.borderless` and a frame far outside any display's bounds: a real
+    // window (so AppKit-backed content like `NSScrollView` actually lays
+    // out and paints) that never appears on screen or steals focus.
+    let window = NSWindow(
+        contentRect: NSRect(x: -20000, y: -20000, width: size.width, height: size.height),
+        styleMask: [.borderless],
+        backing: .buffered,
+        defer: false
+    )
+    window.contentView = hosting
+    window.orderFrontRegardless()
+    hosting.layoutSubtreeIfNeeded()
+    window.displayIfNeeded()
+    defer { window.orderOut(nil) }
+
+    let bitmap = try #require(
+        hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds),
+        "could not create a bitmap rep for \(name)"
+    )
+    hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
     let png = try #require(bitmap.representation(using: .png, properties: [:]))
 
     let directory = URL(fileURLWithPath: "/tmp/vitals-render")

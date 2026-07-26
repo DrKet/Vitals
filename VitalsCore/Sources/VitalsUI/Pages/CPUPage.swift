@@ -3,11 +3,11 @@ import SystemMetrics
 
 public struct CPUPage: View {
     private let store: MetricsStore
-    // `@SceneStorage`, not `@State`: `AppShell` rebuilds this page on every
-    // sidebar switch, which would reset a plain `@State` to `false` each
-    // time. The spec requires the disclosure to stay open once expanded, so
-    // its state must survive the view being torn down and reconstructed.
-    @SceneStorage("CPUPage.showFullSpecifications") private var showFullSpecifications = false
+
+    /// Reused verbatim as `HardwarePage`'s `disclosureKey` so a disclosure a
+    /// user already expanded stays expanded across the refactor onto the
+    /// shared container. No two hardware pages may share a key.
+    public static let disclosureKey = "CPUPage.showFullSpecifications"
 
     public init(store: MetricsStore) {
         self.store = store
@@ -67,73 +67,34 @@ public struct CPUPage: View {
     // MARK: View
 
     public var body: some View {
-        // A plain `Spacer()` inside a bare `ScrollView` does nothing — the
-        // scroll view proposes unbounded height to its content, so a trailing
-        // spacer collapses to zero. `GeometryReader` supplies the visible
-        // height so the content `VStack` can be told to fill at least that
-        // much, which is what lets the spacer push against something on a
-        // tall window instead of leaving blank scroll-view background below
-        // the last panel. Content taller than the window still scrolls
-        // normally.
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: Vitals.Metrics.tileSpacing) {
-                    header
-                    GlassPanel {
-                        VStack(alignment: .leading, spacing: 10) {
-                            primaryValue
-                            chart
-                            coreGrid
-                        }
-                    }
-                    GlassPanel { keyStatistics }
-                    GlassPanel { fullSpecifications }
-                    Spacer(minLength: 0)
-                }
-                .frame(minHeight: proxy.size.height, alignment: .top)
-            }
+        HardwarePage(
+            title: "CPU",
+            vendorName: topology?.brand,
+            showsAppleMark: topology?.isAppleSilicon == true,
+            primaryValue: store.cpu.map { "\(Int(($0.total * 100).rounded()))%" },
+            series: topology.map { Self.clusterSeries(history: store.cpuHistory, topology: $0) } ?? [],
+            stats: stats,
+            disclosureKey: Self.disclosureKey
+        ) {
+            coreGrid
+        } specifications: {
+            specificationRows
         }
         .task { await store.stream(.cpu) }
     }
 
     private var topology: CPUTopology? { store.profile?.cpu }
 
-    private var header: some View {
-        HStack {
-            Text("CPU").font(Vitals.Typography.sectionTitle)
-            Spacer()
-            if let topology {
-                HStack(spacing: 6) {
-                    // The Apple mark is a glyph in the system font, so no asset
-                    // is bundled for it.
-                    if topology.isAppleSilicon { Text("\u{F8FF}") }
-                    Text(topology.brand)
-                }
-                .font(Vitals.Typography.label)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .glassSurface(cornerRadius: 20)
-            }
-        }
-    }
-
-    private var primaryValue: some View {
-        Text(store.cpu.map { "\(Int(($0.total * 100).rounded()))%" } ?? "—")
-            .font(Vitals.Typography.readout)
-            .foregroundStyle(store.cpu == nil ? .secondary : .primary)
-    }
-
-    @ViewBuilder
-    private var chart: some View {
-        if let topology {
-            let series = Self.clusterSeries(history: store.cpuHistory, topology: topology)
-            MetricChart(
-                series: series,
-                style: .area(stacked: series.count > 1),
-                colors: Vitals.seriesColors(count: max(series.count, 1))
-            )
-        }
+    /// The four numbers you actually watch. Everything else lives behind the
+    /// disclosure below.
+    private var stats: [HardwareStat] {
+        let load = store.systemLoad
+        return [
+            HardwareStat(label: "Cores", value: coreCountDescription),
+            HardwareStat(label: "Load average", value: load.loadAverage1.map { String(format: "%.2f", $0) }),
+            HardwareStat(label: "Uptime", value: Self.formatUptime(load.uptimeSeconds)),
+            HardwareStat(label: "Speed", value: nil),
+        ]
     }
 
     @ViewBuilder
@@ -153,18 +114,6 @@ public struct CPUPage: View {
         }
     }
 
-    /// The four numbers you actually watch. Everything else lives behind the
-    /// disclosure below.
-    private var keyStatistics: some View {
-        let load = store.systemLoad
-        return VStack(spacing: 0) {
-            StatRow(label: "Cores", value: coreCountDescription)
-            StatRow(label: "Load average", value: load.loadAverage1.map { String(format: "%.2f", $0) })
-            StatRow(label: "Uptime", value: Self.formatUptime(load.uptimeSeconds))
-            StatRow(label: "Speed", value: Self.gatedValue(store.profile?.frequencyAvailable))
-        }
-    }
-
     /// Both counts are `Int?` — an absent sysctl reads nil, never 0 — so this
     /// describes whichever parts are actually known.
     private var coreCountDescription: String? {
@@ -177,23 +126,17 @@ public struct CPUPage: View {
         }
     }
 
-    private var fullSpecifications: some View {
-        DisclosureGroup(isExpanded: $showFullSpecifications) {
-            VStack(spacing: 0) {
-                StatRow(label: "Architecture", value: topology?.isAppleSilicon == true ? "arm64e" : "x86_64")
-                StatRow(label: "L1 data cache", value: Self.formatCache(topology?.l1DataCacheBytes))
-                StatRow(label: "L2 cache", value: Self.formatCache(topology?.l2CacheBytes))
-                StatRow(label: "L3 cache", value: Self.formatCache(topology?.l3CacheBytes))
-                StatRow(label: "Load average (5m)", value: store.systemLoad.loadAverage5.map { String(format: "%.2f", $0) })
-                StatRow(label: "Load average (15m)", value: store.systemLoad.loadAverage15.map { String(format: "%.2f", $0) })
-                StatRow(label: "Die temperature", value: Self.gatedValue(store.profile?.sensorsAvailable))
-                StatRow(label: "Package power", value: Self.gatedValue(store.profile?.sensorsAvailable))
-                StatRow(label: "Cluster frequency", value: Self.gatedValue(store.profile?.frequencyAvailable))
-            }
-            .padding(.top, 6)
-        } label: {
-            Text("Full specifications").font(Vitals.Typography.label)
-        }
+    @ViewBuilder
+    private var specificationRows: some View {
+        StatRow(label: "Architecture", value: topology?.isAppleSilicon == true ? "arm64e" : "x86_64")
+        StatRow(label: "L1 data cache", value: Self.formatCache(topology?.l1DataCacheBytes))
+        StatRow(label: "L2 cache", value: Self.formatCache(topology?.l2CacheBytes))
+        StatRow(label: "L3 cache", value: Self.formatCache(topology?.l3CacheBytes))
+        StatRow(label: "Load average (5m)", value: store.systemLoad.loadAverage5.map { String(format: "%.2f", $0) })
+        StatRow(label: "Load average (15m)", value: store.systemLoad.loadAverage15.map { String(format: "%.2f", $0) })
+        StatRow(label: "Die temperature", value: Self.gatedValue(store.profile?.sensorsAvailable))
+        StatRow(label: "Package power", value: Self.gatedValue(store.profile?.sensorsAvailable))
+        StatRow(label: "Cluster frequency", value: Self.gatedValue(store.profile?.frequencyAvailable))
     }
 
     /// What a `StatRow` should show for a metric gated behind a hardware
