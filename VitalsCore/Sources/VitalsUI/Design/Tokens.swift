@@ -53,4 +53,18 @@ public enum Vitals {
         ]
         return (0..<count).map { ramp[$0 % ramp.count] }
     }
+
+    /// Formats a byte count in the memory-oriented style (KB/MB/GB, base
+    /// 1024) used across hardware pages for installed memory, cache sizes,
+    /// and similar readings.
+    ///
+    /// Returns `nil` for an absent reading rather than a baked-in placeholder
+    /// string, so the caller — `StatRow` or `MetricTile` — is the single
+    /// place that decides how absence is worded and styled.
+    public static func formatByteCount<T: BinaryInteger>(_ bytes: T?) -> String? {
+        guard let bytes else { return nil }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .memory
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
 }

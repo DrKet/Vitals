@@ -24,8 +24,14 @@ struct MemoryPageTests {
         let series = MemoryPage.breakdownSeries(history: history, installedBytes: 100)
 
         #expect(series.map(\.name) == ["Wired", "App", "Compressed", "Cached"])
-        #expect(series[0].values == [0.2])
-        #expect(series[1].values == [0.3])
+        // Fractions are computed by dividing UInt64 sample values as Doubles,
+        // which is not guaranteed bit-exact, so compare with tolerance rather
+        // than `==` — see `CPUPageTests.intelFallsBackToTotal` for the same
+        // pattern.
+        #expect(abs(series[0].values[0] - 0.2) < 1e-9)
+        #expect(abs(series[1].values[0] - 0.3) < 1e-9)
+        #expect(abs(series[2].values[0] - 0.1) < 1e-9)
+        #expect(abs(series[3].values[0] - 0.4) < 1e-9)
     }
 
     @Test("bands carry timestamps so gaps still break")
@@ -51,7 +57,7 @@ struct MemoryPageTests {
 
     @Test("an absent byte count formats as nil, letting StatRow word the absence")
     func absentBytesFormatAsNil() {
-        #expect(MemoryPage.formatBytes(nil) == nil)
-        #expect(MemoryPage.formatBytes(1_073_741_824)?.isEmpty == false)
+        #expect(Vitals.formatByteCount(UInt64?.none) == nil)
+        #expect(Vitals.formatByteCount(UInt64(1_073_741_824))?.isEmpty == false)
     }
 }

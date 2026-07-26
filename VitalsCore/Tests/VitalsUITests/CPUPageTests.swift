@@ -38,11 +38,12 @@ struct CPUPageTests {
 
     @Test("an absent cache size reads as unavailable, never as zero bytes")
     func absentCacheIsUnavailable() {
-        // L3 genuinely does not exist on Apple Silicon. `formatCache` hands
-        // back `nil` — not the baked-in string "Unavailable" — so `StatRow`
-        // is the single place that decides how absence is worded and styled.
-        #expect(CPUPage.formatCache(nil) == nil)
-        #expect(CPUPage.formatCache(4_194_304)?.contains("4") == true)
+        // L3 genuinely does not exist on Apple Silicon. `Vitals.formatByteCount`
+        // hands back `nil` — not the baked-in string "Unavailable" — so
+        // `StatRow` is the single place that decides how absence is worded
+        // and styled.
+        #expect(Vitals.formatByteCount(Int?.none) == nil)
+        #expect(Vitals.formatByteCount(4_194_304)?.contains("4") == true)
     }
 
     @Test("history decomposes into one stacked series per cluster")

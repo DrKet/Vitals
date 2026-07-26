@@ -15,19 +15,6 @@ public struct CPUPage: View {
 
     // MARK: Pure helpers, tested directly
 
-    /// An absent cache level reads as unavailable. `hw.l3cachesize` genuinely
-    /// does not exist on Apple Silicon, and "0 bytes" would be a lie.
-    ///
-    /// Returns `nil` rather than the literal string "Unavailable" so `StatRow`
-    /// — not this helper — decides how absence is worded and styled. See
-    /// `StatRow.displayValue` for the house rule.
-    public static func formatCache(_ bytes: Int?) -> String? {
-        guard let bytes else { return nil }
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .memory
-        return formatter.string(fromByteCount: Int64(bytes))
-    }
-
     /// One stacked series per performance cluster, or a single total series on
     /// hardware that has no clusters to decompose.
     ///
@@ -129,9 +116,9 @@ public struct CPUPage: View {
     @ViewBuilder
     private var specificationRows: some View {
         StatRow(label: "Architecture", value: topology?.isAppleSilicon == true ? "arm64e" : "x86_64")
-        StatRow(label: "L1 data cache", value: Self.formatCache(topology?.l1DataCacheBytes))
-        StatRow(label: "L2 cache", value: Self.formatCache(topology?.l2CacheBytes))
-        StatRow(label: "L3 cache", value: Self.formatCache(topology?.l3CacheBytes))
+        StatRow(label: "L1 data cache", value: Vitals.formatByteCount(topology?.l1DataCacheBytes))
+        StatRow(label: "L2 cache", value: Vitals.formatByteCount(topology?.l2CacheBytes))
+        StatRow(label: "L3 cache", value: Vitals.formatByteCount(topology?.l3CacheBytes))
         StatRow(label: "Load average (5m)", value: store.systemLoad.loadAverage5.map { String(format: "%.2f", $0) })
         StatRow(label: "Load average (15m)", value: store.systemLoad.loadAverage15.map { String(format: "%.2f", $0) })
         StatRow(label: "Die temperature", value: Self.gatedValue(store.profile?.sensorsAvailable))

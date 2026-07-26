@@ -14,15 +14,6 @@ public struct MemoryPage: View {
 
     // MARK: Pure helpers, tested directly
 
-    /// `nil` rather than a literal string, so `StatRow` decides how absence is
-    /// worded — the house rule established by `CPUPage.formatCache`.
-    public static func formatBytes(_ bytes: UInt64?) -> String? {
-        guard let bytes else { return nil }
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .memory
-        return formatter.string(fromByteCount: Int64(bytes))
-    }
-
     /// The four bands from spec §6.3, as fractions of installed memory.
     ///
     /// Base first: Wired is the floor the kernel will not give back, App sits
@@ -59,9 +50,9 @@ public struct MemoryPage: View {
     public var body: some View {
         HardwarePage(
             title: "Memory",
-            vendorName: hardware.map { Self.formatBytes($0.totalBytes) ?? "Memory" },
+            vendorName: hardware.flatMap { Vitals.formatByteCount($0.totalBytes) },
             showsAppleMark: hardware?.isUnified == true,
-            primaryValue: store.memory.flatMap { Self.formatBytes($0.used) },
+            primaryValue: store.memory.flatMap { Vitals.formatByteCount($0.used) },
             series: hardware.map {
                 Self.breakdownSeries(history: store.memoryHistory, installedBytes: $0.totalBytes)
             } ?? [],
@@ -77,9 +68,9 @@ public struct MemoryPage: View {
 
     private var stats: [HardwareStat] {
         [
-            HardwareStat(label: "Installed", value: Self.formatBytes(hardware?.totalBytes)),
-            HardwareStat(label: "Cached files", value: Self.formatBytes(store.memory?.cached)),
-            HardwareStat(label: "Swap used", value: Self.formatBytes(store.memory?.swapUsed)),
+            HardwareStat(label: "Installed", value: Vitals.formatByteCount(hardware?.totalBytes)),
+            HardwareStat(label: "Cached files", value: Vitals.formatByteCount(store.memory?.cached)),
+            HardwareStat(label: "Swap used", value: Vitals.formatByteCount(store.memory?.swapUsed)),
             HardwareStat(label: "Pressure", value: store.memory?.pressure.map(Self.describe)),
         ]
     }
@@ -98,8 +89,8 @@ public struct MemoryPage: View {
             label: "Peak bandwidth",
             value: hardware?.peakBandwidthGBs.map { "\($0) GB/s (specification)" }
         )
-        StatRow(label: "Wired", value: Self.formatBytes(store.memory?.wired))
-        StatRow(label: "Compressed", value: Self.formatBytes(store.memory?.compressed))
+        StatRow(label: "Wired", value: Vitals.formatByteCount(store.memory?.wired))
+        StatRow(label: "Compressed", value: Vitals.formatByteCount(store.memory?.compressed))
         ForEach(hardware?.slots ?? [], id: \.name) { slot in
             StatRow(
                 label: slot.name,

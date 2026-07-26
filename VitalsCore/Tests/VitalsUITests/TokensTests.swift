@@ -36,4 +36,16 @@ struct TokensTests {
         #expect(Vitals.Metrics.contentPadding >= Vitals.Metrics.tileSpacing)
         #expect(Vitals.Metrics.chartHeight > Vitals.Metrics.contentPadding)
     }
+
+    @Test("an absent byte count formats as nil, never as a baked-in placeholder")
+    func formatByteCountIsNilForAbsentReading() {
+        #expect(Vitals.formatByteCount(Int?.none) == nil)
+        #expect(Vitals.formatByteCount(UInt64?.none) == nil)
+    }
+
+    @Test("a present byte count formats as non-empty text, for any integer width")
+    func formatByteCountFormatsAnyIntegerWidth() {
+        #expect(Vitals.formatByteCount(4_194_304)?.contains("4") == true)
+        #expect(Vitals.formatByteCount(UInt64(1_073_741_824))?.isEmpty == false)
+    }
 }
