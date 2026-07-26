@@ -1,6 +1,10 @@
 import Testing
 @testable import VitalsUI
 
+/// `@MainActor` because `StatRow` is a SwiftUI `View` and therefore main-actor
+/// isolated; calling its static helper from a nonisolated test emits an
+/// actor-isolation warning, and this project requires pristine build output.
+@MainActor
 @Suite("Stat row")
 struct StatRowTests {
 

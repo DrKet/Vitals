@@ -14,7 +14,7 @@
 - **No third-party dependencies.** Foundation, SwiftUI, Observation, Darwin, IOKit, Metal, Swift Testing only.
 - **Never fabricate a number.** An unmeasurable value is `nil` and renders as "Unavailable" (`StatRow.displayValue`) or an em dash (`MetricTile.displayValue`) — never `0`, never blank. A series with no reading is **omitted from the chart**, never zero-filled: a flat 0% band is a measurement the machine never reported.
 - **Subscription-driven.** A page subscribes only to the series it displays, via `.task { await store.stream(_:) }`, and releases them when it disappears.
-- **Build and test output must be pristine** — no warnings.
+- **Build and test output must be pristine** — no warnings. **Check with a clean build**: `rm -rf .build && swift build --build-tests 2>&1 | grep -ci warning` must print `0`. An incremental build does not re-emit warnings for unchanged files, so a plain `swift build` after a successful one reports nothing regardless of what is actually there — every "no warnings" check in this project was unreliable until this was found.
 - **Package root:** `VitalsCore/`. Paths are relative to `/Users/george/Developer/Vitals`.
 - **Test command:** `cd VitalsCore && swift test`.
 - **`swift test --filter` matches type identifiers, not `@Suite` display names.** `--filter MemoryPageTests` works; `--filter "Memory page"` matches zero tests and still reports success. A run reporting "Test run with 0 tests ... passed" is a failure to run.
