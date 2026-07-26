@@ -56,12 +56,29 @@ public struct NetworkPage: View {
 
     private var current: [String: NetworkThroughput] { store.network ?? [:] }
 
+    /// `throughput` with excluded interfaces removed, or `nil` when nothing
+    /// is left afterwards — e.g. a tick whose only entry was loopback.
+    ///
+    /// Distinguishing that from "real interfaces present but reporting zero"
+    /// is exactly the ambiguity `ThroughputBands` already guards the chart
+    /// against (see its doc comment): reducing an empty dictionary would
+    /// silently produce a real-looking `0.00 MB/s`, claiming every interface
+    /// reported no traffic when in fact none reported at all that tick.
+    /// `totalMBs` and the Down/Up stats below must not disagree with the
+    /// chart they sit above — a tick the chart omits must not headline as a
+    /// measured zero underneath it.
+    ///
+    /// Internal rather than private so `NetworkPageTests` can exercise the
+    /// nil-vs-empty distinction directly, the same reason `GPUPage.isMultiGPU`
+    /// and `CPUPage.gatedValue` are internal.
+    static func realThroughput(_ throughput: [String: NetworkThroughput]) -> [String: NetworkThroughput]? {
+        let real = throughput.filter { !excludedInterfaces.contains($0.key) }
+        return real.isEmpty ? nil : real
+    }
+
     private var totalMBs: Double? {
-        guard store.network != nil else { return nil }
-        return current
-            .filter { !Self.excludedInterfaces.contains($0.key) }
-            .values
-            .reduce(0) { $0 + $1.bytesInPerSecond + $1.bytesOutPerSecond } / Self.bytesPerMegabyte
+        guard let network = store.network, let real = Self.realThroughput(network) else { return nil }
+        return real.values.reduce(0) { $0 + $1.bytesInPerSecond + $1.bytesOutPerSecond } / Self.bytesPerMegabyte
     }
 
     public var body: some View {
@@ -94,21 +111,19 @@ public struct NetworkPage: View {
             ),
             HardwareStat(
                 label: "Down",
-                value: store.network.map { throughput in
+                value: store.network.flatMap(Self.realThroughput).map { real in
                     String(
                         format: "%.2f MB/s",
-                        throughput.filter { !Self.excludedInterfaces.contains($0.key) }
-                            .values.reduce(0) { $0 + $1.bytesInPerSecond } / Self.bytesPerMegabyte
+                        real.values.reduce(0) { $0 + $1.bytesInPerSecond } / Self.bytesPerMegabyte
                     )
                 }
             ),
             HardwareStat(
                 label: "Up",
-                value: store.network.map { throughput in
+                value: store.network.flatMap(Self.realThroughput).map { real in
                     String(
                         format: "%.2f MB/s",
-                        throughput.filter { !Self.excludedInterfaces.contains($0.key) }
-                            .values.reduce(0) { $0 + $1.bytesOutPerSecond } / Self.bytesPerMegabyte
+                        real.values.reduce(0) { $0 + $1.bytesOutPerSecond } / Self.bytesPerMegabyte
                     )
                 }
             ),

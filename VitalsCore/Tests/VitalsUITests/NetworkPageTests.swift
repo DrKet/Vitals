@@ -103,6 +103,43 @@ struct NetworkPageTests {
         #expect(abs(down[2] - 4.0) < 1e-9)
     }
 
+    @Test("a tick whose only interface is loopback leaves nothing to sum, never a fabricated zero")
+    func lo0OnlyTickIsAbsentNotZero() {
+        // The exact scenario `StandardSamplers.swift`'s `guard
+        // !throughput.isEmpty` lets through: a `["lo0": …]` dictionary is
+        // non-empty, so it reaches the page, but every entry is excluded.
+        // `totalMBs` and the Down/Up stats must treat this the same way the
+        // chart already does (`ThroughputBands`'s per-tick exclusion) —
+        // nothing left after filtering means absent, not a real-looking
+        // "0.00 MB/s".
+        let lo0Only = ["lo0": NetworkThroughput(bytesInPerSecond: 9_000_000, bytesOutPerSecond: 9_000_000)]
+        #expect(NetworkPage.realThroughput(lo0Only) == nil)
+    }
+
+    @Test("an empty tick has nothing to sum either")
+    func emptyTickIsAbsent() {
+        #expect(NetworkPage.realThroughput([:]) == nil)
+    }
+
+    @Test("a real interface reporting genuine zero traffic is a reading, not withheld")
+    func realInterfaceAtZeroIsNotWithheld() {
+        // Distinct from the lo0-only case: here a real interface *did*
+        // report this tick, and it happened to report no traffic. That is a
+        // measurement, so it must survive filtering rather than being
+        // conflated with "nothing reported at all".
+        let idle = ["en0": NetworkThroughput(bytesInPerSecond: 0, bytesOutPerSecond: 0)]
+        #expect(NetworkPage.realThroughput(idle) == idle)
+    }
+
+    @Test("loopback is dropped from the filtered dictionary when a real interface is also present")
+    func loopbackDroppedAlongsideARealInterface() {
+        let mixed = [
+            "lo0": NetworkThroughput(bytesInPerSecond: 9_000_000, bytesOutPerSecond: 9_000_000),
+            "en0": NetworkThroughput(bytesInPerSecond: 1_048_576, bytesOutPerSecond: 0),
+        ]
+        #expect(NetworkPage.realThroughput(mixed) == ["en0": mixed["en0"]!])
+    }
+
     /// The whole point of this test: nothing before it ever constructed a
     /// `NetworkPage` from a `MetricsStore` and rendered it — every prior test
     /// in this file covers only the static, pure `throughputSeries` and
@@ -126,7 +163,14 @@ struct NetworkPageTests {
             size: CGSize(width: 800, height: 700),
             named: "network-page-with-data"
         )
-        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+        // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
+        // alone was vacuous and why a saturation probe (not `regionHasContent`)
+        // is the correct replacement inside a `GlassPanel`. Throughput is an
+        // absolute-unit series, which auto-scales its axis to its own peak
+        // (`ChartGeometry.upperBound`) — a single-tick history's one reading
+        // *is* that peak, so its band always touches the canvas top
+        // regardless of the exact value, no tuning needed here.
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")
