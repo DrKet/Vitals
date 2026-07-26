@@ -48,4 +48,16 @@ struct TokensTests {
         #expect(Vitals.formatByteCount(4_194_304)?.contains("4") == true)
         #expect(Vitals.formatByteCount(UInt64(1_073_741_824))?.isEmpty == false)
     }
+
+    @Test("a byte count that cannot be absent formats without an absence branch")
+    func formatKnownByteCountNeedsNoFallback() {
+        // The force-unwrap inside `formatKnownByteCount` is what lets callers
+        // with plain, non-optional byte counts — a volume's used/total bytes, a
+        // GPU memory topology's size — skip writing an `?? "…"` fallback that
+        // could never actually render. These assertions pin that it holds for
+        // both integer widths in use, including the zero edge.
+        #expect(Vitals.formatKnownByteCount(UInt64(1_073_741_824)).isEmpty == false)
+        #expect(Vitals.formatKnownByteCount(4_194_304).contains("4"))
+        #expect(Vitals.formatKnownByteCount(UInt64(0)).isEmpty == false)
+    }
 }
