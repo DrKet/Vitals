@@ -146,8 +146,12 @@ struct MetricsStoreTests {
         #expect(store.gpuHistory.isEmpty == false)
     }
 
-    @Test("publishes volumes without retaining history")
-    func publishesVolumesWithoutHistory() async throws {
+    @Test("publishes the latest volumes")
+    func publishesLatestVolumes() async throws {
+        // Note on the name: this proves the latest reading arrives. That
+        // volumes accumulate *no* history is guaranteed structurally — there is
+        // no `volumesHistory` property to grow — not by anything observable
+        // here, so the test does not claim to prove it.
         let engine = MetricsEngine(intervalOverride: .milliseconds(5))
         let volume = Volume(name: "Macintosh HD", totalBytes: 1000, availableBytes: 400, isInternal: true)
         await engine.register(AnySampler { [volume] }, for: .storage, cadence: .fast)
