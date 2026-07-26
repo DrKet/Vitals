@@ -113,6 +113,52 @@ struct GPUPageTests {
         #expect(GPUPage.attributedDevice(gpus) == nil)
     }
 
+    @Test("the mirror case is caught too: one named GPU but more than one IOAccelerator sample this tick")
+    func mirrorCaseIsAlsoAmbiguous() {
+        // `isMultiGPU(_ gpus:)` only ever sees Metal's enumeration. Metal
+        // reporting exactly one device says nothing about what IOAccelerator
+        // handed back this tick — the two are independent enumerations (see
+        // `GPUPage`'s doc comment) — so a single named GPU paired with two
+        // IOAccelerator samples is exactly as ambiguous as two named GPUs
+        // paired with one sample.
+        #expect(GPUPage.isMultiGPU(gpuCount: 1, sampleCount: 2) == true)
+        // And the already-covered direct case still holds through the general form.
+        #expect(GPUPage.isMultiGPU(gpuCount: 2, sampleCount: 1) == true)
+        // Only when both enumerations agree on exactly one device is naming safe.
+        #expect(GPUPage.isMultiGPU(gpuCount: 1, sampleCount: 1) == false)
+        #expect(GPUPage.isMultiGPU(gpuCount: 0, sampleCount: 0) == false)
+    }
+
+    @Test("the primary reading is withheld under the exact same ambiguity as the stat rows, including the mirror case")
+    func primaryValueGatedWithStats() {
+        let sample = Self.sample(renderer: 0.3, tiler: 0.2)
+
+        // Two named GPUs, one IOAccelerator sample: the direct case.
+        #expect(GPUPage.attributableLatest(sample, gpuCount: 2, sampleCount: 1) == nil)
+        // One named GPU, two IOAccelerator samples: the mirror case fix 1 closes.
+        #expect(GPUPage.attributableLatest(sample, gpuCount: 1, sampleCount: 2) == nil)
+        // Unambiguous: the sample survives.
+        #expect(GPUPage.attributableLatest(sample, gpuCount: 1, sampleCount: 1) == sample)
+        #expect(GPUPage.attributableLatest(sample, gpuCount: 0, sampleCount: 1) == sample)
+        // No sample at all is a separate, ordinary absence — not ambiguity.
+        #expect(GPUPage.attributableLatest(nil, gpuCount: 1, sampleCount: 1) == nil)
+    }
+
+    @Test("the chart series is withheld under the same ambiguity, including the mirror case")
+    func seriesGatedWithStats() {
+        let history = Self.stamped([[Self.sample(renderer: 0.3, tiler: 0.2)]])
+        let series = GPUPage.engineSeries(history: history)
+        #expect(!series.isEmpty)
+
+        // A chart labelled "Renderer"/"Tiler" drawn from an arbitrary sample
+        // would contradict the stat rows reading "Unavailable" for the same
+        // engines immediately below it — the inconsistency fix 1 closes.
+        #expect(GPUPage.attributableSeries(series, gpuCount: 2, sampleCount: 1).isEmpty)
+        #expect(GPUPage.attributableSeries(series, gpuCount: 1, sampleCount: 2).isEmpty)
+        // Unambiguous: the series passes through unchanged.
+        #expect(GPUPage.attributableSeries(series, gpuCount: 1, sampleCount: 1) == series)
+    }
+
     @Test("each memory topology is described distinctly, never flattened")
     func memoryTopologiesAreDistinct() {
         // The three cases mean different things to a reader and must not read

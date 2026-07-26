@@ -75,6 +75,22 @@ public struct GPUPage: View {
     /// directly, without needing to render a full page and inspect pixels.
     static func isMultiGPU(_ gpus: [GPUDevice]) -> Bool { gpus.count > 1 }
 
+    /// The general form of `isMultiGPU(_:)` above, also covering the mirror
+    /// case: Metal (`gpuCount`, from `store.profile?.gpus`) and IOAccelerator
+    /// (`sampleCount`, from `store.gpu`) are independent enumerations, so
+    /// either one alone reporting more than one device is enough to make
+    /// attribution ambiguous — Metal could report a single GPU while
+    /// IOAccelerator's latest tick yields two samples (or vice versa), and
+    /// naming "the" device would still be pairing a reading with hardware it
+    /// might not belong to. `isMultiGPU(_:)` is the special case of this with
+    /// `sampleCount` fixed at 0, which is why it can stay written the way it
+    /// already was rather than being reimplemented here.
+    ///
+    /// Internal for the same testing reason as `isMultiGPU(_:)`.
+    static func isMultiGPU(gpuCount: Int, sampleCount: Int) -> Bool {
+        gpuCount > 1 || sampleCount > 1
+    }
+
     /// Resolves the one GPU the page may safely name, or `nil` when there is
     /// none or more than one — see `isMultiGPU`'s doc comment for why more
     /// than one can never be named. Internal for the same testing reason as
@@ -83,8 +99,40 @@ public struct GPUPage: View {
         isMultiGPU(gpus) ? nil : gpus.first
     }
 
-    private var isMultiGPU: Bool { Self.isMultiGPU(store.profile?.gpus ?? []) }
-    private var device: GPUDevice? { Self.attributedDevice(store.profile?.gpus ?? []) }
+    /// `latest`, but withheld once either enumeration reports more than one
+    /// device — see `isMultiGPU(gpuCount:sampleCount:)`. Internal so
+    /// `GPUPageTests` can verify the primary reading and chart series are
+    /// gated by the exact same rule as the stat rows, without rendering a
+    /// full page.
+    static func attributableLatest(_ latest: GPUSample?, gpuCount: Int, sampleCount: Int) -> GPUSample? {
+        isMultiGPU(gpuCount: gpuCount, sampleCount: sampleCount) ? nil : latest
+    }
+
+    /// `series`, but withheld under the same ambiguity. A chart labelled
+    /// "Renderer"/"Tiler" drawn from an arbitrarily-picked sample would
+    /// contradict the stat rows immediately below it reading "Unavailable"
+    /// for the same engines — see this file's top-level doc comment. Internal
+    /// for the same testing reason as `attributableLatest`.
+    static func attributableSeries(_ series: [ChartSeries], gpuCount: Int, sampleCount: Int) -> [ChartSeries] {
+        isMultiGPU(gpuCount: gpuCount, sampleCount: sampleCount) ? [] : series
+    }
+
+    /// Neither Metal's nor IOAccelerator's own count in isolation: covers the
+    /// mirror case (`GPUPage.swift`'s doc comment for `isMultiGPU`) where one
+    /// enumeration reports a single device this tick but the other reports
+    /// more than one — attribution is just as broken either way round.
+    private var isMultiGPU: Bool {
+        Self.isMultiGPU(gpuCount: store.profile?.gpus.count ?? 0, sampleCount: store.gpu?.count ?? 0)
+    }
+
+    /// Named directly from `store.profile?.gpus`, not through
+    /// `attributedDevice(_:)`: that overload only ever sees Metal's own
+    /// count, so on the mirror case (Metal reports one device, IOAccelerator
+    /// reports more than one this tick) it would still name the lone Metal
+    /// device — exactly the bug this fix closes. Gating on the instance
+    /// `isMultiGPU` above, which also looks at `store.gpu`'s count, is what
+    /// catches that case.
+    private var device: GPUDevice? { isMultiGPU ? nil : store.profile?.gpus.first }
     private var latest: GPUSample? { store.gpu?.first }
 
     /// `latest`, but withheld on a multi-GPU Mac. `device` above already
@@ -92,24 +140,52 @@ public struct GPUPage: View {
     /// it from pairing that same ambiguous sample with the "Memory" / "In
     /// use" / "Allocated" / "Renderer" / "Tiler" readings either, since those
     /// carry the identical device-vs-sample ambiguity as `device` does.
-    private var attributableLatest: GPUSample? { isMultiGPU ? nil : latest }
+    private var attributableLatest: GPUSample? {
+        Self.attributableLatest(latest, gpuCount: store.profile?.gpus.count ?? 0, sampleCount: store.gpu?.count ?? 0)
+    }
 
     public var body: some View {
         HardwarePage(
             title: "GPU",
             vendorName: device?.name,
             showsAppleMark: store.profile?.cpu.isAppleSilicon == true,
-            primaryValue: latest?.deviceUtilisation.map { "\(Int(($0 * 100).rounded()))%" },
-            series: Self.engineSeries(history: store.gpuHistory),
+            // Both gated on the identical ambiguity the stats already are —
+            // see `attributableLatest`/`attributableSeries`'s doc comments.
+            // A chart labelled "Renderer" and a bare percentage under a badge
+            // deliberately withheld would otherwise present one arbitrary
+            // GPU's load as the whole machine's.
+            primaryValue: attributableLatest?.deviceUtilisation.map { "\(Int(($0 * 100).rounded()))%" },
+            series: Self.attributableSeries(
+                Self.engineSeries(history: store.gpuHistory),
+                gpuCount: store.profile?.gpus.count ?? 0,
+                sampleCount: store.gpu?.count ?? 0
+            ),
             accent: Vitals.Palette.gpu,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {
-            EmptyView()
+            attributionNotice
         } specifications: {
             specificationRows
         }
         .task { await store.stream(.gpu) }
+    }
+
+    /// Explains the otherwise-mostly-empty page on a multi-GPU Mac, rather
+    /// than leaving it silently blank. Follows `CPUPage`'s convention for a
+    /// structurally-unavailable reading: a row that stays on screen and
+    /// states what is missing, styled as secondary/de-emphasised content,
+    /// instead of the section simply vanishing and leaving the reader to
+    /// guess whether the app is broken.
+    @ViewBuilder
+    private var attributionNotice: some View {
+        if isMultiGPU {
+            Text(
+                "This Mac reports more than one GPU, and nothing ties a reading to a specific device — so utilisation and memory are withheld here rather than shown against the wrong one."
+            )
+            .font(Vitals.Typography.label)
+            .foregroundStyle(.secondary)
+        }
     }
 
     private var stats: [HardwareStat] {
