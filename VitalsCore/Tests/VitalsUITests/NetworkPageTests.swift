@@ -1,3 +1,4 @@
+import MetricsEngine
 import SwiftUI
 import SystemMetrics
 import Testing
@@ -100,5 +101,42 @@ struct NetworkPageTests {
         #expect(abs(down[0] - 2.0) < 1e-9)
         #expect(abs(down[1] - 1.0) < 1e-9)
         #expect(abs(down[2] - 4.0) < 1e-9)
+    }
+
+    /// The whole point of this test: nothing before it ever constructed a
+    /// `NetworkPage` from a `MetricsStore` and rendered it — every prior test
+    /// in this file covers only the static, pure `throughputSeries` and
+    /// `activeInterfaces` helpers.
+    @Test("renders a full page assembled from a live store, not just its pure helpers")
+    func rendersFullPageFromStore() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(
+            AnySampler { ["en0": NetworkThroughput(bytesInPerSecond: 2_097_152, bytesOutPerSecond: 1_048_576)] },
+            for: .network,
+            cadence: .fast
+        )
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.network) }
+        try await waitUntil { store.networkHistory.count >= 2 }
+        task.cancel()
+
+        let rendered = try renderPNG(
+            NetworkPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "network-page-with-data"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+    }
+
+    @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")
+    func rendersFromEmptyStore() throws {
+        let store = MetricsStore(engine: MetricsEngine(), profile: nil)
+        let rendered = try renderPNG(
+            NetworkPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "network-page-empty-store"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 }

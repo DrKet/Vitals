@@ -1,3 +1,4 @@
+import MetricsEngine
 import SwiftUI
 import SystemMetrics
 import Testing
@@ -124,5 +125,51 @@ struct GPUPageTests {
         #expect(dedicated.contains("VRAM"))
         #expect(shared.contains("hared"))
         #expect(Set([unified, dedicated, shared]).count == 3)
+    }
+
+    /// The whole point of this test: nothing before it ever constructed a
+    /// `GPUPage` from a `MetricsStore` and rendered it — every prior test in
+    /// this file covers only static, pure helpers. Using this machine's real
+    /// GPU inventory (`HardwareProfile.detect()`) also means this exercises
+    /// exactly the single-GPU path fix 1 above must leave unchanged.
+    @Test("renders a full page assembled from a live store, not just its pure helpers")
+    func rendersFullPageFromStore() async throws {
+        let profile = try HardwareProfile.detect()
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(
+            AnySampler {
+                [
+                    GPUSample(
+                        deviceUtilisation: 0.6, rendererUtilisation: 0.5, tilerUtilisation: 0.2,
+                        inUseMemoryBytes: 2_000_000_000, allocatedMemoryBytes: 4_000_000_000
+                    )
+                ]
+            },
+            for: .gpu,
+            cadence: .fast
+        )
+        let store = MetricsStore(engine: engine, profile: profile)
+
+        let task = Task { await store.stream(.gpu) }
+        try await waitUntil { store.gpuHistory.count >= 2 }
+        task.cancel()
+
+        let rendered = try renderPNG(
+            GPUPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "gpu-page-with-data"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+    }
+
+    @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")
+    func rendersFromEmptyStore() throws {
+        let store = MetricsStore(engine: MetricsEngine(), profile: nil)
+        let rendered = try renderPNG(
+            GPUPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "gpu-page-empty-store"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 }

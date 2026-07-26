@@ -1,3 +1,4 @@
+import MetricsEngine
 import SwiftUI
 import SystemMetrics
 import Testing
@@ -182,5 +183,62 @@ struct CPUPageTests {
         // value) is asserted directly by `StatRowTests`, so this only needs
         // to prove the two-row layout renders without crashing.
         _ = try renderPNG(rows, size: CGSize(width: 320, height: 70), named: "stat-rows")
+    }
+
+    /// This machine's real hardware description. `HardwareProfileTests`
+    /// already exercises `HardwareProfile.detect()` directly against real
+    /// sysctl/`system_profiler` output; reusing it here means the cluster
+    /// layout this test feeds through `CPUPage` is honest for whatever Mac
+    /// runs the suite, rather than a topology that might not match a
+    /// hand-picked sample's core count.
+    private static func detectedProfile() throws -> HardwareProfile {
+        try HardwareProfile.detect()
+    }
+
+    /// The whole point of this test: nothing before it ever constructed a
+    /// `CPUPage` from a `MetricsStore` and rendered it. Every prior
+    /// `CPUPage` test — including every one above in this file — covers only
+    /// the page's static, pure helpers. A page that composed but painted
+    /// nothing would have sailed through the whole suite undetected; this is
+    /// the first test that would actually catch that.
+    @Test("renders a full page assembled from a live store, not just its pure helpers")
+    func rendersFullPageFromStore() async throws {
+        let profile = try Self.detectedProfile()
+        let coreCount = profile.cpu.logicalCores ?? profile.cpu.physicalCores ?? 8
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(
+            AnySampler {
+                CPULoadSample(cores: (0..<coreCount).map { _ in
+                    CoreLoad(user: 0.4, system: 0.1, idle: 0.5, nice: 0)
+                })
+            },
+            for: .cpu,
+            cadence: .fast
+        )
+        let store = MetricsStore(engine: engine, profile: profile)
+
+        let task = Task { await store.stream(.cpu) }
+        try await waitUntil { store.cpuHistory.count >= 2 }
+        task.cancel()
+
+        let rendered = try renderPNG(
+            CPUPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "cpu-page-with-data"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+    }
+
+    @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")
+    func rendersFromEmptyStore() throws {
+        // The state a page is actually in for its first second on screen,
+        // before any sample has arrived.
+        let store = MetricsStore(engine: MetricsEngine(), profile: nil)
+        let rendered = try renderPNG(
+            CPUPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "cpu-page-empty-store"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 }

@@ -1,3 +1,4 @@
+import MetricsEngine
 import SwiftUI
 import SystemMetrics
 import Testing
@@ -59,5 +60,52 @@ struct MemoryPageTests {
     func absentBytesFormatAsNil() {
         #expect(Vitals.formatByteCount(UInt64?.none) == nil)
         #expect(Vitals.formatByteCount(UInt64(1_073_741_824))?.isEmpty == false)
+    }
+
+    /// The whole point of this test: nothing before it ever constructed a
+    /// `MemoryPage` from a `MetricsStore` and rendered it — every prior test
+    /// in this file covers only the static, pure `breakdownSeries` helper.
+    @Test("renders a full page assembled from a live store, not just its pure helpers")
+    func rendersFullPageFromStore() async throws {
+        // Real hardware description (`HardwareProfile.detect()`, exercised
+        // directly by `HardwareProfileTests`) so the installed-bytes total
+        // this test's fractions are computed against is honest for whatever
+        // Mac runs the suite.
+        let profile = try HardwareProfile.detect()
+        let total = profile.memory.totalBytes
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(
+            AnySampler {
+                MemorySample(
+                    app: total / 5, wired: total / 10, compressed: total / 20, cached: total / 4,
+                    free: total / 2, swapUsed: total / 8, swapTotal: total / 4, pressure: .normal
+                )
+            },
+            for: .memory,
+            cadence: .fast
+        )
+        let store = MetricsStore(engine: engine, profile: profile)
+
+        let task = Task { await store.stream(.memory) }
+        try await waitUntil { store.memoryHistory.count >= 2 }
+        task.cancel()
+
+        let rendered = try renderPNG(
+            MemoryPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "memory-page-with-data"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+    }
+
+    @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")
+    func rendersFromEmptyStore() throws {
+        let store = MetricsStore(engine: MetricsEngine(), profile: nil)
+        let rendered = try renderPNG(
+            MemoryPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "memory-page-empty-store"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 }

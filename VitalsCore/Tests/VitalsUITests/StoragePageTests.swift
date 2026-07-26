@@ -1,3 +1,4 @@
+import MetricsEngine
 import SwiftUI
 import SystemMetrics
 import Testing
@@ -106,6 +107,52 @@ struct StoragePageTests {
             accent: Vitals.Palette.storage
         )
         let rendered = try renderPNG(bar, size: CGSize(width: 400, height: 60), named: "volume-bar")
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+    }
+
+    /// The whole point of this test: nothing before it ever constructed a
+    /// `StoragePage` from a `MetricsStore` and rendered it — every prior test
+    /// in this file covers only static, pure helpers (`throughputSeries`) or,
+    /// for `VolumeBar` just above, a bare subcomponent.
+    @Test("renders a full page assembled from a live store, not just its pure helpers")
+    func rendersFullPageFromStore() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(
+            AnySampler {
+                [Volume(name: "Macintosh HD", totalBytes: 500_000_000_000, availableBytes: 120_000_000_000, isInternal: true)]
+            },
+            for: .storage,
+            cadence: .fast
+        )
+        await engine.register(
+            AnySampler { ["disk0": DiskThroughput(bytesReadPerSecond: 2_097_152, bytesWrittenPerSecond: 1_048_576)] },
+            for: .diskIO,
+            cadence: .fast
+        )
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let volumesTask = Task { await store.stream(.storage) }
+        let diskIOTask = Task { await store.stream(.diskIO) }
+        try await waitUntil { store.volumes != nil && store.diskIOHistory.count >= 2 }
+        volumesTask.cancel()
+        diskIOTask.cancel()
+
+        let rendered = try renderPNG(
+            StoragePage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "storage-page-with-data"
+        )
+        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+    }
+
+    @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")
+    func rendersFromEmptyStore() throws {
+        let store = MetricsStore(engine: MetricsEngine(), profile: nil)
+        let rendered = try renderPNG(
+            StoragePage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "storage-page-empty-store"
+        )
         #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
 }
