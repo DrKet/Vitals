@@ -70,4 +70,37 @@ struct ThroughputBandsTests {
         #expect(abs(bands[0].values[0] - 2.0) < 1e-9)
         #expect(abs(bands[0].values[1] - 1.0) < 1e-9)
     }
+
+    @Test("a tick whose only entries are excluded is dropped entirely, never summed to a fabricated zero")
+    func allExcludedTickIsDropped() {
+        // Tick 1: only "lo0" reported, and it's excluded — nothing real left
+        // to sum. Tick 2: a real device reported.
+        let history = Self.stamped([
+            ["lo0": 9_000_000],
+            ["dev": 1_048_576],
+        ])
+        let bands = ChartGeometry.throughputBands(
+            history: history,
+            excluding: ["lo0"],
+            bands: [(name: "A", rate: { $0 })]
+        )
+        // The all-excluded tick must not appear at all — not as a value, and
+        // not as a timestamp — rather than surviving as a genuine-looking 0.0.
+        #expect(bands[0].values.count == 1)
+        #expect(abs(bands[0].values[0] - 1.0) < 1e-9)
+        #expect(bands[0].timestamps == [501])
+    }
+
+    @Test("a history whose only tick has nothing to sum after exclusion yields no bands at all")
+    func allExcludedOnlyTickYieldsNoBands() {
+        let history = Self.stamped([
+            ["lo0": 9_000_000],
+        ])
+        let bands = ChartGeometry.throughputBands(
+            history: history,
+            excluding: ["lo0"],
+            bands: [(name: "A", rate: { $0 }), (name: "B", rate: { $0 / 2 })]
+        )
+        #expect(bands.isEmpty)
+    }
 }

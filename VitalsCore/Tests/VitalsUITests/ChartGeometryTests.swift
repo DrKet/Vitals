@@ -52,19 +52,38 @@ struct ChartGeometryTests {
 
     @Test("a fractional series is bounded at 1 so 40% does not fill the chart")
     func fractionalSeriesBoundedAtOne() {
-        #expect(ChartGeometry.upperBound(for: [[0.1, 0.4]]) == 1.0)
+        #expect(ChartGeometry.upperBound(for: [[0.1, 0.4]], unit: .fraction) == 1.0)
     }
 
-    @Test("a series exceeding 1 grows the bound to its peak")
+    @Test("a fractional series exceeding 1 grows the bound to its peak")
     func unboundedSeriesUsesPeak() {
-        // Throughput and per-process CPU are not fractions — a process on four
-        // cores legitimately reads 4.0.
-        #expect(ChartGeometry.upperBound(for: [[0.5, 3.2]]) == 3.2)
+        // Per-process CPU is not a fraction — a process on four cores
+        // legitimately reads 4.0.
+        #expect(ChartGeometry.upperBound(for: [[0.5, 3.2]], unit: .fraction) == 3.2)
     }
 
-    @Test("an all-zero series still has a positive bound, so nothing divides by zero")
+    @Test("an all-zero fractional series still has a positive bound, so nothing divides by zero")
     func zeroSeriesHasPositiveBound() {
-        #expect(ChartGeometry.upperBound(for: [[0, 0, 0]]) == 1.0)
+        #expect(ChartGeometry.upperBound(for: [[0, 0, 0]], unit: .fraction) == 1.0)
+    }
+
+    @Test("an absolute series below 1 scales to its own peak, not a 1.0 floor")
+    func absoluteSeriesBelowOneScalesToOwnPeak() {
+        // Storage/Network idle throughput sits in the 0.001-0.05 MB/s range.
+        // Flooring that at 1.0 would render as a flat line hugging the axis.
+        let bound = ChartGeometry.upperBound(for: [[0.01, 0.05]], unit: .absolute(suffix: "MB/s"))
+        #expect(abs(bound - 0.05) < 1e-9)
+    }
+
+    @Test("an absolute series exceeding 1 still grows to its peak")
+    func absoluteSeriesAboveOneUsesPeak() {
+        #expect(ChartGeometry.upperBound(for: [[0.5, 3.2]], unit: .absolute(suffix: "MB/s")) == 3.2)
+    }
+
+    @Test("an all-zero or empty absolute series has a small positive bound, so nothing divides by zero")
+    func zeroAbsoluteSeriesHasPositiveBound() {
+        #expect(ChartGeometry.upperBound(for: [[0, 0, 0]], unit: .absolute(suffix: "MB/s")) > 0)
+        #expect(ChartGeometry.upperBound(for: [], unit: .absolute(suffix: "MB/s")) > 0)
     }
 
     // MARK: Point mapping

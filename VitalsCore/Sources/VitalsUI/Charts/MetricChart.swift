@@ -65,7 +65,9 @@ public struct MetricChart: View {
 
                 let bands = resolvedBands()
                 guard !bands.isEmpty else { return }
-                let bound = ChartGeometry.upperBound(for: bands)
+                // All series on one chart share a unit — see `unit(for:)` —
+                // so the first is representative of the whole chart.
+                let bound = ChartGeometry.upperBound(for: bands, unit: series.first?.unit ?? .fraction)
 
                 switch style {
                 case .area:

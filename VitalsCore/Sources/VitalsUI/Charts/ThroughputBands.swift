@@ -31,17 +31,32 @@ extension ChartGeometry {
         bands: [(name: String, rate: (Value) -> Double)]
     ) -> [ChartSeries] {
         guard !history.isEmpty else { return [] }
-        let timestamps = history.map(\.timestamp)
         let bytesPerMegabyte = 1_048_576.0
+
+        // Exclusion happens per tick, before any summing, so a tick whose
+        // only entries were excluded (e.g. every interface that reported
+        // this tick was loopback) has nothing left to sum. Reducing an empty
+        // dictionary would silently produce a real-looking 0.0 — a claim that
+        // every real interface/device reported zero throughput, when in fact
+        // none reported at all that tick. The sampler-level `guard
+        // !throughput.isEmpty` used elsewhere in this project can't catch
+        // this, because the emptiness is created here, after the sampler.
+        //
+        // Dropping the tick outright (value *and* timestamp, for every band)
+        // treats it the same as if the sampler itself had produced no
+        // reading that tick — consistent with how every other absence here
+        // is handled: omitted, never zero-filled.
+        let ticks = history
+            .map { entry in (timestamp: entry.timestamp, sample: entry.sample.filter { !excluding.contains($0.key) }) }
+            .filter { !$0.sample.isEmpty }
+        guard !ticks.isEmpty else { return [] }
+        let timestamps = ticks.map(\.timestamp)
 
         return bands.map { band in
             ChartSeries(
                 name: band.name,
-                values: history.map { entry in
-                    entry.sample
-                        .filter { !excluding.contains($0.key) }
-                        .values
-                        .reduce(0) { $0 + band.rate($1) } / bytesPerMegabyte
+                values: ticks.map { tick in
+                    tick.sample.values.reduce(0) { $0 + band.rate($1) } / bytesPerMegabyte
                 },
                 timestamps: timestamps,
                 unit: .absolute(suffix: "MB/s")

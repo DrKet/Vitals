@@ -95,11 +95,23 @@ public enum ChartGeometry {
     /// The value the top of the chart represents.
     ///
     /// Fractional metrics (CPU busy, GPU utilisation) are bounded at 1 so a 40%
-    /// reading does not fill the frame. Unbounded metrics (throughput,
-    /// multi-core process CPU) grow to their own peak.
-    public static func upperBound(for stacked: [[Double]]) -> Double {
+    /// reading does not fill the frame. Absolute metrics (throughput,
+    /// multi-core process CPU) grow to their own peak instead: a 1.0 floor
+    /// would be meaningless for a metric with no natural ceiling, and for
+    /// throughput in particular it is actively misleading — an idle disk or
+    /// network link reads in the 0.001-0.05 MB/s range, and flooring that at
+    /// 1.0 draws a flat line hugging the axis, indistinguishable from a
+    /// broken chart. Absolute series still get a small positive floor so an
+    /// all-zero or empty series yields a valid, non-degenerate range rather
+    /// than dividing by zero.
+    public static func upperBound(for stacked: [[Double]], unit: ChartUnit) -> Double {
         let peak = stacked.flatMap { $0 }.max() ?? 0
-        return max(peak, 1.0)
+        switch unit {
+        case .fraction:
+            return max(peak, 1.0)
+        case .absolute:
+            return max(peak, 0.001)
+        }
     }
 
     /// Where sample `index` sits along `rect`'s width under a given spacing
