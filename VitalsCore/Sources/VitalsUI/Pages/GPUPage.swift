@@ -101,6 +101,7 @@ public struct GPUPage: View {
             showsAppleMark: store.profile?.cpu.isAppleSilicon == true,
             primaryValue: latest?.deviceUtilisation.map { "\(Int(($0 * 100).rounded()))%" },
             series: Self.engineSeries(history: store.gpuHistory),
+            accent: Vitals.Palette.gpu,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {

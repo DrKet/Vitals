@@ -36,21 +36,50 @@ public enum Vitals {
         public static let sectionTitle = Font.system(size: 13, weight: .semibold)
     }
 
+    /// The fixed ramp `seriesColors` draws from, in order. Shared by both
+    /// overloads below so there is exactly one place that lists the hues.
+    private static let seriesRamp: [Color] = [
+        Palette.cpu,
+        Palette.storage,
+        Palette.memory,
+        Palette.gpu,
+        Palette.network,
+        Palette.warning,
+    ]
+
     /// A stable colour per series index, for stacked charts.
     ///
     /// Ordering is fixed so a chart's colours do not shuffle between renders.
     /// The ramp wraps rather than truncating, so a caller asking for more series
     /// than there are hues still gets one colour per series.
+    ///
+    /// Always starts at `Palette.cpu` — a thin wrapper over
+    /// `seriesColors(startingAt:count:)` below, for callers with no
+    /// particular hue to lead with.
     public static func seriesColors(count: Int) -> [Color] {
+        seriesColors(startingAt: Palette.cpu, count: count)
+    }
+
+    /// Like `seriesColors(count:)`, but rotated so `accent` leads the ramp
+    /// instead of always starting at `Palette.cpu`.
+    ///
+    /// This is what lets a hardware page's chart open on the same hue as its
+    /// Overview tile — see the doc comment atop this file. When `accent` is
+    /// one of the hues already in the base ramp (true of every call site
+    /// today, which all pass a `Vitals.Palette` colour), the ramp is rotated
+    /// rather than having `accent` prepended, so every hue still appears
+    /// exactly once — prepending would duplicate it at both its original
+    /// position and position 0, which would make two bands on the same chart
+    /// indistinguishable. An `accent` the base ramp does not recognise is
+    /// simply prepended instead, since there is nothing to deduplicate
+    /// against.
+    public static func seriesColors(startingAt accent: Color, count: Int) -> [Color] {
         guard count > 0 else { return [] }
-        let ramp: [Color] = [
-            Palette.cpu,
-            Palette.storage,
-            Palette.memory,
-            Palette.gpu,
-            Palette.network,
-            Palette.warning,
-        ]
+        if let startIndex = seriesRamp.firstIndex(of: accent) {
+            let rotated = Array(seriesRamp[startIndex...] + seriesRamp[..<startIndex])
+            return (0..<count).map { rotated[$0 % rotated.count] }
+        }
+        let ramp = [accent] + seriesRamp
         return (0..<count).map { ramp[$0 % ramp.count] }
     }
 

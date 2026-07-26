@@ -60,6 +60,7 @@ public struct CPUPage: View {
             showsAppleMark: topology?.isAppleSilicon == true,
             primaryValue: store.cpu.map { "\(Int(($0.total * 100).rounded()))%" },
             series: topology.map { Self.clusterSeries(history: store.cpuHistory, topology: $0) } ?? [],
+            accent: Vitals.Palette.cpu,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {

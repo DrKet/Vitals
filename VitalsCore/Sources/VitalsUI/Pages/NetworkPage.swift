@@ -71,6 +71,7 @@ public struct NetworkPage: View {
             showsAppleMark: false,
             primaryValue: totalMBs.map { String(format: "%.2f MB/s", $0) },
             series: Self.throughputSeries(history: store.networkHistory),
+            accent: Vitals.Palette.network,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {

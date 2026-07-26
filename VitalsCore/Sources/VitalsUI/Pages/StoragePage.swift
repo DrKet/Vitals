@@ -61,6 +61,7 @@ public struct StoragePage: View {
             showsAppleMark: false,
             primaryValue: totalThroughput.map { String(format: "%.2f MB/s", $0) },
             series: Self.throughputSeries(history: store.diskIOHistory),
+            accent: Vitals.Palette.storage,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {

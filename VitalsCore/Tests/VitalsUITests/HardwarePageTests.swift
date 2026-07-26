@@ -16,6 +16,7 @@ struct HardwarePageTests {
                 ChartSeries(name: "Wired", values: [0.2, 0.3, 0.25]),
                 ChartSeries(name: "App", values: [0.3, 0.3, 0.35]),
             ],
+            accent: Vitals.Palette.memory,
             stats: stats,
             disclosureKey: "test.memory"
         ) {
@@ -64,6 +65,7 @@ struct HardwarePageTests {
             showsAppleMark: false,
             primaryValue: nil,
             series: [],
+            accent: Vitals.Palette.gpu,
             stats: [],
             disclosureKey: "test.empty"
         ) {

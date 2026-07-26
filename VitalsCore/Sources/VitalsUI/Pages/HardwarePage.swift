@@ -27,6 +27,13 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
     private let showsAppleMark: Bool
     private let primaryValue: String?
     private let series: [ChartSeries]
+    /// The hue this page's Overview tile already uses. Leads the chart's
+    /// colour ramp so a glance at the chart identifies its subject without
+    /// reading the label — see `Design/Tokens.swift`'s doc comment. Every
+    /// page used to fall through to `Vitals.seriesColors(count:)`'s default
+    /// ramp, which always starts at `Palette.cpu`; that was the bug this
+    /// parameter fixes.
+    private let accent: Color
     private let stats: [HardwareStat]
     private let secondary: Secondary
     private let specifications: Specs
@@ -42,6 +49,7 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
         showsAppleMark: Bool,
         primaryValue: String?,
         series: [ChartSeries],
+        accent: Color,
         stats: [HardwareStat],
         disclosureKey: String,
         @ViewBuilder secondary: () -> Secondary,
@@ -52,6 +60,7 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
         self.showsAppleMark = showsAppleMark
         self.primaryValue = primaryValue
         self.series = series
+        self.accent = accent
         self.stats = stats
         self.secondary = secondary()
         self.specifications = specifications()
@@ -87,7 +96,7 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
                                 MetricChart(
                                     series: series,
                                     style: .area(stacked: series.count > 1),
-                                    colors: Vitals.seriesColors(count: max(series.count, 1))
+                                    colors: Vitals.seriesColors(startingAt: accent, count: max(series.count, 1))
                                 )
                             }
 
