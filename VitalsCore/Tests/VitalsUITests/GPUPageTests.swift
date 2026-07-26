@@ -82,6 +82,36 @@ struct GPUPageTests {
         #expect(GPUPage.engineSeries(history: []).isEmpty)
     }
 
+    @Test("a single GPU is attributed, matching today's one-GPU-Mac behaviour")
+    func singleGPUIsAttributed() {
+        let gpu = GPUDevice(name: "Apple M2 Pro", topology: .unified(systemBytes: 17_179_869_184), coreCount: 16)
+        #expect(GPUPage.isMultiGPU([gpu]) == false)
+        #expect(GPUPage.attributedDevice([gpu]) == gpu)
+    }
+
+    @Test("no reported GPU is unavailable, not ambiguous")
+    func noGPUIsNotTreatedAsAmbiguous() {
+        #expect(GPUPage.isMultiGPU([]) == false)
+        #expect(GPUPage.attributedDevice([]) == nil)
+    }
+
+    @Test("more than one GPU is never attributed, since nothing correlates a Metal device with an IOAccelerator sample")
+    func multipleGPUsAreNeverAttributed() {
+        // `device` (Metal's `MTLCopyAllDevices()` order) and `latest` (IOKit's
+        // iteration order) are independent enumerations with no shared
+        // identifier. On a Mac with more than one GPU — an Intel iGPU plus a
+        // discrete card, or an eGPU — naming this device while showing that
+        // sample's numbers next to it would attribute a real measurement to
+        // the wrong piece of hardware. The guard must refuse to name any
+        // device at all in that case, rather than guess.
+        let gpus = [
+            GPUDevice(name: "Intel UHD Graphics 630", topology: .shared(maxSharedBytes: 1_536_000_000), coreCount: nil),
+            GPUDevice(name: "AMD Radeon Pro 5500M", topology: .dedicated(vramBytes: 8_589_934_592), coreCount: nil),
+        ]
+        #expect(GPUPage.isMultiGPU(gpus) == true)
+        #expect(GPUPage.attributedDevice(gpus) == nil)
+    }
+
     @Test("each memory topology is described distinctly, never flattened")
     func memoryTopologiesAreDistinct() {
         // The three cases mean different things to a reader and must not read
