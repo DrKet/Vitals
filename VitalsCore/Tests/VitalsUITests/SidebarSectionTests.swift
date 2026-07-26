@@ -22,12 +22,13 @@ struct SidebarSectionTests {
         #expect(Set(grouped) == Set(SidebarSection.allCases))
     }
 
-    @Test("overview, CPU, memory and GPU are implemented in this plan; the rest are not yet")
+    @Test("overview, CPU, memory, GPU and storage are implemented in this plan; the rest are not yet")
     func implementedSectionsAreMarked() {
         #expect(SidebarSection.overview.isImplemented)
         #expect(SidebarSection.cpu.isImplemented)
         #expect(SidebarSection.memory.isImplemented)
         #expect(SidebarSection.gpu.isImplemented)
+        #expect(SidebarSection.storage.isImplemented)
         #expect(SidebarSection.processes.isImplemented == false)
         #expect(SidebarSection.sensors.isImplemented == false)
     }

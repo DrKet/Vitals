@@ -39,6 +39,8 @@ public struct AppShell: View {
             MemoryPage(store: store)
         case .gpu:
             GPUPage(store: store)
+        case .storage:
+            StoragePage(store: store)
         default:
             NotYetBuilt(section: selection)
         }
