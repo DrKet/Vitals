@@ -352,7 +352,7 @@ The new `body`:
             primaryValue: store.cpu.map { "\(Int(($0.total * 100).rounded()))%" },
             series: topology.map { Self.clusterSeries(history: store.cpuHistory, topology: $0) } ?? [],
             stats: stats,
-            disclosureKey: "CPUPage.showFullSpecifications"
+            disclosureKey: Self.disclosureKey
         ) {
             coreGrid
         } specifications: {
@@ -372,7 +372,7 @@ The new `body`:
     }
 ```
 
-Keep `coreGrid` and move the disclosure's rows into a `specificationRows` view containing exactly the `StatRow`s that are there today. **Reuse the same `disclosureKey` string** so an already-expanded disclosure stays expanded across the refactor.
+Keep `coreGrid` and move the disclosure's rows into a `specificationRows` view containing exactly the `StatRow`s that are there today. **Reuse the same `disclosureKey` string** so an already-expanded disclosure stays expanded across the refactor. Expose it as `public static let disclosureKey = "CPUPage.showFullSpecifications"` on `CPUPage` and pass `Self.disclosureKey` — Task 8 reads these to prove no two pages share a key.
 
 - [ ] **Step 5: Run the full suite**
 
@@ -914,6 +914,10 @@ import SwiftUI
 import SystemMetrics
 
 public struct MemoryPage: View {
+    /// Exposed so `PageConsistencyTests` can verify no two pages share a key —
+    /// a shared key would make one page's disclosure expand every other's.
+    public static let disclosureKey = "MemoryPage.showFullSpecifications"
+
     private let store: MetricsStore
 
     public init(store: MetricsStore) {
@@ -974,7 +978,7 @@ public struct MemoryPage: View {
                 Self.breakdownSeries(history: store.memoryHistory, installedBytes: $0.totalBytes)
             } ?? [],
             stats: stats,
-            disclosureKey: "MemoryPage.showFullSpecifications"
+            disclosureKey: Self.disclosureKey
         ) {
             EmptyView()
         } specifications: {
@@ -1175,6 +1179,10 @@ import SwiftUI
 import SystemMetrics
 
 public struct GPUPage: View {
+    /// Exposed so `PageConsistencyTests` can verify no two pages share a key —
+    /// a shared key would make one page's disclosure expand every other's.
+    public static let disclosureKey = "GPUPage.showFullSpecifications"
+
     private let store: MetricsStore
 
     public init(store: MetricsStore) {
@@ -1235,7 +1243,7 @@ public struct GPUPage: View {
             primaryValue: latest?.deviceUtilisation.map { "\(Int(($0 * 100).rounded()))%" },
             series: Self.engineSeries(history: store.gpuHistory),
             stats: stats,
-            disclosureKey: "GPUPage.showFullSpecifications"
+            disclosureKey: Self.disclosureKey
         ) {
             EmptyView()
         } specifications: {
@@ -1455,6 +1463,10 @@ import SwiftUI
 import SystemMetrics
 
 public struct StoragePage: View {
+    /// Exposed so `PageConsistencyTests` can verify no two pages share a key —
+    /// a shared key would make one page's disclosure expand every other's.
+    public static let disclosureKey = "StoragePage.showFullSpecifications"
+
     private let store: MetricsStore
 
     public init(store: MetricsStore) {
@@ -1512,7 +1524,7 @@ public struct StoragePage: View {
             primaryValue: totalThroughput.map { String(format: "%.2f MB/s", $0) },
             series: Self.throughputSeries(history: store.diskIOHistory),
             stats: stats,
-            disclosureKey: "StoragePage.showFullSpecifications"
+            disclosureKey: Self.disclosureKey
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(volumes, id: \.name) { volume in
@@ -1699,6 +1711,10 @@ import SwiftUI
 import SystemMetrics
 
 public struct NetworkPage: View {
+    /// Exposed so `PageConsistencyTests` can verify no two pages share a key —
+    /// a shared key would make one page's disclosure expand every other's.
+    public static let disclosureKey = "NetworkPage.showFullSpecifications"
+
     private let store: MetricsStore
 
     public init(store: MetricsStore) {
@@ -1772,7 +1788,7 @@ public struct NetworkPage: View {
             primaryValue: totalMBs.map { String(format: "%.2f MB/s", $0) },
             series: Self.throughputSeries(history: store.networkHistory),
             stats: stats,
-            disclosureKey: "NetworkPage.showFullSpecifications"
+            disclosureKey: Self.disclosureKey
         ) {
             EmptyView()
         } specifications: {
@@ -1877,27 +1893,31 @@ import Testing
 @Suite("Page consistency")
 struct PageConsistencyTests {
 
-    @Test("every implemented section has a route, and every route is marked implemented")
-    func implementedSectionsMatchRoutes() {
-        // A section marked implemented but not routed shows the "not built"
-        // placeholder; a section routed but not marked is unreachable. Both
-        // are silent failures without this check.
+    @Test("exactly the pages this plan builds are marked implemented")
+    func implementedSectionsAreExactlyTheBuiltOnes() {
+        // Pins the expected set so adding a page without marking it — or
+        // marking one that was never built — fails here. Whether each is
+        // actually *routed* in AppShell is checked visually in Task 8 Step 3;
+        // a switch statement's arms are not introspectable from a test.
         let implemented = SidebarSection.allCases.filter(\.isImplemented)
         #expect(Set(implemented) == Set([.overview, .cpu, .memory, .gpu, .storage, .network]))
     }
 
     @Test("each page uses a distinct disclosure key")
     func disclosureKeysAreDistinct() {
-        // A shared key would make expanding one page's specifications expand
-        // every other page's too.
+        // Reads the pages' own keys, not a copy of them — a test over a literal
+        // array would be true by construction and would never notice two pages
+        // actually sharing a key, which would make expanding one page's
+        // specifications expand every other page's too.
         let keys = [
-            "CPUPage.showFullSpecifications",
-            "MemoryPage.showFullSpecifications",
-            "GPUPage.showFullSpecifications",
-            "StoragePage.showFullSpecifications",
-            "NetworkPage.showFullSpecifications",
+            CPUPage.disclosureKey,
+            MemoryPage.disclosureKey,
+            GPUPage.disclosureKey,
+            StoragePage.disclosureKey,
+            NetworkPage.disclosureKey,
         ]
         #expect(Set(keys).count == keys.count)
+        #expect(keys.allSatisfy { $0.isEmpty == false })
     }
 
     @Test("absence is worded consistently across components")
