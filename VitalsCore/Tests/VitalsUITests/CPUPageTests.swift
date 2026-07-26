@@ -226,7 +226,23 @@ struct CPUPageTests {
             size: CGSize(width: 800, height: 700),
             named: "cpu-page-with-data"
         )
-        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+        // `fileExists` alone is vacuous here — `renderPNG` already wrote the
+        // file and would have thrown otherwise, so this proved nothing about
+        // whether the chart actually painted the sampled data. A region probe
+        // inside the chart's own canvas is what would actually catch a chart
+        // that silently stopped drawing. See `chartCanvasProbeRegion`'s doc
+        // comment for why this exact rectangle, and
+        // `regionHasSaturatedColor`'s for why a saturation probe rather than
+        // `regionHasContent` is the correct tool once a view sits on a
+        // `GlassPanel`.
+        //
+        // Every core reports the same 0.5 busy fraction, so on any Mac with
+        // two or more performance/efficiency clusters (every Apple Silicon
+        // Mac) the stacked cumulative total clamps to the chart's upper
+        // bound — the topmost band sits exactly at the canvas top,
+        // comfortably inside this probe regardless of how tall the chart
+        // actually grows.
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")

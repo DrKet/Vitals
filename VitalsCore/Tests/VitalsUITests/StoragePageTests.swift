@@ -142,7 +142,14 @@ struct StoragePageTests {
             size: CGSize(width: 800, height: 700),
             named: "storage-page-with-data"
         )
-        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+        // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
+        // alone was vacuous and why a saturation probe (not `regionHasContent`)
+        // is the correct replacement inside a `GlassPanel`. Throughput is an
+        // absolute-unit series, which auto-scales its axis to its own peak
+        // (`ChartGeometry.upperBound`) — a single-tick history's one reading
+        // *is* that peak, so its band always touches the canvas top
+        // regardless of the exact value, no tuning needed here.
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")

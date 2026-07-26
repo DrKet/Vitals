@@ -76,9 +76,17 @@ struct MemoryPageTests {
         let engine = MetricsEngine(intervalOverride: .milliseconds(5))
         await engine.register(
             AnySampler {
+                // Wired + App + Compressed + Cached sums to 90% of installed
+                // memory — high enough that the stacked total's curve sits
+                // within the top ~10% of the chart's canvas regardless of how
+                // tall it actually renders, which is what makes
+                // `chartCanvasProbeRegion` (a fixed rectangle near the canvas
+                // top, shared by all five pages' equivalent tests) land on
+                // real chart content below. See its doc comment for the full
+                // reasoning.
                 MemorySample(
-                    app: total / 5, wired: total / 10, compressed: total / 20, cached: total / 4,
-                    free: total / 2, swapUsed: total / 8, swapTotal: total / 4, pressure: .normal
+                    app: total * 3 / 10, wired: total * 3 / 10, compressed: total / 10, cached: total * 2 / 10,
+                    free: total / 10, swapUsed: total / 8, swapTotal: total / 4, pressure: .normal
                 )
             },
             for: .memory,
@@ -95,7 +103,10 @@ struct MemoryPageTests {
             size: CGSize(width: 800, height: 700),
             named: "memory-page-with-data"
         )
-        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+        // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
+        // alone was vacuous and why a saturation probe (not `regionHasContent`)
+        // is the correct replacement inside a `GlassPanel`.
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")

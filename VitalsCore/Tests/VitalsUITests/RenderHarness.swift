@@ -133,6 +133,106 @@ func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
     return false
 }
 
+/// Where a hardware page's primary chart actually paints, inside an
+/// `800x700` render — shared by every page's "renders a full page from a
+/// live store" test so they all probe the same, empirically-verified spot
+/// rather than five independently-guessed rectangles.
+///
+/// Derived, not guessed: dumping saturated (non-grey) pixel rows from real
+/// `renderPNG` output for all five pages showed every one's chart canvas
+/// starting at the same `y = 111pt` — identical header + primary-value
+/// layout above it, so this holds regardless of which page it is. The
+/// `MetricChart` beneath it grows past its `Vitals.Metrics.chartHeight`
+/// (132pt) floor to fill leftover space, so its actual rendered height
+/// varies by page (207pt measured for CPU's, more for pages with no
+/// secondary content below the chart) — but the floor itself is a
+/// *guarantee*, so a probe rectangle that stays within `y ∈ [111, 111+132]`
+/// is always entirely inside the chart's canvas no matter how much extra
+/// room it grows into, and always well short of secondary content
+/// (`CoreGrid`, `VolumeBar`) that only ever starts after the chart's actual
+/// (grown) bottom.
+///
+/// `x` is inset from the panel's own content edges (`x ∈ [20, 780]` at this
+/// width) to stay clear of the rounded-corner antialiasing; `y` starts a few
+/// points below the canvas top for the same reason and stops well inside the
+/// guaranteed floor rather than right at its edge.
+///
+/// Each page's "renders a full page" test picks its sample data so its
+/// chart's topmost band sits within the top ~10% of the canvas (fraction
+/// series: a stacked total near 1.0; absolute series such as throughput
+/// auto-scale to their own peak, so any non-zero reading already touches the
+/// canvas top) — see each test's comment — which is what makes one shared,
+/// generously-sized rectangle correct for all five without per-page tuning.
+let chartCanvasProbeRegion = CGRect(x: 40, y: 118, width: 720, height: 85)
+
+/// True when any pixel inside `region` is a saturated (non-grayscale)
+/// colour — its channels are not all approximately equal.
+///
+/// `regionHasContent` above cannot tell chart data from chrome once a view
+/// sits inside a `GlassPanel`. Offscreen, `glassSurface()` falls back to
+/// `.regularMaterial` painted as a flat, fully-opaque grey (confirmed
+/// empirically at RGB(35,35,35) in this harness) that fills the panel
+/// whether or not anything is drawn on top of it — so `regionHasContent`,
+/// which only asks "does this differ from the corner pixel outside any
+/// panel," returns `true` for a panel's bare material alone, before a single
+/// band is painted. Every hardware page's chrome (that material, gridlines,
+/// `StatRow` text, the disclosure chevron) renders in neutral greys; the
+/// *only* saturated colour anywhere on a page comes from a chart's own
+/// accent-tinted fill, stroke, or live dot (or `CoreGrid`'s / `VolumeBar`'s
+/// accent-filled bars). Asking "is there a non-neutral pixel here" is
+/// therefore the discriminator that actually answers "did this page's chart
+/// paint its own data" inside a material panel, where a plain
+/// difference-from-background check cannot.
+///
+/// Built on the same bounds-clamping and pixel access as `regionHasContent`
+/// rather than a parallel screenshot mechanism — the only difference is what
+/// counts as "content".
+@MainActor
+func regionHasSaturatedColor(
+    in image: RenderedImage,
+    region: CGRect,
+    minimumSpread: CGFloat = 16.0 / 255.0
+) throws -> Bool {
+    try firstSaturatedColor(in: image, region: region, minimumSpread: minimumSpread) != nil
+}
+
+/// The first saturated (non-grayscale) colour found scanning `region`
+/// top-to-bottom, left-to-right, or `nil` if the region is entirely neutral
+/// grey.
+///
+/// Used where a test needs to know *which* colour a chart painted — e.g.
+/// comparing two pages' charts to prove their accents actually differ —
+/// rather than merely that some non-neutral colour exists. See
+/// `regionHasSaturatedColor`'s doc comment for why a saturation probe, not a
+/// background-difference check, is the correct tool inside a `GlassPanel`.
+@MainActor
+func firstSaturatedColor(
+    in image: RenderedImage,
+    region: CGRect,
+    minimumSpread: CGFloat = 16.0 / 255.0
+) throws -> NSColor? {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return nil }
+
+    for y in minY..<maxY {
+        for x in minX..<maxX {
+            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
+            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
+            if max(r, g, b) - min(r, g, b) > minimumSpread { return color }
+        }
+    }
+    return nil
+}
+
 /// True when the bitmap contains more than one distinct pixel value.
 ///
 /// Deliberately weak: it cannot judge whether a render looks *right*, only that

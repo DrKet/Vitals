@@ -185,8 +185,12 @@ struct GPUPageTests {
         await engine.register(
             AnySampler {
                 [
+                    // Renderer + Tiler sums to 0.9 — high enough that the
+                    // stacked total's curve sits within the top ~10% of the
+                    // chart's canvas regardless of how tall it actually
+                    // renders. See `chartCanvasProbeRegion`'s doc comment.
                     GPUSample(
-                        deviceUtilisation: 0.6, rendererUtilisation: 0.5, tilerUtilisation: 0.2,
+                        deviceUtilisation: 0.6, rendererUtilisation: 0.5, tilerUtilisation: 0.4,
                         inUseMemoryBytes: 2_000_000_000, allocatedMemoryBytes: 4_000_000_000
                     )
                 ]
@@ -205,7 +209,10 @@ struct GPUPageTests {
             size: CGSize(width: 800, height: 700),
             named: "gpu-page-with-data"
         )
-        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+        // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
+        // alone was vacuous and why a saturation probe (not `regionHasContent`)
+        // is the correct replacement inside a `GlassPanel`.
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")
