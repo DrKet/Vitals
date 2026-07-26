@@ -8,6 +8,22 @@ public struct MemorySlot: Sendable, Equatable {
     public let speedMHz: Int?
     public let manufacturer: String?
     public let partNumber: String?
+
+    public init(
+        name: String,
+        sizeDescription: String,
+        type: String?,
+        speedMHz: Int?,
+        manufacturer: String?,
+        partNumber: String?
+    ) {
+        self.name = name
+        self.sizeDescription = sizeDescription
+        self.type = type
+        self.speedMHz = speedMHz
+        self.manufacturer = manufacturer
+        self.partNumber = partNumber
+    }
 }
 
 public struct MemoryHardware: Sendable, Equatable {

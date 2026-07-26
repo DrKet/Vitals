@@ -28,6 +28,11 @@ public struct InterfaceCounters: Sendable, Equatable {
 public struct NetworkThroughput: Sendable, Equatable {
     public let bytesInPerSecond: Double
     public let bytesOutPerSecond: Double
+
+    public init(bytesInPerSecond: Double, bytesOutPerSecond: Double) {
+        self.bytesInPerSecond = bytesInPerSecond
+        self.bytesOutPerSecond = bytesOutPerSecond
+    }
 }
 
 /// Converts successive interface counter readings into throughput, keeping one

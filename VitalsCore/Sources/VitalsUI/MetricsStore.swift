@@ -38,6 +38,16 @@ public final class MetricsStore {
     public private(set) var memory: MemorySample?
     public private(set) var memoryHistory: [Timestamped<MemorySample>] = []
 
+    public private(set) var gpu: [GPUSample]?
+    public private(set) var gpuHistory: [Timestamped<[GPUSample]>] = []
+
+    /// Latest only — volume capacity changes over minutes, not seconds, so a
+    /// 600-sample ring of near-identical readings would be pure waste.
+    public private(set) var volumes: [Volume]?
+
+    public private(set) var network: [String: NetworkThroughput]?
+    public private(set) var networkHistory: [Timestamped<[String: NetworkThroughput]>] = []
+
     /// Uptime and load average. Cheap and slow-moving, so it is read on demand
     /// rather than sampled on a schedule.
     public var systemLoad: SystemLoad { SystemLoad.current() }
@@ -93,9 +103,20 @@ public final class MetricsStore {
             guard let sample = value.value as? MemorySample else { return }
             memory = sample
             append(Timestamped(timestamp: value.timestamp, sample: sample), to: &memoryHistory)
-        case .gpu, .storage, .network, .processes:
-            // Handled by later plans. Ignored rather than crashed on, so a page
-            // that subscribes early does not fault.
+        case .gpu:
+            guard let samples = value.value as? [GPUSample] else { return }
+            gpu = samples
+            append(Timestamped(timestamp: value.timestamp, sample: samples), to: &gpuHistory)
+        case .storage:
+            guard let latest = value.value as? [Volume] else { return }
+            volumes = latest
+        case .network:
+            guard let throughput = value.value as? [String: NetworkThroughput] else { return }
+            network = throughput
+            append(Timestamped(timestamp: value.timestamp, sample: throughput), to: &networkHistory)
+        case .processes:
+            // The Processes pane is M1-B-3. Ignored rather than crashed on, so
+            // a page that subscribes early does not fault.
             return
         }
     }

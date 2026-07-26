@@ -127,6 +127,68 @@ struct MetricsStoreTests {
         task.cancel()
         try await waitUntilAsync { await engine.activeSeries.contains(.cpu) == false }
     }
+
+    @Test("publishes GPU samples with history")
+    func publishesGPU() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let sample = GPUSample(
+            deviceUtilisation: 0.4, rendererUtilisation: 0.3,
+            tilerUtilisation: 0.1, inUseMemoryBytes: 1000, allocatedMemoryBytes: 2000
+        )
+        await engine.register(AnySampler { [sample] }, for: .gpu, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.gpu) }
+        try await waitUntil { store.gpuHistory.count >= 2 }
+        task.cancel()
+
+        #expect(store.gpu?.first?.deviceUtilisation == 0.4)
+        #expect(store.gpuHistory.isEmpty == false)
+    }
+
+    @Test("publishes volumes without retaining history")
+    func publishesVolumesWithoutHistory() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let volume = Volume(name: "Macintosh HD", totalBytes: 1000, availableBytes: 400, isInternal: true)
+        await engine.register(AnySampler { [volume] }, for: .storage, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.storage) }
+        try await waitUntil { store.volumes != nil }
+        task.cancel()
+
+        // Capacity moves over minutes; a 600-sample ring of identical values
+        // would be waste, so only the latest reading is kept.
+        #expect(store.volumes?.first?.name == "Macintosh HD")
+    }
+
+    @Test("publishes network throughput with history")
+    func publishesNetwork() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let throughput = ["en0": NetworkThroughput(bytesInPerSecond: 2048, bytesOutPerSecond: 1024)]
+        await engine.register(AnySampler { throughput }, for: .network, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.network) }
+        try await waitUntil { store.networkHistory.count >= 2 }
+        task.cancel()
+
+        #expect(store.network?["en0"]?.bytesInPerSecond == 2048)
+    }
+
+    @Test("a wrong-typed payload on a new series is ignored, not crashed on")
+    func wrongTypeOnNewSeriesIgnored() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(AnySampler { "not a GPU sample" }, for: .gpu, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.gpu) }
+        try await Task.sleep(for: .milliseconds(60))
+        task.cancel()
+
+        #expect(store.gpu == nil)
+        #expect(store.gpuHistory.isEmpty)
+    }
 }
 
 /// Vends prerecorded samples, then repeats the final one forever once

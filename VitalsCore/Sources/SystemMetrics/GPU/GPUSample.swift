@@ -15,6 +15,12 @@ public struct GPUDevice: Sendable, Equatable {
     public let name: String
     public let topology: GPUMemoryTopology
     public let coreCount: Int?
+
+    public init(name: String, topology: GPUMemoryTopology, coreCount: Int?) {
+        self.name = name
+        self.topology = topology
+        self.coreCount = coreCount
+    }
 }
 
 /// Utilisation values are fractions in `0...1`. Every field is optional because
@@ -25,6 +31,20 @@ public struct GPUSample: Sendable, Equatable {
     public let tilerUtilisation: Double?
     public let inUseMemoryBytes: UInt64?
     public let allocatedMemoryBytes: UInt64?
+
+    public init(
+        deviceUtilisation: Double?,
+        rendererUtilisation: Double?,
+        tilerUtilisation: Double?,
+        inUseMemoryBytes: UInt64?,
+        allocatedMemoryBytes: UInt64?
+    ) {
+        self.deviceUtilisation = deviceUtilisation
+        self.rendererUtilisation = rendererUtilisation
+        self.tilerUtilisation = tilerUtilisation
+        self.inUseMemoryBytes = inUseMemoryBytes
+        self.allocatedMemoryBytes = allocatedMemoryBytes
+    }
 }
 
 public enum GPUStatisticsParser {

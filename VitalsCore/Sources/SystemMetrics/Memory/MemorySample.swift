@@ -52,6 +52,26 @@ public struct MemorySample: Sendable, Equatable {
     /// `nil` when the pressure level could not be read or was unrecognised.
     public let pressure: MemoryPressure?
 
+    public init(
+        app: UInt64,
+        wired: UInt64,
+        compressed: UInt64,
+        cached: UInt64,
+        free: UInt64,
+        swapUsed: UInt64?,
+        swapTotal: UInt64?,
+        pressure: MemoryPressure?
+    ) {
+        self.app = app
+        self.wired = wired
+        self.compressed = compressed
+        self.cached = cached
+        self.free = free
+        self.swapUsed = swapUsed
+        self.swapTotal = swapTotal
+        self.pressure = pressure
+    }
+
     /// Matches Activity Monitor's "Memory Used".
     public var used: UInt64 { app + wired + compressed }
 }
