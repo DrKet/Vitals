@@ -47,7 +47,7 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Hashable, Sendab
     /// so plainly rather than showing an empty pane.
     public var isImplemented: Bool {
         switch self {
-        case .overview, .cpu, .memory, .gpu, .storage: true
+        case .overview, .cpu, .memory, .gpu, .storage, .network: true
         default: false
         }
     }
