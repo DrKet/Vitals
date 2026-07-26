@@ -48,6 +48,9 @@ public final class MetricsStore {
     public private(set) var network: [String: NetworkThroughput]?
     public private(set) var networkHistory: [Timestamped<[String: NetworkThroughput]>] = []
 
+    public private(set) var diskIO: [String: DiskThroughput]?
+    public private(set) var diskIOHistory: [Timestamped<[String: DiskThroughput]>] = []
+
     /// Uptime and load average. Cheap and slow-moving, so it is read on demand
     /// rather than sampled on a schedule.
     public var systemLoad: SystemLoad { SystemLoad.current() }
@@ -118,6 +121,10 @@ public final class MetricsStore {
             // The Processes pane is M1-B-3. Ignored rather than crashed on, so
             // a page that subscribes early does not fault.
             return
+        case .diskIO:
+            guard let throughput = value.value as? [String: DiskThroughput] else { return }
+            diskIO = throughput
+            append(Timestamped(timestamp: value.timestamp, sample: throughput), to: &diskIOHistory)
         }
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import SystemMetrics
 
 /// Identifies one stream of measurements.
 public enum SeriesKey: String, Sendable, Hashable, CaseIterable {
@@ -8,6 +9,7 @@ public enum SeriesKey: String, Sendable, Hashable, CaseIterable {
     case storage
     case network
     case processes
+    case diskIO
 }
 
 /// How often a series is refreshed. Cheap counters run fast; expensive
@@ -62,5 +64,63 @@ public struct AnySampler: Sendable {
 
     public func sample() throws -> Any {
         try block()
+    }
+}
+
+/// Read and write throughput for one block device, in bytes per second.
+public struct DiskThroughput: Sendable, Equatable {
+    public let bytesReadPerSecond: Double
+    public let bytesWrittenPerSecond: Double
+
+    public init(bytesReadPerSecond: Double, bytesWrittenPerSecond: Double) {
+        self.bytesReadPerSecond = bytesReadPerSecond
+        self.bytesWrittenPerSecond = bytesWrittenPerSecond
+    }
+}
+
+/// Turns cumulative per-device byte counters into throughput.
+///
+/// One `DeltaCounter` per device per direction, mirroring
+/// `NetworkThroughputTracker`: devices come and go (external drives, disk
+/// images), and a shared counter would let one device's disappearance corrupt
+/// another's rate.
+public struct DiskThroughputTracker: Sendable {
+    private var read: [String: DeltaCounter<UInt64>] = [:]
+    private var written: [String: DeltaCounter<UInt64>] = [:]
+
+    public init() {}
+
+    public mutating func update(
+        _ counters: [String: StorageIOCounters],
+        at timestamp: TimeInterval
+    ) -> [String: DiskThroughput] {
+        var result: [String: DiskThroughput] = [:]
+
+        for (device, counter) in counters {
+            var readCounter = read[device] ?? DeltaCounter<UInt64>()
+            var writeCounter = written[device] ?? DeltaCounter<UInt64>()
+
+            let readDelta = readCounter.update(counter.bytesRead, at: timestamp)
+            let writeDelta = writeCounter.update(counter.bytesWritten, at: timestamp)
+
+            read[device] = readCounter
+            written[device] = writeCounter
+
+            // Both directions must be valid; a reset on either invalidates the
+            // interval for this device rather than reporting half a reading.
+            if let readDelta, let writeDelta {
+                result[device] = DiskThroughput(
+                    bytesReadPerSecond: readDelta.perSecond,
+                    bytesWrittenPerSecond: writeDelta.perSecond
+                )
+            }
+        }
+
+        // Forget departed devices so a reappearance starts fresh instead of
+        // producing a huge delta against a stale reading.
+        read = read.filter { counters.keys.contains($0.key) }
+        written = written.filter { counters.keys.contains($0.key) }
+
+        return result
     }
 }

@@ -41,6 +41,11 @@ public struct Volume: Sendable, Equatable {
 public struct StorageIOCounters: Sendable, Equatable {
     public let bytesRead: UInt64
     public let bytesWritten: UInt64
+
+    public init(bytesRead: UInt64, bytesWritten: UInt64) {
+        self.bytesRead = bytesRead
+        self.bytesWritten = bytesWritten
+    }
 }
 
 public enum StorageDeviceParser {

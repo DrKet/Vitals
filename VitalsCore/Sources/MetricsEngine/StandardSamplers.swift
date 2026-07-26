@@ -14,6 +14,7 @@ public enum StandardSamplers {
         await engine.register(networkSampler(), for: .network, cadence: .fast)
         await engine.register(storageSampler(), for: .storage, cadence: .fast)
         await engine.register(processSampler(), for: .processes, cadence: .slow)
+        await engine.register(diskIOSampler(), for: .diskIO, cadence: .fast)
     }
 
     private enum SamplerError: Error {
@@ -82,6 +83,17 @@ public enum StandardSamplers {
             let now = ProcessInfo.processInfo.systemUptime
             let usage = tracker.withLock { $0.update(processes, at: now) }
             return ProcessSeriesSample(processes: processes, cpuUsage: usage)
+        }
+    }
+
+    private static func diskIOSampler() -> AnySampler {
+        let tracker = SamplerState(DiskThroughputTracker())
+        return AnySampler {
+            let counters = StorageSampler.ioCounters()
+            let now = ProcessInfo.processInfo.systemUptime
+            let throughput = tracker.withLock { $0.update(counters, at: now) }
+            guard !throughput.isEmpty else { throw SamplerError.unavailable }
+            return throughput
         }
     }
 }
