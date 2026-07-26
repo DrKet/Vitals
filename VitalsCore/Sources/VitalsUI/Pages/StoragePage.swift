@@ -87,16 +87,15 @@ public struct StoragePage: View {
         .task { await store.stream(.diskIO) }
     }
 
-    /// `Volume`'s byte counts are plain `UInt64`s, never optional — same
-    /// reasoning as `VolumeBar.format` — so this always takes
-    /// `Vitals.formatByteCount`'s non-nil branch.
-    private static func formatVolumeBytes(_ bytes: UInt64) -> String {
-        Vitals.formatByteCount(bytes)!
-    }
-
     private var stats: [HardwareStat] {
         let boot = volumes.first(where: \.isInternal)
         return [
+            // Relies on `storageSampler()` (StandardSamplers.swift) throwing
+            // rather than publishing an empty array when no volume is found —
+            // otherwise a non-nil-but-empty `store.volumes` would render as
+            // "0" here instead of "Unavailable". If that sampler ever starts
+            // publishing `[]` for "no reading yet", this needs an explicit
+            // `.isEmpty` check.
             HardwareStat(label: "Volumes", value: store.volumes.map { "\($0.count)" }),
             HardwareStat(label: "Capacity", value: Vitals.formatByteCount(boot?.totalBytes)),
             HardwareStat(label: "Available", value: Vitals.formatByteCount(boot?.availableBytes)),
@@ -117,7 +116,7 @@ public struct StoragePage: View {
         ForEach(volumes, id: \.name) { volume in
             StatRow(
                 label: volume.name,
-                value: "\(Self.formatVolumeBytes(volume.usedBytes)) used of \(Self.formatVolumeBytes(volume.totalBytes))"
+                value: "\(Vitals.formatKnownByteCount(volume.usedBytes)) used of \(Vitals.formatKnownByteCount(volume.totalBytes))"
             )
         }
         ForEach(Array((store.diskIO ?? [:]).keys.sorted()), id: \.self) { device in

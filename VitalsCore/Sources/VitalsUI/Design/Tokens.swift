@@ -67,4 +67,18 @@ public enum Vitals {
         formatter.countStyle = .memory
         return formatter.string(fromByteCount: Int64(bytes))
     }
+
+    /// Formats a byte count that can never be absent — a volume's used/total
+    /// bytes, a GPU memory topology's size — where the value is a plain,
+    /// non-optional `BinaryInteger` rather than a reading that might not have
+    /// been taken.
+    ///
+    /// Feeding a non-optional input into `formatByteCount(_:)` above can
+    /// never produce `nil`, since it only returns `nil` to propagate an
+    /// absent *optional* reading. That makes the force-unwrap here safe by
+    /// construction, not by assumption — callers should reach for this
+    /// instead of re-deriving the same unwrap at each call site.
+    public static func formatKnownByteCount<T: BinaryInteger>(_ bytes: T) -> String {
+        formatByteCount(bytes)!
+    }
 }

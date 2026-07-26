@@ -16,7 +16,7 @@ public struct VolumeBar: View {
             HStack {
                 Text(volume.name).font(Vitals.Typography.label)
                 Spacer()
-                Text("\(Self.format(volume.usedBytes)) of \(Self.format(volume.totalBytes))")
+                Text("\(Vitals.formatKnownByteCount(volume.usedBytes)) of \(Vitals.formatKnownByteCount(volume.totalBytes))")
                     .font(Vitals.Typography.label)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -32,14 +32,5 @@ public struct VolumeBar: View {
             }
             .frame(height: 8)
         }
-    }
-
-    /// `Volume`'s byte counts are plain `UInt64`s, never optional, so
-    /// `Vitals.formatByteCount` — generic over an optional so a genuinely
-    /// absent reading elsewhere can propagate `nil` — always takes its
-    /// non-nil branch here. Force-unwrapping documents that rather than
-    /// inventing an `?? "…"` fallback string that could never actually show.
-    private static func format(_ bytes: UInt64) -> String {
-        Vitals.formatByteCount(bytes)!
     }
 }

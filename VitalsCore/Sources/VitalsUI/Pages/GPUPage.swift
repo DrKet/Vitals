@@ -40,23 +40,13 @@ public struct GPUPage: View {
     /// system RAM — so each is worded distinctly rather than flattened into a
     /// byte count.
     public static func describeMemory(_ topology: GPUMemoryTopology) -> String {
-        // Every case's byte count is a plain `UInt64`, never optional, so
-        // `Vitals.formatByteCount` always takes the non-nil branch here — the
-        // `??` fallback is unreachable, kept only because the shared helper's
-        // signature is generic over an optional (it exists so a genuinely
-        // absent reading elsewhere can propagate nil instead of fabricating a
-        // string).
-        func formatted(_ bytes: UInt64) -> String {
-            Vitals.formatByteCount(bytes) ?? "\(bytes) bytes"
-        }
-
         switch topology {
         case .unified(let bytes):
-            return "\(formatted(bytes)) unified"
+            return "\(Vitals.formatKnownByteCount(bytes)) unified"
         case .dedicated(let bytes):
-            return "\(formatted(bytes)) dedicated VRAM"
+            return "\(Vitals.formatKnownByteCount(bytes)) dedicated VRAM"
         case .shared(let bytes):
-            return "\(formatted(bytes)) shared with system"
+            return "\(Vitals.formatKnownByteCount(bytes)) shared with system"
         }
     }
 
