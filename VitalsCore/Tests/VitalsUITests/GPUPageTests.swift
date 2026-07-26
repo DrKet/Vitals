@@ -37,6 +37,31 @@ struct GPUPageTests {
         #expect(series.map(\.name) == ["Renderer"])
     }
 
+    @Test("one missing mid-history reading drops the whole band, rather than silently shortening it")
+    func midHistoryGapDropsWholeBand() {
+        // A single-tick history only ever exercises the `values.count ==
+        // history.count` guard at count 1, which can't distinguish "drop the
+        // whole band" from "just skip the missing tick and keep the rest" —
+        // both happen to produce the same result when there is only one
+        // tick. A three-tick history with the gap in the *middle* tells
+        // them apart: if `engineSeries` merely skipped the nil and kept
+        // going, `values.count` would be 2 against a `history.count` of 3,
+        // silently misaligning the tiler band against its own timestamps.
+        // The guard must instead drop the tiler band entirely.
+        let history = Self.stamped([
+            [Self.sample(renderer: 0.3, tiler: 0.1)],
+            [Self.sample(renderer: 0.4, tiler: nil)],
+            [Self.sample(renderer: 0.5, tiler: 0.2)],
+        ])
+        let series = GPUPage.engineSeries(history: history)
+
+        #expect(series.map(\.name) == ["Renderer"])
+        #expect(series[0].values.count == 3)
+        #expect(abs(series[0].values[0] - 0.3) < 1e-9)
+        #expect(abs(series[0].values[1] - 0.4) < 1e-9)
+        #expect(abs(series[0].values[2] - 0.5) < 1e-9)
+    }
+
     @Test("a driver reporting neither engine yields no bands at all")
     func noEnginesYieldsNoBands() {
         let history = Self.stamped([[Self.sample(renderer: nil, tiler: nil)]])
