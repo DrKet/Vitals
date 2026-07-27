@@ -140,6 +140,43 @@ struct NetworkPageTests {
         #expect(NetworkPage.realThroughput(mixed) == ["en0": mixed["en0"]!])
     }
 
+    @Test("never sampled: Active interfaces reads Unavailable, not a fabricated zero")
+    func activeInterfaceCountIsAbsentWhenNeverSampled() {
+        #expect(NetworkPage.activeInterfaceCountDisplay(nil) == nil)
+    }
+
+    @Test("an lo0-only tick's Active interfaces stat is absent, matching Down/Up drawn from the same empty filtered set")
+    func activeInterfaceCountIsAbsentOnLoopbackOnlyTick() {
+        // Fix 6: a senior review found this stat previously gated only on
+        // `store.network == nil`, so an lo0-only tick (non-nil, but every
+        // entry excluded) fell through to a real-looking "0" — a bright,
+        // primary-styled reading directly above Down/Up correctly reading
+        // "Unavailable" from that exact same tick. All three must agree.
+        let lo0Only = ["lo0": NetworkThroughput(bytesInPerSecond: 9_000_000, bytesOutPerSecond: 9_000_000)]
+        #expect(NetworkPage.activeInterfaceCountDisplay(lo0Only) == nil)
+        #expect(NetworkPage.realThroughput(lo0Only) == nil)
+    }
+
+    @Test("an empty tick's Active interfaces stat is absent too")
+    func activeInterfaceCountIsAbsentOnEmptyTick() {
+        #expect(NetworkPage.activeInterfaceCountDisplay([:]) == nil)
+    }
+
+    @Test("a real interface reporting genuine zero traffic is an honest zero, not withheld")
+    func activeInterfaceCountIsGenuineZeroWhenRealInterfaceIsIdle() {
+        // Distinct from the lo0-only case: a real, non-excluded interface
+        // did report this tick, and simply had nothing to say — that is a
+        // measurement, and "0" is what it should read.
+        let idle = ["en0": NetworkThroughput(bytesInPerSecond: 0, bytesOutPerSecond: 0)]
+        #expect(NetworkPage.activeInterfaceCountDisplay(idle) == "0")
+    }
+
+    @Test("a real interface carrying traffic is counted")
+    func activeInterfaceCountCountsARealInterface() {
+        let active = ["en0": NetworkThroughput(bytesInPerSecond: 1000, bytesOutPerSecond: 0)]
+        #expect(NetworkPage.activeInterfaceCountDisplay(active) == "1")
+    }
+
     /// The whole point of this test: nothing before it ever constructed a
     /// `NetworkPage` from a `MetricsStore` and rendered it — every prior test
     /// in this file covers only the static, pure `throughputSeries` and
@@ -164,13 +201,21 @@ struct NetworkPageTests {
             named: "network-page-with-data"
         )
         // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
-        // alone was vacuous and why a saturation probe (not `regionHasContent`)
-        // is the correct replacement inside a `GlassPanel`. Throughput is an
-        // absolute-unit series, which auto-scales its axis to its own peak
-        // (`ChartGeometry.upperBound`) — a single-tick history's one reading
-        // *is* that peak, so its band always touches the canvas top
-        // regardless of the exact value, no tuning needed here.
-        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
+        // alone was vacuous. Throughput is an absolute-unit series, which
+        // auto-scales its axis to its own peak (`ChartGeometry.upperBound`)
+        // — a single-tick history's one reading *is* that peak, so its band
+        // always touches the canvas top regardless of the exact value, no
+        // tuning needed here.
+        //
+        // `regionHasSaturatedColor(in:region:matchingHueOf:)`'s doc comment
+        // explains why matching only the non-lead band hue (Up, never Down's
+        // lead accent) is what actually proves the chart itself painted
+        // here, rather than merely something in the panel — Network has no
+        // accent-only secondary component today, but this keeps the same
+        // (stronger) discipline as the other four pages' equivalent tests.
+        let series = NetworkPage.throughputSeries(history: store.networkHistory)
+        let nonLeadHues = Array(Vitals.seriesColors(startingAt: Vitals.Palette.network, count: series.count).dropFirst().map(hue(of:)))
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion, matchingHueOf: nonLeadHues))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")

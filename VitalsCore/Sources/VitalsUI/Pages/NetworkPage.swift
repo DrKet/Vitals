@@ -76,6 +76,32 @@ public struct NetworkPage: View {
         return real.isEmpty ? nil : real
     }
 
+    /// The "Active interfaces" stat's display value, gated on `realThroughput`
+    /// — the same filtered set Down and Up are gated on — rather than merely
+    /// on `throughput != nil`.
+    ///
+    /// A senior review found the previous gate let an lo0-only tick
+    /// (`throughput` non-nil, but every entry excluded) fall through to a
+    /// real-looking `"0"`: `realThroughput` was nil (correctly producing
+    /// "Unavailable" for Down/Up from the same tick), while this stat still
+    /// computed `activeInterfaces(current).count`, landing on `0` — a
+    /// bright, primary-styled zero sitting directly above two "Unavailable"
+    /// rows drawn from the exact same empty filtered set. Routing through
+    /// `realThroughput` first makes the three stats agree on when a tick has
+    /// nothing real to report at all.
+    ///
+    /// A real, non-empty set of non-excluded interfaces that simply carried
+    /// no traffic this tick is still a genuine `"0"` (see `activeInterfaces`'s
+    /// doc comment) — only presence vs. absence of *any* real interface is
+    /// decided here; the count itself still comes from `activeInterfaces`,
+    /// which applies the traffic filter `realThroughput` does not.
+    ///
+    /// Internal for the same testing reason as `realThroughput` above.
+    static func activeInterfaceCountDisplay(_ throughput: [String: NetworkThroughput]?) -> String? {
+        guard let throughput, Self.realThroughput(throughput) != nil else { return nil }
+        return "\(Self.activeInterfaces(throughput).count)"
+    }
+
     private var totalMBs: Double? {
         guard let network = store.network, let real = Self.realThroughput(network) else { return nil }
         return real.values.reduce(0) { $0 + $1.bytesInPerSecond + $1.bytesOutPerSecond } / Self.bytesPerMegabyte
@@ -103,11 +129,10 @@ public struct NetworkPage: View {
         [
             HardwareStat(
                 label: "Active interfaces",
-                // `store.network == nil` (never sampled) must read
-                // "Unavailable"; `store.network == [:]` or all-idle (a real
-                // reading of zero active interfaces) must read "0" — an
-                // `active.isEmpty` check alone cannot tell those apart.
-                value: store.network == nil ? nil : "\(Self.activeInterfaces(current).count)"
+                // See `activeInterfaceCountDisplay`'s doc comment for why
+                // this is gated on `realThroughput` rather than on
+                // `store.network == nil` alone.
+                value: Self.activeInterfaceCountDisplay(store.network)
             ),
             HardwareStat(
                 label: "Down",
