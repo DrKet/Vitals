@@ -13,6 +13,20 @@ public enum Vitals {
         public static let storage = Color(red: 0.56, green: 0.88, blue: 0.75)
         public static let network = Color(red: 0.98, green: 0.80, blue: 0.45)
         public static let warning = Color(red: 1.00, green: 0.47, blue: 0.47)
+
+        /// A sixth ramp hue that identifies no subsystem — it exists solely
+        /// to keep Memory's four-band stack (Wired / App / Compressed /
+        /// Cached) legible. Without it, `seriesRamp`'s `gpu` (~24.7°) and
+        /// `network` (~39.6°) land adjacent in that rotation only 15° apart,
+        /// reading as one band. This pastel pink (~326° hue, ~0.42
+        /// saturation, full brightness) sits in the one hue range that is
+        /// simultaneously empty in the rest of the palette and far enough
+        /// from both `gpu` and `network` (>36° either way) to separate them.
+        /// Do not repurpose this for an actual subsystem or delete it as
+        /// "unused" — nothing reads it directly, but removing it reopens the
+        /// 15° collision `TokensTests.memoryFourBandsStayDistinctWithoutWarning`
+        /// guards against.
+        public static let legibilityAccent = Color(red: 1.00, green: 0.58, blue: 0.82)
     }
 
     public enum Metrics {
@@ -50,6 +64,7 @@ public enum Vitals {
         Palette.storage,
         Palette.memory,
         Palette.gpu,
+        Palette.legibilityAccent,
         Palette.network,
     ]
 
