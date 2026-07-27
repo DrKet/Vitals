@@ -19,21 +19,51 @@ import Testing
 struct PageRenderRegressionTests {
 
     /// Confirms `regionHasSaturatedColor` over `chartCanvasProbeRegion`
-    /// actually discriminates, across every page — not just that it happens
-    /// to return `true` once real data is present (each page's own
-    /// "renders a full page" test already checks that), but that it returns
-    /// `false` when there is nothing for the chart to draw. A probe that
-    /// always reported `true` regardless of input would be exactly as
-    /// vacuous as the `fileExists` check it replaced.
-    @Test("an empty store's chart region shows no chart-painted colour, on every page")
+    /// actually discriminates — not just that it happens to return `true`
+    /// once real data is present (each page's own "renders a full page" test
+    /// already checks that), but that it returns `false` when there is
+    /// nothing for the chart to draw. A probe that always reported `true`
+    /// regardless of input would be exactly as vacuous as the `fileExists`
+    /// check it replaced.
+    ///
+    /// Two representative pages, not all five: a senior review found the
+    /// original five-page version made the full suite flaky (6/10 clean
+    /// runs, always `MetricsStoreTests.swift`'s `waitUntil`-based tests
+    /// timing out). Diagnosed cause — confirmed by reproducing both the
+    /// failure and the fix, ten runs each — is that this function has no
+    /// `await` anywhere in its body, so once Swift Concurrency schedules it
+    /// onto the main actor it runs to completion as one uninterruptible
+    /// block: five real `NSWindow`s, each laid out and captured via
+    /// `cacheDisplay`, back to back with no suspension point where the
+    /// actor could hand off to anything else. A `waitUntil` poll scheduled
+    /// on the same main actor at the same time (e.g. `historyIsCapped`'s)
+    /// cannot get a turn to check its condition until this function
+    /// finishes, and cooperative scheduling being non-preemptive means nine
+    /// concurrent renders' worth of wall-clock time can easily exceed
+    /// `waitUntil`'s 2-second deadline even though the condition itself was
+    /// satisfied almost immediately.
+    ///
+    /// Rejected fixes: marking this suite `.serialized` only orders this
+    /// suite's own two tests relative to each other, not relative to
+    /// `MetricsStoreTests` (a different suite, scheduled independently) —
+    /// it would not have reduced the actual contention. Raising
+    /// `waitUntil`'s timeout instead of shrinking this function would mask
+    /// the monopolisation rather than remove it: the block would still run
+    /// just as long, only tolerated rather than fixed, and could still lose
+    /// on a slower or more loaded machine. Cutting the render count in this
+    /// function (the one with zero suspension points, unlike
+    /// `differentPagesPaintDifferentChartColours` below, whose renders are
+    /// already separated by real `await`s from its own `waitUntil` calls)
+    /// is what actually shrinks the uninterruptible block — CPU and Network
+    /// were picked to keep a fraction-unit chart with a secondary
+    /// component (`CoreGrid`) and an absolute-unit chart with none, the two
+    /// structurally different cases the five pages fall into.
+    @Test("an empty store's chart region shows no chart-painted colour, on two representative pages")
     func emptyStoreChartRegionIsUnsaturated() throws {
         let store = MetricsStore(engine: MetricsEngine(), profile: nil)
 
         let pages: [(name: String, view: AnyView)] = [
             ("CPU", AnyView(CPUPage(store: store))),
-            ("Memory", AnyView(MemoryPage(store: store))),
-            ("GPU", AnyView(GPUPage(store: store))),
-            ("Storage", AnyView(StoragePage(store: store))),
             ("Network", AnyView(NetworkPage(store: store))),
         ]
 
