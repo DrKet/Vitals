@@ -55,24 +55,71 @@ public struct MetricChart: View {
     @State private var hoverX: CGFloat?
     @State private var readoutSize: CGSize = .zero
 
+    /// The stroke width `drawAreas` paints a band's boundary line with.
+    /// Shared with `ChartGeometry.headroom` so the top margin it reserves is
+    /// always derived from the same width the stroke actually uses.
+    private static let strokeWidth: CGFloat = 2
+    /// The live dot's outer halo radius (see `drawAreas`). Also fed to
+    /// `ChartGeometry.headroom`: if the newest sample is the peak, the dot
+    /// needs the same clearance the stroke and the smoothing curve do.
+    private static let liveDotHaloRadius: CGFloat = 9
+    private static let liveDotRadius: CGFloat = 3
+
     public var body: some View {
         GeometryReader { proxy in
             let rect = CGRect(origin: .zero, size: proxy.size)
 
             Canvas { context, size in
                 let canvasRect = CGRect(origin: .zero, size: size)
-                drawGridlines(in: &context, rect: canvasRect)
-
                 let bands = resolvedBands()
-                guard !bands.isEmpty else { return }
+
+                guard !bands.isEmpty else {
+                    drawGridlines(in: &context, rect: canvasRect)
+                    return
+                }
                 // All series on one chart share a unit — see `unit(for:)` —
                 // so the first is representative of the whole chart.
                 let bound = ChartGeometry.upperBound(for: bands, unit: series.first?.unit ?? .fraction)
 
                 switch style {
                 case .area:
-                    drawAreas(bands, bound: bound, in: &context, rect: canvasRect)
+                    // Gridlines are drawn against the *same* inset rect as the
+                    // data, not the raw canvas: they mark fractions of the
+                    // value scale, and that scale now lives inside
+                    // `plotRect`. Drawing them against `canvasRect` instead
+                    // would leave the 50% line, say, not actually passing
+                    // through the chart's own 50%-height data.
+                    let topHeadroom = ChartGeometry.headroom(
+                        strokeWidth: Self.strokeWidth,
+                        liveMarkerRadius: Self.liveDotHaloRadius
+                    )
+                    // The bottom gets no equivalent inset. A centred stroke
+                    // sitting exactly at `rect.maxY` still loses half its
+                    // width the same way it does at the top, but
+                    // `smoothPath`'s clamp (see its doc comment) already
+                    // removes the *smoothing*-driven undershoot that used to
+                    // make a trough dip below the canvas — that part is fixed
+                    // structurally now, not merely tolerated. What's left is
+                    // only the stroke's own half-width at a literal-zero
+                    // sample, which is far less visible than the old
+                    // full-curve dip: the fill's gradient already fades to
+                    // zero alpha at exactly that edge (see the
+                    // `.linearGradient` below), so only the thin opaque
+                    // stroke tip is ever affected, and there is no live dot
+                    // at the bottom to protect. Reserving space here for
+                    // that alone would cost real chart height on every
+                    // render for a defect that is barely visible in
+                    // practice — see the chart-headroom report for the
+                    // pixel-level comparison this was based on.
+                    let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
+                    drawGridlines(in: &context, rect: plotRect)
+                    drawAreas(bands, bound: bound, in: &context, rect: plotRect)
                 case .histogram:
+                    // Bars are filled shapes anchored to `rect.maxY`, not a
+                    // centred stroke or a smoothed curve between samples —
+                    // neither clipping mechanism this exists for applies, so
+                    // histogram mode keeps the full canvas.
+                    drawGridlines(in: &context, rect: canvasRect)
                     drawHistogram(bands, bound: bound, in: &context, rect: canvasRect)
                 }
             }
@@ -220,7 +267,7 @@ public struct MetricChart: View {
                         endPoint: CGPoint(x: rect.midX, y: rect.maxY)
                     )
                 )
-                context.stroke(line, with: .color(color), lineWidth: 2)
+                context.stroke(line, with: .color(color), lineWidth: Self.strokeWidth)
             }
 
             // The live edge: the most recent sample, marked so the eye lands on
@@ -228,11 +275,17 @@ public struct MetricChart: View {
             // on a stale segment would read as current.
             if index == 0, let last = points.last {
                 context.fill(
-                    Path(ellipseIn: CGRect(x: last.x - 9, y: last.y - 9, width: 18, height: 18)),
+                    Path(ellipseIn: CGRect(
+                        x: last.x - Self.liveDotHaloRadius, y: last.y - Self.liveDotHaloRadius,
+                        width: Self.liveDotHaloRadius * 2, height: Self.liveDotHaloRadius * 2
+                    )),
                     with: .color(color.opacity(0.18))
                 )
                 context.fill(
-                    Path(ellipseIn: CGRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6)),
+                    Path(ellipseIn: CGRect(
+                        x: last.x - Self.liveDotRadius, y: last.y - Self.liveDotRadius,
+                        width: Self.liveDotRadius * 2, height: Self.liveDotRadius * 2
+                    )),
                     with: .color(color)
                 )
             }

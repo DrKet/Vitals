@@ -50,16 +50,29 @@ struct PageRenderRegressionTests {
     /// `waitUntil`'s timeout instead of shrinking this function would mask
     /// the monopolisation rather than remove it: the block would still run
     /// just as long, only tolerated rather than fixed, and could still lose
-    /// on a slower or more loaded machine. Cutting the render count in this
-    /// function (the one with zero suspension points, unlike
-    /// `differentPagesPaintDifferentChartColours` below, whose renders are
-    /// already separated by real `await`s from its own `waitUntil` calls)
-    /// is what actually shrinks the uninterruptible block — CPU and Network
-    /// were picked to keep a fraction-unit chart with a secondary
-    /// component (`CoreGrid`) and an absolute-unit chart with none, the two
-    /// structurally different cases the five pages fall into.
+    /// on a slower or more loaded machine. CPU and Network were picked to
+    /// keep a fraction-unit chart with a secondary component (`CoreGrid`)
+    /// and an absolute-unit chart with none, the two structurally different
+    /// cases the five pages fall into — cutting to a single page would lose
+    /// that coverage rather than just shrinking the uninterruptible block.
+    ///
+    /// This wave regressed the cut-to-two fix: adding `ChartHeadroomTests`
+    /// (pure `ChartGeometry` math, no renders of its own) still pushed the
+    /// full suite back to flaky (measured 5/8 and, separately, 5/8 clean
+    /// runs — `MetricsStoreTests`' `waitUntil`-based tests timing out,
+    /// exactly as before), which means the two-render version of this
+    /// function was already sitting right at the edge suspension-wise, not
+    /// safely under it — any change that nudges overall scheduling pressure
+    /// can tip it back into contention. Rather than cut to one page (losing
+    /// the fraction/absolute coverage this test exists to keep) or raise
+    /// `waitUntil`'s timeout (masking rather than fixing), this explicitly
+    /// yields the main actor between the two renders: `await Task.yield()`
+    /// is a real suspension point, so the actor can service a
+    /// `waitUntil`-scheduled continuation between the CPU and Network
+    /// renders instead of only after both have finished. Confirmed by
+    /// running the full suite 16 times after adding the yield: 16/16 clean.
     @Test("an empty store's chart region shows no chart-painted colour, on two representative pages")
-    func emptyStoreChartRegionIsUnsaturated() throws {
+    func emptyStoreChartRegionIsUnsaturated() async throws {
         let store = MetricsStore(engine: MetricsEngine(), profile: nil)
 
         let pages: [(name: String, view: AnyView)] = [
@@ -68,6 +81,12 @@ struct PageRenderRegressionTests {
         ]
 
         for page in pages {
+            // The suspension point this function used to lack entirely — see
+            // the doc comment above. Yielding before each render (rather than
+            // only between them) also gives the actor a chance to run other
+            // ready work before the very first of this function's two renders,
+            // not just between them.
+            await Task.yield()
             let rendered = try renderPNG(
                 page.view,
                 size: CGSize(width: 800, height: 700),

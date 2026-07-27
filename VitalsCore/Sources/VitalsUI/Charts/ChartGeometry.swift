@@ -155,11 +155,78 @@ public enum ChartGeometry {
         }
     }
 
+    /// Vertical breathing room to reserve at the plotting rect's edge so a
+    /// boundary sample's stroke and its live marker stay inside the canvas —
+    /// instead of clipping flat, part of the bug this exists to fix.
+    ///
+    /// Two independent things need covering, and the larger wins:
+    ///
+    /// - **The stroke.** It is centred on the path, so a point sitting
+    ///   exactly on the rect's edge loses half its line width to the
+    ///   boundary. That costs `strokeWidth / 2`.
+    /// - **The live marker.** Drawn at the newest sample with its own
+    ///   radius; if that sample is also the peak, the marker clips the same
+    ///   way the stroke does. Pass its outer radius as `liveMarkerRadius`
+    ///   (0 for an edge that never carries one, e.g. the bottom).
+    ///
+    /// A third cause used to live here: the Catmull-Rom curve between samples
+    /// can swing past the sample it is approaching, which this function used
+    /// to cover with a `0.75 * tension * rectHeight` reserve — a real,
+    /// derived worst case, but a bad trade, since it stood in for space to
+    /// keep drawing a value that was never measured, and it cost 18.75% of
+    /// *every* chart's height to guard against a shape most renders never hit.
+    /// `smoothPath` now clamps its own control points so the curve cannot
+    /// leave the range spanned by the samples it interpolates (see its doc
+    /// comment) — a structural fix at the source, not a margin sized to
+    /// tolerate the defect. Overshoot needed no reserved space; it needed not
+    /// to happen. With that gone, this function no longer depends on
+    /// `rectHeight` at all: fixed physical quantities in, a fixed physical
+    /// quantity out.
+    public static func headroom(strokeWidth: CGFloat, liveMarkerRadius: CGFloat = 0) -> CGFloat {
+        max(strokeWidth / 2, liveMarkerRadius)
+    }
+
+    /// `rect` with `top` and `bottom` points reserved as headroom.
+    ///
+    /// Only the vertical extent changes — `minX`/`width` pass through
+    /// untouched — so `sampleX`, which depends only on those, places sample
+    /// *n* identically whether it is handed this inset rect or the original.
+    /// That is what keeps the renderer (which plots into the inset rect) and
+    /// the crosshair (which still reads the outer rect) from ever disagreeing
+    /// about where a sample sits horizontally.
+    public static func insetForHeadroom(_ rect: CGRect, top: CGFloat, bottom: CGFloat = 0) -> CGRect {
+        let height = max(rect.height - top - bottom, 0)
+        return CGRect(x: rect.minX, y: rect.minY + top, width: rect.width, height: height)
+    }
+
     /// A Catmull-Rom smoothed path through the given points.
     ///
     /// Tangents are scaled by `tension` below the classic 0.5 so the curve stays
     /// close to its data. A monitoring chart that overshoots is drawing a value
     /// the machine never reported.
+    ///
+    /// Staying close is not the same as staying inside, though: even at a
+    /// reduced tension, the curve between two samples can still swing above
+    /// the higher of the two (or below the lower) when their neighbours pull
+    /// the tangent hard enough — a local maximum flanked by a lower point on
+    /// one side and a much lower one on the other is exactly that shape, and
+    /// it is a realistic one (a burst that decays faster than it climbed), not
+    /// an adversarial edge case. So each segment's two control points are
+    /// clamped into the y-range spanned by *that segment's own* two endpoints
+    /// (`p1.y` and `p2.y`) after being computed. A cubic Bezier always lies
+    /// within the convex hull of its four control points — `p1`, `control1`,
+    /// `control2`, `p2` — so once all four share that same y-range, the curve
+    /// drawn between them cannot leave it either. That holds independently at
+    /// every segment and at every chart height, which is what makes this a
+    /// structural fix rather than a margin sized to cover the worst case: there
+    /// is no worst case left to size for, at the top of a peak or the bottom of
+    /// a trough.
+    ///
+    /// Only `y` is clamped. `x` is monotonic across the whole series by
+    /// construction (`points` places samples left to right), so a control
+    /// point's `x` straying slightly outside its segment never draws the curve
+    /// backwards or off the chart horizontally the way an unclamped `y` does
+    /// vertically.
     public static func smoothPath(through points: [CGPoint]) -> Path {
         guard points.count > 1 else { return Path() }
 
@@ -173,13 +240,16 @@ public enum ChartGeometry {
             let p2 = points[index + 1]
             let p3 = points[min(index + 2, points.count - 1)]
 
+            let segmentMinY = min(p1.y, p2.y)
+            let segmentMaxY = max(p1.y, p2.y)
+
             let control1 = CGPoint(
                 x: p1.x + (p2.x - p0.x) * tension,
-                y: p1.y + (p2.y - p0.y) * tension
+                y: min(max(p1.y + (p2.y - p0.y) * tension, segmentMinY), segmentMaxY)
             )
             let control2 = CGPoint(
                 x: p2.x - (p3.x - p1.x) * tension,
-                y: p2.y - (p3.y - p1.y) * tension
+                y: min(max(p2.y - (p3.y - p1.y) * tension, segmentMinY), segmentMaxY)
             )
             path.addCurve(to: p2, control1: control1, control2: control2)
         }
