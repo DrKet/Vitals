@@ -88,14 +88,44 @@ struct TokensTests {
         #expect(!Vitals.seriesColors(count: 5).contains(Vitals.Palette.warning))
     }
 
-    @Test("Memory's four stacked bands still get four distinguishable colours with warning excluded")
+    /// `Set(colors...).count == 4` (the assertion this replaces) passes for
+    /// any four non-identical colours, no matter how close together they
+    /// sit — it never actually tested the "distinguishable" its old name
+    /// claimed. A senior review found it stays green even though Memory's
+    /// own bands 2 and 3 (App, hue ~24.7°, and Compressed, hue ~39.6°) sit
+    /// only ~15° apart on the hue wheel with matching saturation and
+    /// brightness, adjacent in the stack — close enough that they read as
+    /// the same colour at a glance, which is exactly what "distinguishable"
+    /// is supposed to rule out.
+    ///
+    /// This is the honest replacement: a minimum angular gap between every
+    /// *adjacent* pair in the stack (adjacent bands are the ones that share
+    /// a boundary in a stacked chart, so their hues are what a viewer
+    /// actually needs to tell apart — non-adjacent bands never touch, so a
+    /// close hue between them would not be a real legibility problem).
+    /// 0.1 (36°) is the same threshold and the same hue-in-`0...1`-space
+    /// convention `PageRenderRegressionTests.differentPagesPaintDifferentChartColours`
+    /// already uses to judge two hues as actually distinguishable.
+    ///
+    /// This is pre-existing, not a regression, and the palette is out of
+    /// scope for this fix — so this test is *expected to fail* on the
+    /// current ramp. Left failing deliberately and reported to the palette's
+    /// owner rather than loosened to pass: weakening the threshold back down
+    /// to let 15° through would recreate exactly the vacuous check this
+    /// replaces.
+    @Test("Memory's four stacked bands are far enough apart in hue to read as distinct, adjacent pairs included")
+    @MainActor
     func memoryFourBandsStayDistinctWithoutWarning() {
-        // Memory is the widest decomposition any page needs (Wired / App /
-        // Compressed / Cached) — the constraining case for the ramp shrinking
-        // by one colour. Four still fits inside the five-hue ramp without
-        // wrapping, so this must still hold.
         let colors = Vitals.seriesColors(startingAt: Vitals.Palette.memory, count: 4)
-        #expect(Set(colors.map(String.init(describing:))).count == 4)
+        let hues = colors.map(hue(of:))
+        for index in 0..<(hues.count - 1) {
+            let raw = abs(hues[index] - hues[index + 1])
+            let gap = min(raw, 1 - raw)
+            #expect(
+                gap > 0.1,
+                "adjacent bands \(index) and \(index + 1) sit only \(Int((gap * 360).rounded()))° apart in hue"
+            )
+        }
     }
 
     @Test("an accent absent from the base ramp still leads, falling back to the unrotated ramp for the rest")
