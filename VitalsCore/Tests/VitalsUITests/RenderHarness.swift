@@ -233,6 +233,90 @@ func firstSaturatedColor(
     return nil
 }
 
+/// `color`'s hue, in the same `0...1` space `NSColor.getHue` reports.
+///
+/// The unit `regionHasSaturatedColor(in:region:matchingHueOf:)`'s `hues`
+/// parameter is compared against, so a caller can hand it a `Vitals.Palette`
+/// colour (or anything from `Vitals.seriesColors`) directly rather than
+/// re-deriving its hue by hand at every call site.
+@MainActor
+func hue(of color: Color) -> CGFloat {
+    var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+    NSColor(color).usingColorSpace(.deviceRGB)?.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+    return h
+}
+
+/// True when `region` contains a saturated pixel whose hue matches one of
+/// `hues` (each in `NSColor`'s `0...1` hue space) within `tolerance`.
+///
+/// `regionHasSaturatedColor(in:region:)` above only proves *some* non-neutral
+/// colour exists in a region — inside a `GlassPanel`, a hardware page's
+/// `CoreGrid` or `VolumeBar` satisfies that just as well as its chart does,
+/// since both always paint in the page's own lead accent (`colors[0]` of its
+/// `Vitals.seriesColors(startingAt:count:)` ramp — the same hue `MetricChart`
+/// gives its base band). A page whose chart stopped rendering entirely, but
+/// whose `CoreGrid`/`VolumeBar` moved into the probe rectangle once the
+/// collapsed layout closed the gap the chart used to occupy, would still
+/// "pass" a plain saturation probe — the false pass a senior review found by
+/// hand in `CPUPageTests` and `StoragePageTests`: with
+/// `HardwarePage.swift`'s `if !series.isEmpty` guard defeated (simulating
+/// `series` coming back empty, its real-world failure mode), `CoreGrid` and
+/// `VolumeBar` slid up into `chartCanvasProbeRegion` and painted it a
+/// saturated colour regardless.
+///
+/// Restricting the match to hues *other than* a page's lead accent — the
+/// higher-index bands only `MetricChart`'s own multi-band stack ever paints,
+/// since `CoreGrid`/`VolumeBar` are single-colour — closes that gap: this can
+/// only be satisfied by the chart's own data-driven drawing. Verified by
+/// hand against both regressions this guards: reverting `MetricChart.swift`'s
+/// `drawAreas` to draw nothing, and separately defeating
+/// `HardwarePage.swift`'s `if !series.isEmpty` guard, both make every one of
+/// the five page-level callers of this fail; restoring either makes all five
+/// pass again.
+///
+/// Hue rather than a raw colour match, for the same reason
+/// `PageRenderRegressionTests.differentPagesPaintDifferentChartColours` compares
+/// hue rather than RGB distance: a stacked area fill blends a band's colour
+/// toward the neutral material behind it at whatever alpha corresponds to a
+/// given pixel's height in the chart, which shifts brightness and saturation
+/// but preserves hue angle exactly.
+@MainActor
+func regionHasSaturatedColor(
+    in image: RenderedImage,
+    region: CGRect,
+    matchingHueOf hues: [CGFloat],
+    tolerance: CGFloat = 0.05
+) throws -> Bool {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return false }
+
+    for y in minY..<maxY {
+        for x in minX..<maxX {
+            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
+            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
+            guard max(r, g, b) - min(r, g, b) > (16.0 / 255.0) else { continue }
+
+            var pixelHue: CGFloat = 0, s: CGFloat = 0, br: CGFloat = 0, a: CGFloat = 0
+            color.getHue(&pixelHue, saturation: &s, brightness: &br, alpha: &a)
+            let matches = hues.contains { candidate in
+                let raw = abs(candidate - pixelHue)
+                return min(raw, 1 - raw) <= tolerance
+            }
+            if matches { return true }
+        }
+    }
+    return false
+}
+
 /// True when the bitmap contains more than one distinct pixel value.
 ///
 /// Deliberately weak: it cannot judge whether a render looks *right*, only that

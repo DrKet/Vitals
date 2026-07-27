@@ -104,9 +104,14 @@ struct MemoryPageTests {
             named: "memory-page-with-data"
         )
         // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
-        // alone was vacuous and why a saturation probe (not `regionHasContent`)
-        // is the correct replacement inside a `GlassPanel`.
-        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
+        // alone was vacuous, and
+        // `regionHasSaturatedColor(in:region:matchingHueOf:)`'s doc comment
+        // for why matching only the non-lead band hues (never the page's own
+        // accent) is what actually proves the chart itself painted here,
+        // rather than merely something in the panel.
+        let series = MemoryPage.breakdownSeries(history: store.memoryHistory, installedBytes: total)
+        let nonLeadHues = Array(Vitals.seriesColors(startingAt: Vitals.Palette.memory, count: series.count).dropFirst().map(hue(of:)))
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion, matchingHueOf: nonLeadHues))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")

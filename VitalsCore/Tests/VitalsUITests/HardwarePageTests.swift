@@ -13,8 +13,18 @@ struct HardwarePageTests {
             showsAppleMark: true,
             primaryValue: primaryValue,
             series: [
-                ChartSeries(name: "Wired", values: [0.2, 0.3, 0.25]),
-                ChartSeries(name: "App", values: [0.3, 0.3, 0.35]),
+                // Wired + App sums to 0.9 at every tick, not just the last —
+                // high enough, and flat enough across the whole history,
+                // that the stacked total's curve sits within the top ~10%
+                // of the chart's canvas across its full width, which is what
+                // `rendersFullPage`'s `chartCanvasProbeRegion` probe (a
+                // fixed-position rectangle spanning most of the canvas'
+                // width) needs to land on real chart content. See
+                // `chartCanvasProbeRegion`'s doc comment and
+                // `CPUPageTests.rendersFullPageFromStore`'s for the same
+                // reasoning applied to a live-store render.
+                ChartSeries(name: "Wired", values: [0.45, 0.45, 0.45]),
+                ChartSeries(name: "App", values: [0.45, 0.45, 0.45]),
             ],
             accent: Vitals.Palette.memory,
             stats: stats,
@@ -36,7 +46,17 @@ struct HardwarePageTests {
             ]
         )
         let rendered = try renderPNG(view, size: CGSize(width: 800, height: 600), named: "hardware-page")
-        #expect(FileManager.default.fileExists(atPath: rendered.url.path))
+        // `fileExists` alone is vacuous — `renderPNG` already wrote the file
+        // and would have thrown otherwise, so this proved nothing about
+        // whether the container actually painted its chart. This is the
+        // shared container's only render test, so it gets the same real
+        // probe every concrete page's own render test does: see
+        // `regionHasSaturatedColor(in:region:matchingHueOf:)`'s doc comment
+        // for why matching the non-lead band hue (here, "App", since this
+        // page's own two series are `Wired`/`App`) is what actually proves
+        // `MetricChart` painted, rather than merely something in the panel.
+        let nonLeadHues = Array(Vitals.seriesColors(startingAt: Vitals.Palette.memory, count: 2).dropFirst().map(hue(of:)))
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion, matchingHueOf: nonLeadHues))
     }
 
     @Test("an absent primary value renders an em dash, never a zero")

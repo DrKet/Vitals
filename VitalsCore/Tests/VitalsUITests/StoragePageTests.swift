@@ -143,13 +143,22 @@ struct StoragePageTests {
             named: "storage-page-with-data"
         )
         // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
-        // alone was vacuous and why a saturation probe (not `regionHasContent`)
-        // is the correct replacement inside a `GlassPanel`. Throughput is an
-        // absolute-unit series, which auto-scales its axis to its own peak
-        // (`ChartGeometry.upperBound`) — a single-tick history's one reading
-        // *is* that peak, so its band always touches the canvas top
-        // regardless of the exact value, no tuning needed here.
-        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
+        // alone was vacuous. Throughput is an absolute-unit series, which
+        // auto-scales its axis to its own peak (`ChartGeometry.upperBound`)
+        // — a single-tick history's one reading *is* that peak, so its band
+        // always touches the canvas top regardless of the exact value, no
+        // tuning needed here.
+        //
+        // A plain `regionHasSaturatedColor` is not enough here: `VolumeBar`
+        // paints in this page's own lead accent (storage teal, the chart's
+        // `colors[0]`), so a broken chart whose collapsed layout slides
+        // `VolumeBar` up into this rectangle would still "pass" — the exact
+        // false pass a senior review found by hand. Matching only the
+        // *other* band's hue (`colors[1]`, i.e. Write) closes that gap: see
+        // `regionHasSaturatedColor(in:region:matchingHueOf:)`'s doc comment.
+        let series = StoragePage.throughputSeries(history: store.diskIOHistory)
+        let nonLeadHues = Array(Vitals.seriesColors(startingAt: Vitals.Palette.storage, count: series.count).dropFirst().map(hue(of:)))
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion, matchingHueOf: nonLeadHues))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")

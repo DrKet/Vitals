@@ -231,10 +231,19 @@ struct CPUPageTests {
         // whether the chart actually painted the sampled data. A region probe
         // inside the chart's own canvas is what would actually catch a chart
         // that silently stopped drawing. See `chartCanvasProbeRegion`'s doc
-        // comment for why this exact rectangle, and
-        // `regionHasSaturatedColor`'s for why a saturation probe rather than
-        // `regionHasContent` is the correct tool once a view sits on a
-        // `GlassPanel`.
+        // comment for why this exact rectangle.
+        //
+        // A plain `regionHasSaturatedColor` is not enough here: `CoreGrid`
+        // paints in this page's own lead accent (CPU blue, the chart's
+        // `colors[0]`), so a broken chart whose collapsed layout slides
+        // `CoreGrid` up into this rectangle would still "pass" — a false
+        // pass a senior review found by hand. Matching only the *other*
+        // cluster bands' hues (`colors[1...]`, computed from the real
+        // series `CPUPage.clusterSeries` actually produced, so this holds
+        // however many performance/efficiency clusters this Mac reports)
+        // closes that gap: `CoreGrid` can never paint those hues, only
+        // `MetricChart`'s own stacked bands can. See
+        // `regionHasSaturatedColor(in:region:matchingHueOf:)`'s doc comment.
         //
         // Every core reports the same 0.5 busy fraction, so on any Mac with
         // two or more performance/efficiency clusters (every Apple Silicon
@@ -242,7 +251,9 @@ struct CPUPageTests {
         // bound — the topmost band sits exactly at the canvas top,
         // comfortably inside this probe regardless of how tall the chart
         // actually grows.
-        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
+        let series = CPUPage.clusterSeries(history: store.cpuHistory, topology: profile.cpu)
+        let nonLeadHues = Array(Vitals.seriesColors(startingAt: Vitals.Palette.cpu, count: series.count).dropFirst().map(hue(of:)))
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion, matchingHueOf: nonLeadHues))
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")
