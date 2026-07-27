@@ -86,14 +86,24 @@ struct GPUPageTests {
     @Test("a single GPU is attributed, matching today's one-GPU-Mac behaviour")
     func singleGPUIsAttributed() {
         let gpu = GPUDevice(name: "Apple M2 Pro", topology: .unified(systemBytes: 17_179_869_184), coreCount: 16)
-        #expect(GPUPage.isMultiGPU([gpu]) == false)
-        #expect(GPUPage.attributedDevice([gpu]) == gpu)
+        // gpuCount: 1, sampleCount: 1 — the unambiguous case `device`
+        // actually hits on every Apple Silicon Mac, one Metal device paired
+        // with one IOAccelerator sample this tick. (A single-array
+        // `isMultiGPU(_ gpus:)` convenience used to be asserted here
+        // instead — removed along with the function itself, which a senior
+        // review found dead in production; see `isMultiGPU(gpuCount:sampleCount:)`'s
+        // doc comment.)
+        #expect(GPUPage.isMultiGPU(gpuCount: 1, sampleCount: 1) == false)
+        #expect(GPUPage.attributedDevice([gpu], sampleCount: 1) == gpu)
     }
 
     @Test("no reported GPU is unavailable, not ambiguous")
     func noGPUIsNotTreatedAsAmbiguous() {
-        #expect(GPUPage.isMultiGPU([]) == false)
-        #expect(GPUPage.attributedDevice([]) == nil)
+        // gpuCount: 0, sampleCount: 0 — no sample either, an ordinary
+        // absence rather than ambiguity (see `primaryValueGatedWithStats`'s
+        // equivalent case).
+        #expect(GPUPage.isMultiGPU(gpuCount: 0, sampleCount: 0) == false)
+        #expect(GPUPage.attributedDevice([], sampleCount: 0) == nil)
     }
 
     @Test("more than one GPU is never attributed, since nothing correlates a Metal device with an IOAccelerator sample")
@@ -109,18 +119,33 @@ struct GPUPageTests {
             GPUDevice(name: "Intel UHD Graphics 630", topology: .shared(maxSharedBytes: 1_536_000_000), coreCount: nil),
             GPUDevice(name: "AMD Radeon Pro 5500M", topology: .dedicated(vramBytes: 8_589_934_592), coreCount: nil),
         ]
-        #expect(GPUPage.isMultiGPU(gpus) == true)
-        #expect(GPUPage.attributedDevice(gpus) == nil)
+        // gpuCount: 2, sampleCount: 1 — the direct case: two named GPUs, a
+        // single IOAccelerator sample this tick.
+        #expect(GPUPage.isMultiGPU(gpuCount: gpus.count, sampleCount: 1) == true)
+        #expect(GPUPage.attributedDevice(gpus, sampleCount: 1) == nil)
+    }
+
+    @Test("attributedDevice also catches the mirror case: one named GPU but more than one IOAccelerator sample this tick")
+    func attributedDeviceCatchesTheMirrorCaseToo() {
+        // The case `GPUPage.device` must not silently miss: a single Metal
+        // device paired with two IOAccelerator samples this tick is exactly
+        // as unsafe to name as two Metal devices — see
+        // `isMultiGPU(gpuCount:sampleCount:)`'s doc comment. Before this fix,
+        // `device` computed this itself against the instance `isMultiGPU`
+        // rather than calling `attributedDevice`, so this exact case was
+        // never actually exercised through the function these assertions
+        // guard.
+        let gpu = GPUDevice(name: "Apple M2 Pro", topology: .unified(systemBytes: 17_179_869_184), coreCount: 16)
+        #expect(GPUPage.attributedDevice([gpu], sampleCount: 2) == nil)
     }
 
     @Test("the mirror case is caught too: one named GPU but more than one IOAccelerator sample this tick")
     func mirrorCaseIsAlsoAmbiguous() {
-        // `isMultiGPU(_ gpus:)` only ever sees Metal's enumeration. Metal
-        // reporting exactly one device says nothing about what IOAccelerator
-        // handed back this tick — the two are independent enumerations (see
-        // `GPUPage`'s doc comment) — so a single named GPU paired with two
-        // IOAccelerator samples is exactly as ambiguous as two named GPUs
-        // paired with one sample.
+        // Metal's own enumeration (`gpuCount`) reporting exactly one device
+        // says nothing about what IOAccelerator handed back this tick — the
+        // two are independent enumerations (see `GPUPage`'s doc comment) —
+        // so a single named GPU paired with two IOAccelerator samples is
+        // exactly as ambiguous as two named GPUs paired with one sample.
         #expect(GPUPage.isMultiGPU(gpuCount: 1, sampleCount: 2) == true)
         // And the already-covered direct case still holds through the general form.
         #expect(GPUPage.isMultiGPU(gpuCount: 2, sampleCount: 1) == true)
@@ -210,9 +235,156 @@ struct GPUPageTests {
             named: "gpu-page-with-data"
         )
         // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
-        // alone was vacuous and why a saturation probe (not `regionHasContent`)
-        // is the correct replacement inside a `GlassPanel`.
-        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
+        // alone was vacuous, and
+        // `regionHasSaturatedColor(in:region:matchingHueOf:)`'s doc comment
+        // for why matching only the non-lead band hues (never the page's own
+        // accent) is what actually proves the chart itself painted here,
+        // rather than merely something in the panel.
+        let series = GPUPage.engineSeries(history: store.gpuHistory)
+        let nonLeadHues = Array(Vitals.seriesColors(startingAt: Vitals.Palette.gpu, count: series.count).dropFirst().map(hue(of:)))
+        #expect(try regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion, matchingHueOf: nonLeadHues))
+    }
+
+    /// Fix 3: `attributedDeviceCatchesTheMirrorCaseToo` above proves the pure
+    /// `attributedDevice` function handles the mirror case — but nothing
+    /// before this test ever rendered a real `GPUPage` while that ambiguity
+    /// was live and confirmed what production actually does with it:
+    /// withhold the primary value and chart (per
+    /// `attributableLatest`/`attributableSeries`, gated on the same
+    /// `isMultiGPU(gpuCount:sampleCount:)` rule) rather than show one
+    /// arbitrarily-picked sample's numbers.
+    ///
+    /// This proves `attributableSeries`/`attributableLatest`'s own gating,
+    /// not `device`'s — those three are gated independently of one another
+    /// (`body` below computes each directly from `gpuCount`/`sampleCount`,
+    /// not by reusing `device`). `device`'s own fixed wiring is what
+    /// `deviceRoutesThroughAttributedDeviceWithRealSampleCount` right below
+    /// this test exercises directly — a pixel probe over the chart region
+    /// couldn't catch a regression there, since `device` only ever reaches
+    /// the header's vendor name and the "Memory" stat's text, neither of
+    /// which this harness can read.
+    ///
+    /// Works on a single-GPU machine — every machine this suite is likely to
+    /// run on, including this one: the ambiguity here comes entirely from
+    /// the *mirror* case, a real single-GPU `HardwareProfile` paired with a
+    /// sampler that (implausibly, but validly — IOAccelerator and Metal are
+    /// independent enumerations, see this file's top-level doc comment)
+    /// reports two `GPUSample`s in one tick. No actual multi-GPU hardware is
+    /// needed to exercise it.
+    @Test("a page in the ambiguous multi-GPU state withholds its chart, rendered from a live store")
+    func rendersWithheldStateForAmbiguousGPUSamples() async throws {
+        let profile = try HardwareProfile.detect()
+        try #require(
+            profile.gpus.count == 1,
+            "this test's ambiguity comes from the sample mirror case, not real multi-GPU hardware"
+        )
+
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(
+            AnySampler {
+                // Two samples this tick from a Mac Metal reports only one
+                // GPU for — the mirror case
+                // `isMultiGPU(gpuCount:sampleCount:)` exists to catch.
+                //
+                // Built inline rather than via `Self.sample(renderer:tiler:)`:
+                // this closure is `@Sendable` and non-isolated (see
+                // `AnySampler`'s initializer), while `Self.sample` inherits
+                // this suite's `@MainActor` isolation — calling it from here
+                // is exactly the actor-isolation violation the established
+                // pattern in `CPUPageTests.rendersFullPageFromStore` and
+                // `MemoryPageTests.rendersFullPageFromStore` avoids the same
+                // way.
+                [
+                    GPUSample(
+                        deviceUtilisation: 0.5, rendererUtilisation: 0.4,
+                        tilerUtilisation: 0.3, inUseMemoryBytes: nil, allocatedMemoryBytes: nil
+                    ),
+                    GPUSample(
+                        deviceUtilisation: 0.5, rendererUtilisation: 0.5,
+                        tilerUtilisation: 0.4, inUseMemoryBytes: nil, allocatedMemoryBytes: nil
+                    ),
+                ]
+            },
+            for: .gpu,
+            cadence: .fast
+        )
+        let store = MetricsStore(engine: engine, profile: profile)
+
+        let task = Task { await store.stream(.gpu) }
+        try await waitUntil { (store.gpu?.count ?? 0) == 2 }
+        task.cancel()
+
+        let rendered = try renderPNG(
+            GPUPage(store: store),
+            size: CGSize(width: 800, height: 700),
+            named: "gpu-page-ambiguous-multi-gpu"
+        )
+        // The chart must stay withheld, not merely still work by
+        // coincidence — `attributableSeries` gates it on the exact same
+        // ambiguity rule `device` is gated on too, independently.
+        #expect(try !regionHasSaturatedColor(in: rendered, region: chartCanvasProbeRegion))
+    }
+
+    /// Fix 3, the other half: `rendersWithheldStateForAmbiguousGPUSamples`
+    /// above proves `attributableSeries`/`attributableLatest` withhold the
+    /// chart on the mirror case, but `device` is gated independently of
+    /// those two — nothing in `body` derives one from the other — so that
+    /// test cannot catch a regression specific to `device`'s own wiring.
+    ///
+    /// This is exactly the regression a senior review found by hand: a
+    /// version of `device` that computed the mirror-case check inline
+    /// against the instance `isMultiGPU` (correct, but not exercised through
+    /// `attributedDevice`) is indistinguishable from a version that silently
+    /// stopped checking `sampleCount` altogether — both keep every existing
+    /// assertion on the *pure* `attributedDevice` function green, since
+    /// nothing called it from production either way. Constructing a real
+    /// `GPUPage` and reading its `device` property directly (internal for
+    /// exactly this reason, per its own doc comment) is what closes that
+    /// gap: it fails if `device` stops forwarding the real
+    /// `store.gpu?.count` into `attributedDevice`, which a pixel probe over
+    /// the chart region cannot detect, since `device` never reaches the
+    /// chart — only the header's vendor name and the "Memory" stat.
+    ///
+    /// Verified by hand: temporarily reverting `device` to pass a hardcoded
+    /// `sampleCount: 0` instead of `store.gpu?.count ?? 0` — the exact bug
+    /// this fix closes — left `rendersWithheldStateForAmbiguousGPUSamples`
+    /// still passing (it does not exercise `device` at all) while this test
+    /// failed, naming the lone Metal device instead of withholding it.
+    @Test("device forwards the real sample count into attributedDevice, catching the mirror case in what production actually runs")
+    func deviceRoutesThroughAttributedDeviceWithRealSampleCount() async throws {
+        let profile = try HardwareProfile.detect()
+        try #require(
+            profile.gpus.count == 1,
+            "this test's ambiguity comes from the sample mirror case, not real multi-GPU hardware"
+        )
+
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(
+            AnySampler {
+                // Two samples this tick from a Mac Metal reports only one GPU
+                // for — see `rendersWithheldStateForAmbiguousGPUSamples` for
+                // why this is built inline rather than via `Self.sample`.
+                [
+                    GPUSample(
+                        deviceUtilisation: 0.5, rendererUtilisation: 0.4,
+                        tilerUtilisation: 0.3, inUseMemoryBytes: nil, allocatedMemoryBytes: nil
+                    ),
+                    GPUSample(
+                        deviceUtilisation: 0.5, rendererUtilisation: 0.5,
+                        tilerUtilisation: 0.4, inUseMemoryBytes: nil, allocatedMemoryBytes: nil
+                    ),
+                ]
+            },
+            for: .gpu,
+            cadence: .fast
+        )
+        let store = MetricsStore(engine: engine, profile: profile)
+
+        let task = Task { await store.stream(.gpu) }
+        try await waitUntil { (store.gpu?.count ?? 0) == 2 }
+        task.cancel()
+
+        #expect(GPUPage(store: store).device == nil)
     }
 
     @Test("a freshly constructed page with no samples yet still renders, rather than crashing on nil state")

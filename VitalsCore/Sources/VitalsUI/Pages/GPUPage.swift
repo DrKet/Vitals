@@ -52,14 +52,18 @@ public struct GPUPage: View {
 
     // MARK: View
 
-    /// Whether more than one GPU is present.
-    ///
-    /// `device` (below) walks `store.profile?.gpus`, which is Metal's
-    /// enumeration order (`MTLCopyAllDevices()`, see `GPUSampler.devices()`).
-    /// `latest` walks `store.gpu`, which is IOAccelerator's iteration order
-    /// (`GPUSampler.read()`). Neither array carries an identifier tying its
-    /// entries to the other's, so "the first device" and "the first sample"
-    /// are the same physical GPU only by coincidence.
+    /// Whether more than one GPU is present, under the general ambiguity
+    /// rule that also covers the mirror case: Metal (`gpuCount`, from
+    /// `store.profile?.gpus`, `MTLCopyAllDevices()` via `GPUSampler.devices()`)
+    /// and IOAccelerator (`sampleCount`, from `store.gpu`, via
+    /// `GPUSampler.read()`) are independent enumerations with no identifier
+    /// tying either side's entries to the other's, so "the first device" and
+    /// "the first sample" are the same physical GPU only by coincidence.
+    /// Either enumeration alone reporting more than one device is enough to
+    /// make attribution ambiguous — Metal could report a single GPU while
+    /// IOAccelerator's latest tick yields two samples (or vice versa), and
+    /// naming "the" device would still be pairing a reading with hardware it
+    /// might not belong to.
     ///
     /// On a single-GPU Mac — the case on this machine, and on every Apple
     /// Silicon Mac — there is exactly one candidate on each side, so the
@@ -71,32 +75,37 @@ public struct GPUPage: View {
     /// the number outright. Fixing this properly needs a device identifier
     /// threaded through `GPUSample`, which is out of scope here.
     ///
+    /// A single-array `isMultiGPU(_ gpus:)` convenience overload (fixing
+    /// `sampleCount` at 0) used to live here too. A senior review found it
+    /// dead in production — nothing called it once `device` was wired
+    /// through `attributedDevice(_:sampleCount:)` below, which always passes
+    /// the real `store.gpu?.count` — so its own tests were guarding code the
+    /// page never executed. Removed rather than kept as an untested-by-production
+    /// convenience: this general form is no harder to call correctly, and
+    /// every case it covered is exercised directly at its own call sites
+    /// below (`GPUPageTests`'s `isMultiGPU(gpuCount:sampleCount:)` cases).
+    ///
     /// Internal rather than private so `GPUPageTests` can exercise the guard
     /// directly, without needing to render a full page and inspect pixels.
-    static func isMultiGPU(_ gpus: [GPUDevice]) -> Bool { gpus.count > 1 }
-
-    /// The general form of `isMultiGPU(_:)` above, also covering the mirror
-    /// case: Metal (`gpuCount`, from `store.profile?.gpus`) and IOAccelerator
-    /// (`sampleCount`, from `store.gpu`) are independent enumerations, so
-    /// either one alone reporting more than one device is enough to make
-    /// attribution ambiguous — Metal could report a single GPU while
-    /// IOAccelerator's latest tick yields two samples (or vice versa), and
-    /// naming "the" device would still be pairing a reading with hardware it
-    /// might not belong to. `isMultiGPU(_:)` is the special case of this with
-    /// `sampleCount` fixed at 0, which is why it can stay written the way it
-    /// already was rather than being reimplemented here.
-    ///
-    /// Internal for the same testing reason as `isMultiGPU(_:)`.
     static func isMultiGPU(gpuCount: Int, sampleCount: Int) -> Bool {
         gpuCount > 1 || sampleCount > 1
     }
 
     /// Resolves the one GPU the page may safely name, or `nil` when there is
-    /// none or more than one — see `isMultiGPU`'s doc comment for why more
-    /// than one can never be named. Internal for the same testing reason as
-    /// `isMultiGPU`.
-    static func attributedDevice(_ gpus: [GPUDevice]) -> GPUDevice? {
-        isMultiGPU(gpus) ? nil : gpus.first
+    /// none or more than one under the *general* ambiguity rule — see
+    /// `isMultiGPU(gpuCount:sampleCount:)`'s doc comment for why the mirror
+    /// case (one named GPU, more than one IOAccelerator sample this tick) is
+    /// exactly as unsafe to name as two named GPUs. `sampleCount` has no
+    /// default: `device` below must always pass the real
+    /// `store.gpu?.count`, and a call site that could silently default it to
+    /// `0` is exactly how this guard went untested against what production
+    /// actually runs in the first place — a senior review found `device` had
+    /// stopped calling this function entirely, checking only Metal's own
+    /// count and missing the mirror case, while every assertion here kept
+    /// passing against a version of this function nothing built the page
+    /// with. Internal for the same testing reason as `isMultiGPU`.
+    static func attributedDevice(_ gpus: [GPUDevice], sampleCount: Int) -> GPUDevice? {
+        isMultiGPU(gpuCount: gpus.count, sampleCount: sampleCount) ? nil : gpus.first
     }
 
     /// `latest`, but withheld once either enumeration reports more than one
@@ -121,18 +130,39 @@ public struct GPUPage: View {
     /// mirror case (`GPUPage.swift`'s doc comment for `isMultiGPU`) where one
     /// enumeration reports a single device this tick but the other reports
     /// more than one — attribution is just as broken either way round.
+    ///
+    /// Used only by `attributionNotice` below, which needs a plain boolean
+    /// (distinct from "no GPU at all", which must not show the notice) —
+    /// `device` itself no longer needs this, since it now gets the identical
+    /// ambiguity check for free by routing through `attributedDevice(_:sampleCount:)`.
     private var isMultiGPU: Bool {
         Self.isMultiGPU(gpuCount: store.profile?.gpus.count ?? 0, sampleCount: store.gpu?.count ?? 0)
     }
 
-    /// Named directly from `store.profile?.gpus`, not through
-    /// `attributedDevice(_:)`: that overload only ever sees Metal's own
-    /// count, so on the mirror case (Metal reports one device, IOAccelerator
-    /// reports more than one this tick) it would still name the lone Metal
-    /// device — exactly the bug this fix closes. Gating on the instance
-    /// `isMultiGPU` above, which also looks at `store.gpu`'s count, is what
-    /// catches that case.
-    private var device: GPUDevice? { isMultiGPU ? nil : store.profile?.gpus.first }
+    /// Routed through `attributedDevice(_:sampleCount:)` — the same function
+    /// `GPUPageTests` exercises directly — passing the real
+    /// `store.gpu?.count` rather than checking only Metal's own count. A
+    /// previous version of this computed property called neither: it
+    /// re-derived the mirror-case check inline against the instance
+    /// `isMultiGPU` above, which was correct but left `attributedDevice`
+    /// itself dead in production, so every assertion built on it would have
+    /// kept passing even if this property's own gating broke. Wiring through
+    /// the same function this file already tests directly is what makes
+    /// those assertions load-bearing again.
+    ///
+    /// Internal rather than private for the same testing reason as
+    /// `isMultiGPU`/`attributedDevice` above: a live-store render test can
+    /// prove the *chart* stays withheld on an ambiguous tick (that path runs
+    /// through the independently-gated `attributableSeries`/`attributableLatest`
+    /// below, not through this property at all), without that proving
+    /// anything about whether *this* property still forwards the real sample
+    /// count rather than a stale or defaulted one — a regression here would
+    /// only show up as a wrong device name in the header or a wrong "Memory"
+    /// stat, neither of which a pixel-region probe can read. Exposing this
+    /// directly is what lets a test catch that regression instead.
+    var device: GPUDevice? {
+        Self.attributedDevice(store.profile?.gpus ?? [], sampleCount: store.gpu?.count ?? 0)
+    }
     private var latest: GPUSample? { store.gpu?.first }
 
     /// `latest`, but withheld on a multi-GPU Mac. `device` above already
