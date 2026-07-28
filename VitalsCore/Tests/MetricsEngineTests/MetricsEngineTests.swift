@@ -251,4 +251,33 @@ struct MetricsEngineTests {
 
         #expect(await engine.history(for: .cpu).count <= 5)
     }
+
+    @Test("re-registering a live series cancels the previous sampling task")
+    func reregisterCancelsPreviousTask() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(20))
+        let first = CountingSampler()
+        let second = CountingSampler()
+        await engine.register(AnySampler { try first.sample() }, for: .cpu, cadence: .fast)
+
+        let stream = await engine.subscribe(to: .cpu)
+        let consumer = Task {
+            for await _ in stream {}
+        }
+
+        let sampledBeforeReplace = await waitUntil { first.callCount >= 3 }
+        #expect(sampledBeforeReplace)
+
+        // Replace while the first task is still spinning. The new Series has
+        // no subscribers, so nothing should start a fresh loop — and the old
+        // loop must be cancelled, or its next `tick` would sample `second`
+        // forever despite nobody being subscribed.
+        await engine.register(AnySampler { try second.sample() }, for: .cpu, cadence: .fast)
+
+        let countAfterReplace = second.callCount
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(second.callCount == countAfterReplace)
+        #expect(await engine.activeSeries.contains(.cpu) == false)
+
+        consumer.cancel()
+    }
 }

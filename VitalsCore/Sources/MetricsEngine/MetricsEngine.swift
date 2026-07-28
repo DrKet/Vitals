@@ -45,6 +45,10 @@ public actor MetricsEngine {
     }
 
     public func register(_ sampler: AnySampler, for key: SeriesKey, cadence: SamplingCadence) {
+        // Same canceller as `deinit`: replacing the Series would otherwise
+        // orphan a running sample-and-sleep loop, which keeps ticking against
+        // the *new* entry forever (subscription-driven idle no longer applies).
+        series[key]?.task?.cancel()
         series[key] = Series(
             registration: Registration(sampler: sampler, cadence: cadence),
             history: RingBuffer<MetricValue>(capacity: historyCapacity)
