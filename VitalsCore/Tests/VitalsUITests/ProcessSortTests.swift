@@ -6,11 +6,22 @@ import Testing
 @Suite("Process sort")
 struct ProcessSortTests {
 
-    private func row(_ pid: pid_t, cpu: Double?, memory: UInt64? = 0, name: String = "p") -> ProcessRow {
+    private func row(
+        _ pid: pid_t,
+        cpu: Double?,
+        memory: UInt64? = 0,
+        name: String = "p",
+        user: String = "u",
+        threads: Int? = nil,
+        cpuTime: Double? = nil,
+        diskRead: UInt64? = nil,
+        diskWrite: UInt64? = nil,
+        architecture: ProcessArchitecture = .native
+    ) -> ProcessRow {
         ProcessRow(
-            pid: pid, name: name, userName: "u", cpuFraction: cpu,
-            memoryBytes: memory, threadCount: nil, cpuTimeSeconds: nil,
-            diskReadBytes: nil, diskWrittenBytes: nil, architecture: .native
+            pid: pid, name: name, userName: user, cpuFraction: cpu,
+            memoryBytes: memory, threadCount: threads, cpuTimeSeconds: cpuTime,
+            diskReadBytes: diskRead, diskWrittenBytes: diskWrite, architecture: architecture
         )
     }
 
@@ -63,5 +74,91 @@ struct ProcessSortTests {
         let rows = [row(30, cpu: nil), row(2, cpu: nil), row(11, cpu: nil)]
         #expect(rows.sorted(using: ProcessComparator(field: .pid, order: .forward)).map(\.pid) == [2, 11, 30])
         #expect(rows.sorted(using: ProcessComparator(field: .pid, order: .reverse)).map(\.pid) == [30, 11, 2])
+    }
+
+    @Test("user sorts case-insensitively and independently of name, in both directions")
+    func userSortsCaseInsensitively() {
+        // Names are deliberately in the OPPOSITE order from user names, so a
+        // comparator that accidentally read `.name` instead of `.userName`
+        // would produce the reversed result and fail this test.
+        let rows = [
+            row(1, cpu: 0, name: "a", user: "Zeus"),
+            row(2, cpu: 0, name: "z", user: "adam")
+        ]
+        // Case-sensitive ASCII compare would put "Zeus" (capital Z) ahead of
+        // "adam", since 'Z' < 'a' in ASCII. Case-insensitive compare puts
+        // "adam" first. This is the behavior localizedCaseInsensitiveCompare
+        // is relied on for.
+        #expect(rows.sorted(using: ProcessComparator(field: .user, order: .forward)).map(\.pid) == [2, 1])
+        #expect(rows.sorted(using: ProcessComparator(field: .user, order: .reverse)).map(\.pid) == [1, 2])
+    }
+
+    @Test("architecture sorts Native before Rosetta, independently of name, in both directions")
+    func architectureSortsIndependentlyOfName() {
+        // Name/user are deliberately in the OPPOSITE order from architecture,
+        // so a comparator that accidentally read `.name`/`.userName` instead
+        // of `.architecture` would produce the reversed result.
+        let rows = [
+            row(1, cpu: 0, name: "a", user: "a", architecture: .translated),
+            row(2, cpu: 0, name: "z", user: "z", architecture: .native)
+        ]
+        #expect(rows.sorted(using: ProcessComparator(field: .architecture, order: .forward)).map(\.pid) == [2, 1])
+        #expect(rows.sorted(using: ProcessComparator(field: .architecture, order: .reverse)).map(\.pid) == [1, 2])
+    }
+
+    @Test("threads sorts by count with unreadable last, in both directions")
+    func threadsSortsWithUnknownsLast() {
+        // cpuTime/diskRead/diskWrite are all fully-populated (no nil) and
+        // monotonic, so if `.threads` were wired to any of them instead, the
+        // nil-last group would vanish and the order would change.
+        let rows = [
+            row(1, cpu: 0, threads: 4, cpuTime: 500, diskRead: 5_000, diskWrite: 50_000),
+            row(2, cpu: 0, threads: nil, cpuTime: 600, diskRead: 6_000, diskWrite: 60_000),
+            row(3, cpu: 0, threads: 12, cpuTime: 700, diskRead: 7_000, diskWrite: 70_000)
+        ]
+        #expect(rows.sorted(using: ProcessComparator(field: .threads, order: .reverse)).map(\.pid) == [3, 1, 2])
+        #expect(rows.sorted(using: ProcessComparator(field: .threads, order: .forward)).map(\.pid) == [1, 3, 2])
+    }
+
+    @Test("cpuTime sorts by accumulated seconds with unreadable last, in both directions")
+    func cpuTimeSortsWithUnknownsLast() {
+        // threads is fully-populated and inversely ordered relative to
+        // cpuTime, so a swap with `.threads` would both drop the nil-last
+        // group and reverse the readable order.
+        let rows = [
+            row(1, cpu: 0, threads: 40, cpuTime: 12.5),
+            row(2, cpu: 0, threads: 30, cpuTime: nil),
+            row(3, cpu: 0, threads: 20, cpuTime: 99.25)
+        ]
+        #expect(rows.sorted(using: ProcessComparator(field: .cpuTime, order: .reverse)).map(\.pid) == [3, 1, 2])
+        #expect(rows.sorted(using: ProcessComparator(field: .cpuTime, order: .forward)).map(\.pid) == [1, 3, 2])
+    }
+
+    @Test("diskRead sorts by bytes read with unreadable last, in both directions")
+    func diskReadSortsWithUnknownsLast() {
+        // diskWrite values are deliberately inverted relative to diskRead
+        // (and never nil), so swapping `.diskRead` to read diskWrittenBytes
+        // would both drop the nil-last group and reverse the readable order.
+        let rows = [
+            row(1, cpu: 0, diskRead: 500, diskWrite: 9_000),
+            row(2, cpu: 0, diskRead: nil, diskWrite: 8_000),
+            row(3, cpu: 0, diskRead: 9_000, diskWrite: 500)
+        ]
+        #expect(rows.sorted(using: ProcessComparator(field: .diskRead, order: .reverse)).map(\.pid) == [3, 1, 2])
+        #expect(rows.sorted(using: ProcessComparator(field: .diskRead, order: .forward)).map(\.pid) == [1, 3, 2])
+    }
+
+    @Test("diskWrite sorts by bytes written with unreadable last, in both directions")
+    func diskWriteSortsWithUnknownsLast() {
+        // diskRead values are deliberately inverted relative to diskWrite
+        // (and never nil), so swapping `.diskWrite` to read diskReadBytes
+        // would both drop the nil-last group and reverse the readable order.
+        let rows = [
+            row(1, cpu: 0, diskRead: 9_000, diskWrite: 500),
+            row(2, cpu: 0, diskRead: 8_000, diskWrite: nil),
+            row(3, cpu: 0, diskRead: 500, diskWrite: 9_000)
+        ]
+        #expect(rows.sorted(using: ProcessComparator(field: .diskWrite, order: .reverse)).map(\.pid) == [3, 1, 2])
+        #expect(rows.sorted(using: ProcessComparator(field: .diskWrite, order: .forward)).map(\.pid) == [1, 3, 2])
     }
 }
