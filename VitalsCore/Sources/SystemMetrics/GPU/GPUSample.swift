@@ -23,7 +23,8 @@ public struct GPUDevice: Sendable, Equatable {
     }
 }
 
-/// Utilisation values are fractions in `0...1`. Every field is optional because
+/// Utilisation values are fractions in `0...1`. Out-of-range driver readings
+/// become `nil` rather than being clamped. Every field is optional because
 /// which keys `IOAccelerator` publishes varies by driver.
 public struct GPUSample: Sendable, Equatable {
     public let deviceUtilisation: Double?
@@ -65,7 +66,11 @@ public enum GPUStatisticsParser {
 
         func percentage(_ key: String) -> Double? {
             guard let raw = statistics[key] as? NSNumber else { return nil }
-            return min(max(raw.doubleValue / 100.0, 0), 1)
+            let fraction = raw.doubleValue / 100.0
+            // Out of 0...1 is unreadable, not a saturated or idle GPU. Clamping
+            // would invent a plausible reading from a nonsense one.
+            guard (0...1).contains(fraction) else { return nil }
+            return fraction
         }
 
         func bytes(_ key: String) -> UInt64? {

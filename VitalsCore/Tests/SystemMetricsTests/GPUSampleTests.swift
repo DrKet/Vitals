@@ -44,10 +44,16 @@ struct GPUSampleTests {
         #expect(GPUStatisticsParser.parse(["recoveryCount": 0]) == nil)
     }
 
-    @Test("utilisation above 100 is clamped")
-    func utilisationClamped() throws {
+    @Test("utilisation above 100 is unreadable, not clamped to 100%")
+    func utilisationAboveRangeIsNil() throws {
         let sample = try #require(GPUStatisticsParser.parse(["Device Utilization %": 140]))
-        #expect(sample.deviceUtilisation == 1.0)
+        #expect(sample.deviceUtilisation == nil)
+    }
+
+    @Test("negative utilisation is unreadable, not clamped to 0%")
+    func utilisationBelowRangeIsNil() throws {
+        let sample = try #require(GPUStatisticsParser.parse(["Device Utilization %": -5]))
+        #expect(sample.deviceUtilisation == nil)
     }
 
     @Test("live sampler finds at least one GPU on this machine")
