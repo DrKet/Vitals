@@ -365,6 +365,40 @@ struct MetricsStoreTests {
         #expect(store.volumes?.first?.name == "Macintosh HD")
     }
 
+    @Test("publishes the latest process listing")
+    func publishesProcesses() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let snapshot = ProcessSnapshot(
+            pid: 42, parentPID: 1, name: "loginwindow", userID: 501,
+            memoryFootprintBytes: 12_000_000, cpuTimeSeconds: 3.5, threadCount: 4,
+            diskBytesRead: 1024, diskBytesWritten: 2048, architecture: .native
+        )
+        let sample = ProcessSeriesSample(processes: [snapshot], cpuUsage: [42: 0.25])
+        await engine.register(AnySampler { sample }, for: .processes, cadence: .slow)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.processes) }
+        try await waitUntil { store.processes != nil }
+        task.cancel()
+
+        #expect(store.processes?.processes.count == 1)
+        #expect(store.processes?.processes.first?.name == "loginwindow")
+        #expect(abs((store.processes?.cpuUsage[42] ?? 0) - 0.25) < 1e-9)
+    }
+
+    @Test("a wrong-type processes payload is ignored rather than crashing")
+    func wrongTypeProcessPayloadIgnored() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(AnySampler { "not a process sample" }, for: .processes, cadence: .slow)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.processes) }
+        try await waitUntilAsync { await engine.sampleCount(for: .processes) > 0 }
+        task.cancel()
+
+        #expect(store.processes == nil)
+    }
+
     @Test("the staleness gate reads the engine's real interval, not one derived from the key")
     func stalenessUsesTheEnginesInterval() async {
         // The cadence for a key lives in StandardSamplers, and intervalOverride

@@ -51,6 +51,11 @@ public final class MetricsStore {
     public private(set) var diskIO: [String: DiskThroughput]?
     public private(set) var diskIOHistory: [Timestamped<[String: DiskThroughput]>] = []
 
+    /// Latest process listing. Deliberately no history: a 600-sample ring of
+    /// ~600 processes would be 360,000 snapshots for a table that only ever
+    /// shows the present. Same reasoning as `volumes`.
+    public private(set) var processes: ProcessSeriesSample?
+
     /// Uptime and load average. Cheap and slow-moving, so it is read on demand
     /// rather than sampled on a schedule.
     public var systemLoad: SystemLoad { SystemLoad.current() }
@@ -139,9 +144,9 @@ public final class MetricsStore {
             append(Timestamped(timestamp: value.timestamp, sample: throughput), to: &networkHistory)
             armStalenessWatch(for: key)
         case .processes:
-            // The Processes pane is M1-B-3. Ignored rather than crashed on, so
-            // a page that subscribes early does not fault.
-            return
+            guard let sample = value.value as? ProcessSeriesSample else { return }
+            processes = sample
+            armStalenessWatch(for: key)
         case .diskIO:
             guard let throughput = value.value as? [String: DiskThroughput] else { return }
             diskIO = throughput
@@ -173,8 +178,8 @@ public final class MetricsStore {
     /// utilisation, where seconds old genuinely is out of date.
     private func expiresWhenStale(_ key: SeriesKey) -> Bool {
         switch key {
-        case .storage, .processes: false
-        case .cpu, .memory, .gpu, .network, .diskIO: true
+        case .storage: false
+        case .cpu, .memory, .gpu, .network, .diskIO, .processes: true
         }
     }
 
@@ -231,8 +236,7 @@ public final class MetricsStore {
         case .storage: volumes = nil
         case .network: network = nil
         case .diskIO: diskIO = nil
-        // The only genuinely unreachable arm: processes has no live field.
-        case .processes: break
+        case .processes: processes = nil
         }
     }
 
