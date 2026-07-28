@@ -131,4 +131,33 @@ public enum Vitals {
     public static func formatKnownByteCount<T: BinaryInteger>(_ bytes: T) -> String {
         formatByteCount(bytes)!
     }
+
+    /// Like `formatKnownByteCount`, but pinned to gigabytes.
+    ///
+    /// Compact Overview tiles use this so the unit does not jump (MB ↔ GB)
+    /// as the value crosses 1 GB and shift the readout's width. Hardware
+    /// pages keep the unrestricted formatter — they have room for the unit
+    /// to change.
+    public static func formatKnownByteCountInGigabytes<T: BinaryInteger>(_ bytes: T) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .memory
+        formatter.allowedUnits = [.useGB]
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    /// Bytes-per-second → megabytes-per-second divisor, shared by every
+    /// throughput readout and chart band so pages cannot drift onto a
+    /// different definition of "MB/s".
+    public static let bytesPerMegabyte = 1_048_576.0
+
+    /// Converts a byte-per-second rate into megabytes per second.
+    public static func megabytesPerSecond(fromBytesPerSecond bytesPerSecond: Double) -> Double {
+        bytesPerSecond / bytesPerMegabyte
+    }
+
+    /// Formats a megabytes-per-second rate the way Storage and Network
+    /// primaries read — two decimal places, always labelled `MB/s`.
+    public static func formatMegabytesPerSecond(_ megabytesPerSecond: Double) -> String {
+        String(format: "%.2f MB/s", megabytesPerSecond)
+    }
 }

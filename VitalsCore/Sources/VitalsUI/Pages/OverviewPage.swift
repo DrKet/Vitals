@@ -32,9 +32,34 @@ public struct OverviewPage: View {
             Tile(
                 id: "memory",
                 label: "Memory",
-                value: store.memory.map { formatBytes($0.used) },
+                value: store.memory.map { Vitals.formatKnownByteCountInGigabytes($0.used) },
                 accent: Vitals.Palette.memory,
                 series: memorySeries
+            ),
+            Tile(
+                id: "gpu",
+                label: "GPU",
+                value: Self.gpuTileValue(
+                    sample: store.gpu?.first,
+                    gpuCount: store.profile?.gpus.count ?? 0,
+                    sampleCount: store.gpu?.count ?? 0
+                ),
+                accent: Vitals.Palette.gpu,
+                series: gpuSeries
+            ),
+            Tile(
+                id: "storage",
+                label: "Storage",
+                value: StoragePage.primaryValue(store.diskIO),
+                accent: Vitals.Palette.storage,
+                series: storageSeries
+            ),
+            Tile(
+                id: "network",
+                label: "Network",
+                value: Self.networkTileValue(store.network),
+                accent: Vitals.Palette.network,
+                series: networkSeries
             ),
         ]
     }
@@ -52,6 +77,9 @@ public struct OverviewPage: View {
         }
         .task { await store.stream(.cpu) }
         .task { await store.stream(.memory) }
+        .task { await store.stream(.gpu) }
+        .task { await store.stream(.diskIO) }
+        .task { await store.stream(.network) }
     }
 
     private var cpuSeries: [ChartSeries] {
@@ -75,10 +103,45 @@ public struct OverviewPage: View {
         ]
     }
 
-    private func formatBytes(_ bytes: UInt64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .memory
-        formatter.allowedUnits = [.useGB]
-        return formatter.string(fromByteCount: Int64(bytes))
+    // MARK: GPU
+
+    /// Same primary as `GPUPage`, including the multi-GPU attribution gate —
+    /// a reading we cannot attribute must not appear on the Overview either.
+    ///
+    /// Internal so `OverviewPageTests` can exercise the gate directly without
+    /// rendering the full tile grid.
+    static func gpuTileValue(sample: GPUSample?, gpuCount: Int, sampleCount: Int) -> String? {
+        GPUPage.attributableLatest(sample, gpuCount: gpuCount, sampleCount: sampleCount)?
+            .deviceUtilisation.map { "\(Int(($0 * 100).rounded()))%" }
+    }
+
+    private var gpuSeries: [ChartSeries] {
+        GPUPage.attributableSeries(
+            GPUPage.engineSeries(history: store.gpuHistory),
+            gpuCount: store.profile?.gpus.count ?? 0,
+            sampleCount: store.gpu?.count ?? 0
+        )
+    }
+
+    // MARK: Storage
+
+    private var storageSeries: [ChartSeries] {
+        StoragePage.throughputSeries(history: store.diskIOHistory)
+    }
+
+    // MARK: Network
+
+    /// Same primary as `NetworkPage`, including the lo0-only → nil gate so a
+    /// tick with no real interfaces never headlines as a measured zero.
+    /// Routes through `NetworkPage.primaryValue` so the tile cannot drift
+    /// from the page it mirrors.
+    ///
+    /// Internal so `OverviewPageTests` can exercise the gate directly.
+    static func networkTileValue(_ network: [String: NetworkThroughput]?) -> String? {
+        NetworkPage.primaryValue(network)
+    }
+
+    private var networkSeries: [ChartSeries] {
+        NetworkPage.throughputSeries(history: store.networkHistory)
     }
 }

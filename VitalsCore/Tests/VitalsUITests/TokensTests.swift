@@ -166,4 +166,21 @@ struct TokensTests {
         #expect(Vitals.formatKnownByteCount(4_194_304).contains("4"))
         #expect(Vitals.formatKnownByteCount(UInt64(0)).isEmpty == false)
     }
+
+    @Test("a gigabyte-pinned count stays in GB below one gigabyte")
+    func formatKnownByteCountInGigabytesPinsUnit() {
+        // Overview's Memory tile uses this so the unit does not jump as the
+        // value crosses 1 GB. Half a gigabyte must still read as a GB figure,
+        // not flip to MB.
+        let halfGig = Vitals.formatKnownByteCountInGigabytes(UInt64(536_870_912))
+        #expect(halfGig.localizedCaseInsensitiveContains("GB"))
+        #expect(halfGig.localizedCaseInsensitiveContains("MB") == false)
+    }
+
+    @Test("megabytes-per-second conversion and formatting are shared")
+    func megabytesPerSecondHelpers() {
+        #expect(abs(Vitals.megabytesPerSecond(fromBytesPerSecond: 1_048_576) - 1.0) < 1e-9)
+        #expect(Vitals.formatMegabytesPerSecond(1.5) == "1.50 MB/s")
+        #expect(Vitals.bytesPerMegabyte == 1_048_576.0)
+    }
 }

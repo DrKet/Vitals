@@ -31,7 +31,6 @@ extension ChartGeometry {
         bands: [(name: String, rate: (Value) -> Double)]
     ) -> [ChartSeries] {
         guard !history.isEmpty else { return [] }
-        let bytesPerMegabyte = 1_048_576.0
 
         // Exclusion happens per tick, before any summing, so a tick whose
         // only entries were excluded (e.g. every interface that reported
@@ -56,7 +55,9 @@ extension ChartGeometry {
             ChartSeries(
                 name: band.name,
                 values: ticks.map { tick in
-                    tick.sample.values.reduce(0) { $0 + band.rate($1) } / bytesPerMegabyte
+                    Vitals.megabytesPerSecond(
+                        fromBytesPerSecond: tick.sample.values.reduce(0) { $0 + band.rate($1) }
+                    )
                 },
                 timestamps: timestamps,
                 unit: .absolute(suffix: "MB/s")

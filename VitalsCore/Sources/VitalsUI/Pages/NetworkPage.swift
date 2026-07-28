@@ -14,8 +14,6 @@ public struct NetworkPage: View {
 
     // MARK: Pure helpers, tested directly
 
-    private static let bytesPerMegabyte = 1_048_576.0
-
     /// Loopback carries local traffic between processes on this machine. It is
     /// not network throughput, and including it would swamp the chart whenever
     /// anything talks to a local service.
@@ -64,9 +62,9 @@ public struct NetworkPage: View {
     /// against (see its doc comment): reducing an empty dictionary would
     /// silently produce a real-looking `0.00 MB/s`, claiming every interface
     /// reported no traffic when in fact none reported at all that tick.
-    /// `totalMBs` and the Down/Up stats below must not disagree with the
-    /// chart they sit above — a tick the chart omits must not headline as a
-    /// measured zero underneath it.
+    /// `totalThroughputMBs` and the Down/Up stats below must not disagree with
+    /// the chart they sit above — a tick the chart omits must not headline as
+    /// a measured zero underneath it.
     ///
     /// Internal rather than private so `NetworkPageTests` can exercise the
     /// nil-vs-empty distinction directly, the same reason `GPUPage.isMultiGPU`
@@ -102,9 +100,23 @@ public struct NetworkPage: View {
         return "\(Self.activeInterfaces(throughput).count)"
     }
 
-    private var totalMBs: Double? {
-        guard let network = store.network, let real = Self.realThroughput(network) else { return nil }
-        return real.values.reduce(0) { $0 + $1.bytesInPerSecond + $1.bytesOutPerSecond } / Self.bytesPerMegabyte
+    /// Summed down+up across every real interface, in MB/s — or `nil` when
+    /// nothing real reported this tick (never sampled, empty, or lo0-only).
+    /// Internal so Overview's Network tile calls the same total the page's
+    /// primary value uses.
+    static func totalThroughputMBs(_ network: [String: NetworkThroughput]?) -> Double? {
+        guard let network, let real = realThroughput(network) else { return nil }
+        return Vitals.megabytesPerSecond(
+            fromBytesPerSecond: real.values.reduce(0) {
+                $0 + $1.bytesInPerSecond + $1.bytesOutPerSecond
+            }
+        )
+    }
+
+    /// The Network primary / Overview tile readout, built on
+    /// `totalThroughputMBs` so the two views cannot disagree.
+    static func primaryValue(_ network: [String: NetworkThroughput]?) -> String? {
+        totalThroughputMBs(network).map(Vitals.formatMegabytesPerSecond)
     }
 
     public var body: some View {
@@ -112,7 +124,7 @@ public struct NetworkPage: View {
             title: "Network",
             vendorName: Self.activeInterfaces(current).first,
             showsAppleMark: false,
-            primaryValue: totalMBs.map { String(format: "%.2f MB/s", $0) },
+            primaryValue: Self.primaryValue(store.network),
             series: Self.throughputSeries(history: store.networkHistory),
             accent: Vitals.Palette.network,
             stats: stats,
@@ -137,18 +149,24 @@ public struct NetworkPage: View {
             HardwareStat(
                 label: "Down",
                 value: store.network.flatMap(Self.realThroughput).map { real in
-                    String(
-                        format: "%.2f MB/s",
-                        real.values.reduce(0) { $0 + $1.bytesInPerSecond } / Self.bytesPerMegabyte
+                    Vitals.formatMegabytesPerSecond(
+                        Vitals.megabytesPerSecond(
+                            fromBytesPerSecond: real.values.reduce(0) {
+                                $0 + $1.bytesInPerSecond
+                            }
+                        )
                     )
                 }
             ),
             HardwareStat(
                 label: "Up",
                 value: store.network.flatMap(Self.realThroughput).map { real in
-                    String(
-                        format: "%.2f MB/s",
-                        real.values.reduce(0) { $0 + $1.bytesOutPerSecond } / Self.bytesPerMegabyte
+                    Vitals.formatMegabytesPerSecond(
+                        Vitals.megabytesPerSecond(
+                            fromBytesPerSecond: real.values.reduce(0) {
+                                $0 + $1.bytesOutPerSecond
+                            }
+                        )
                     )
                 }
             ),
@@ -166,8 +184,8 @@ public struct NetworkPage: View {
                 value: current[name].map {
                     String(
                         format: "%.2f down · %.2f up MB/s",
-                        $0.bytesInPerSecond / Self.bytesPerMegabyte,
-                        $0.bytesOutPerSecond / Self.bytesPerMegabyte
+                        Vitals.megabytesPerSecond(fromBytesPerSecond: $0.bytesInPerSecond),
+                        Vitals.megabytesPerSecond(fromBytesPerSecond: $0.bytesOutPerSecond)
                     )
                 }
             )

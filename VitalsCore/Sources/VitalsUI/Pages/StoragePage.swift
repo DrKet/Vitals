@@ -14,8 +14,6 @@ public struct StoragePage: View {
 
     // MARK: Pure helpers, tested directly
 
-    private static let bytesPerMegabyte = 1_048_576.0
-
     /// Read and write throughput per spec §6.3, summed across every device and
     /// expressed in MB/s.
     ///
@@ -39,6 +37,26 @@ public struct StoragePage: View {
         )
     }
 
+    /// Summed read+write across every device, in MB/s — or `nil` when nothing
+    /// has been sampled yet. Internal so Overview's Storage tile (and
+    /// `StoragePageTests`) call the same total the page's primary value uses,
+    /// rather than re-deriving it and drifting.
+    static func totalThroughputMBs(_ diskIO: [String: DiskThroughput]?) -> Double? {
+        diskIO.map { devices in
+            Vitals.megabytesPerSecond(
+                fromBytesPerSecond: devices.values.reduce(0) {
+                    $0 + $1.bytesReadPerSecond + $1.bytesWrittenPerSecond
+                }
+            )
+        }
+    }
+
+    /// The Storage primary / Overview tile readout, built on
+    /// `totalThroughputMBs` so the two views cannot disagree.
+    static func primaryValue(_ diskIO: [String: DiskThroughput]?) -> String? {
+        totalThroughputMBs(diskIO).map(Vitals.formatMegabytesPerSecond)
+    }
+
     // MARK: View
 
     /// Latest-only, per `MetricsStore.volumes`: volume capacity changes over
@@ -47,19 +65,12 @@ public struct StoragePage: View {
     /// which simply iterate zero times — never a fabricated volume.
     private var volumes: [Volume] { store.volumes ?? [] }
 
-    private var totalThroughput: Double? {
-        store.diskIO.map { devices in
-            devices.values.reduce(0) { $0 + $1.bytesReadPerSecond + $1.bytesWrittenPerSecond }
-                / Self.bytesPerMegabyte
-        }
-    }
-
     public var body: some View {
         HardwarePage(
             title: "Storage",
             vendorName: volumes.first(where: \.isInternal)?.name,
             showsAppleMark: false,
-            primaryValue: totalThroughput.map { String(format: "%.2f MB/s", $0) },
+            primaryValue: Self.primaryValue(store.diskIO),
             series: Self.throughputSeries(history: store.diskIOHistory),
             accent: Vitals.Palette.storage,
             stats: stats,
@@ -92,9 +103,12 @@ public struct StoragePage: View {
             HardwareStat(
                 label: "Read",
                 value: store.diskIO.map { devices in
-                    String(
-                        format: "%.2f MB/s",
-                        devices.values.reduce(0) { $0 + $1.bytesReadPerSecond } / Self.bytesPerMegabyte
+                    Vitals.formatMegabytesPerSecond(
+                        Vitals.megabytesPerSecond(
+                            fromBytesPerSecond: devices.values.reduce(0) {
+                                $0 + $1.bytesReadPerSecond
+                            }
+                        )
                     )
                 }
             ),
@@ -115,8 +129,8 @@ public struct StoragePage: View {
                 value: (store.diskIO?[device]).map {
                     String(
                         format: "%.2f read · %.2f write MB/s",
-                        $0.bytesReadPerSecond / Self.bytesPerMegabyte,
-                        $0.bytesWrittenPerSecond / Self.bytesPerMegabyte
+                        Vitals.megabytesPerSecond(fromBytesPerSecond: $0.bytesReadPerSecond),
+                        Vitals.megabytesPerSecond(fromBytesPerSecond: $0.bytesWrittenPerSecond)
                     )
                 }
             )
