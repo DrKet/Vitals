@@ -208,6 +208,33 @@ struct MetricsStoreTests {
         #expect(store.gpuHistory.isEmpty)
     }
 
+    @Test("a wrong-typed storage payload is ignored, not crashed on")
+    func wrongTypeOnStorageIgnored() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(AnySampler { "not a volume list" }, for: .storage, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.storage) }
+        try await Task.sleep(for: .milliseconds(60))
+        task.cancel()
+
+        #expect(store.volumes == nil)
+    }
+
+    @Test("a wrong-typed network payload is ignored, not crashed on")
+    func wrongTypeOnNetworkIgnored() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(AnySampler { "not network throughput" }, for: .network, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.network) }
+        try await Task.sleep(for: .milliseconds(60))
+        task.cancel()
+
+        #expect(store.network == nil)
+        #expect(store.networkHistory.isEmpty)
+    }
+
     @Test("live CPU clears after 2× Fast cadence once sampling stops; history is kept")
     func liveCPUClearsWhenStaleButHistoryRemains() async throws {
         // Primaries must not keep an hour-old reading styled as live after the

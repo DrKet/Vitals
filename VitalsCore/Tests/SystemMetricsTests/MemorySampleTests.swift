@@ -35,6 +35,18 @@ struct MemorySampleTests {
         #expect(sample.app == 800 * Self.page)
     }
 
+    @Test("app memory is zero when purgeable exceeds internal pages")
+    func appIsZeroWhenPurgeableExceedsInternal() {
+        // The saturating-subtraction guard: without it, underflow would wrap
+        // UInt64 and invent an enormous app-memory figure.
+        let sample = MemoryCalculator.sample(
+            from: counters(purgeable: 500, internalPages: 200),
+            swapUsed: 0, swapTotal: 0, pressure: .normal
+        )
+        #expect(sample.app == 0)
+        #expect(sample.cached == 500 * Self.page)
+    }
+
     @Test("used memory is app plus wired plus compressed")
     func usedIsAppPlusWiredPlusCompressed() {
         let sample = MemoryCalculator.sample(

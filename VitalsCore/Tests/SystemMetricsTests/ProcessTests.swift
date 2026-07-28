@@ -102,6 +102,21 @@ struct ProcessTests {
         #expect(usage.isEmpty)
     }
 
+    @Test("a PID that becomes readable again after nil starts fresh, not against the stale sample")
+    func recoversAfterNilWithoutStaleDelta() {
+        var tracker = ProcessCPUTracker()
+        _ = tracker.update([snapshot(pid: 100, cpuTime: 5.0)], at: 10.0)
+        _ = tracker.update([snapshot(pid: 100, cpuTime: nil)], at: 11.0)
+
+        // First readable sample after the gap — no percentage, same as a new PID.
+        let resumed = tracker.update([snapshot(pid: 100, cpuTime: 50.0)], at: 12.0)
+        #expect(resumed[100] == nil)
+
+        // Next tick can now compute a real delta against the post-gap baseline.
+        let usage = tracker.update([snapshot(pid: 100, cpuTime: 51.0)], at: 13.0)
+        #expect(usage[100] == 1.0)
+    }
+
     @Test("live snapshot includes launchd as PID 1")
     func liveSnapshotIncludesLaunchd() throws {
         let processes = ProcessSampler.snapshot()

@@ -70,6 +70,54 @@ struct CPUTopologyTests {
         #expect(topology.l2CacheBytes == 4_194_304)
     }
 
+    @Test("parses L1 data cache size from hw.l1dcachesize")
+    func parsesL1DataCache() {
+        let apple = CPUTopology.detect(using: StubSysctl.appleSiliconM2Pro)
+        #expect(apple.l1DataCacheBytes == 65536)
+
+        let intel = CPUTopology.detect(using: StubSysctl.intelCoreI9)
+        #expect(intel.l1DataCacheBytes == 32768)
+    }
+
+    @Test("reports absent L1 data cache as nil rather than zero")
+    func absentL1DataCacheIsNil() {
+        let stubSysctl = StubSysctl(
+            integers: [
+                "hw.physicalcpu": 4,
+                "hw.logicalcpu": 4,
+            ],
+            strings: ["machdep.cpu.brand_string": "Unknown Processor"]
+        )
+        let topology = CPUTopology.detect(using: stubSysctl)
+        #expect(topology.l1DataCacheBytes == nil)
+    }
+
+    @Test("a perflevel with partial data is silently dropped")
+    func partialPerflevelIsSilentlyDropped() {
+        // nperflevels claims two levels, but level 1 is missing physicalcpu.
+        // The loop continues rather than throwing or inventing a cluster — the
+        // incomplete level simply never appears.
+        let stubSysctl = StubSysctl(
+            integers: [
+                "hw.nperflevels": 2,
+                "hw.physicalcpu": 10,
+                "hw.logicalcpu": 10,
+                "hw.perflevel0.physicalcpu": 6,
+                "hw.perflevel0.logicalcpu": 6,
+                // hw.perflevel1.physicalcpu deliberately absent
+            ],
+            strings: [
+                "machdep.cpu.brand_string": "Apple M2 Pro",
+                "hw.perflevel0.name": "Performance",
+                "hw.perflevel1.name": "Efficiency",
+            ]
+        )
+        let topology = CPUTopology.detect(using: stubSysctl)
+        #expect(topology.clusters.count == 1)
+        #expect(topology.clusters[0].name == "Performance")
+        #expect(topology.clusters[0].coreCount == 6)
+    }
+
     @Test("reports absent core counts as nil rather than zero")
     func absentCoreCountsAreNil() {
         let stubSysctl = StubSysctl(
