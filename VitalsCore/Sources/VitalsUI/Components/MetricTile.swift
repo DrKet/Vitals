@@ -20,7 +20,12 @@ public struct MetricTile: View {
     /// House rule, split by shape: large numeric readouts (this) use the em
     /// dash; labelled label/value rows (`StatRow.displayValue`) use the word
     /// "Unavailable". Both must be styled as absence, never as a reading.
-    public static func displayValue(_ value: String?) -> String {
+    ///
+    /// `nonisolated` because this touches no `View` state — it's a pure
+    /// string mapping — and `ProcessRow`, which has no SwiftUI in it, needs
+    /// to call it from a plain nonisolated context without forcing itself
+    /// onto the main actor just to word an absent value.
+    public nonisolated static func displayValue(_ value: String?) -> String {
         value ?? "—"
     }
 
