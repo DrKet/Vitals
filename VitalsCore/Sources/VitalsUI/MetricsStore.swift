@@ -71,6 +71,10 @@ public final class MetricsStore {
     /// charts keep gap-breaking across the quiet stretch.
     private var stalenessWatches: [SeriesKey: Task<Void, Never>] = [:]
 
+    /// Real sampling interval per series, read from the engine when
+    /// `stream(_:)` subscribed rather than re-derived from the key.
+    private var samplingIntervals: [SeriesKey: Duration] = [:]
+
     public init(engine: MetricsEngine, profile: HardwareProfile?, historyLimit: Int = 600) {
         self.engine = engine
         self.profile = profile
@@ -82,6 +86,13 @@ public final class MetricsStore {
     /// Call from `.task {}`. Returns when the task is cancelled or the stream
     /// finishes.
     public func stream(_ key: SeriesKey) async {
+        // Read the real interval once, here, where we are already async. The
+        // staleness gate needs it on every tick and `apply` is synchronous, so
+        // caching it is what lets the gate use the engine's answer instead of
+        // a second copy of the cadence table.
+        if let interval = await engine.samplingInterval(for: key) {
+            samplingIntervals[key] = interval
+        }
         for await value in await engine.subscribe(to: key) {
             apply(value, for: key)
         }
@@ -139,23 +150,48 @@ public final class MetricsStore {
         }
     }
 
-    /// Cadence used for the live-staleness gate. Mirrors
-    /// `StandardSamplers.registerAll` — every series the store currently
-    /// surfaces as a live field is Fast except processes (not yet surfaced).
-    private func cadence(for key: SeriesKey) -> SamplingCadence {
+    /// The interval a series is really sampled at, as reported by the engine
+    /// when `stream(_:)` subscribed. Falls back to the fast cadence only for a
+    /// series that was never subscribed through this store.
+    ///
+    /// Deliberately not re-derived from the key: the cadence lives in
+    /// `StandardSamplers.registerAll` and `MetricsEngine.intervalOverride` can
+    /// collapse it, so any copy here would drift from what sampling actually
+    /// does — silently, since a wrong threshold only shows up as readings
+    /// expiring too early or too late.
+    private func samplingInterval(for key: SeriesKey) -> Duration {
+        samplingIntervals[key] ?? SamplingCadence.fast.interval
+    }
+
+    /// Whether a series' live field expires once it goes stale.
+    ///
+    /// Volume capacity does not. The store keeps no history for it precisely
+    /// because it changes over minutes rather than seconds, and a free-space
+    /// figure a few seconds old is not stale in any sense a reader would care
+    /// about — expiring it would blank the Storage page's volume bars and
+    /// capacity rows on any pause. Every other live field is a rate or a
+    /// utilisation, where seconds old genuinely is out of date.
+    private func expiresWhenStale(_ key: SeriesKey) -> Bool {
         switch key {
-        case .processes: .slow
-        case .cpu, .memory, .gpu, .storage, .network, .diskIO: .fast
+        case .storage, .processes: false
+        case .cpu, .memory, .gpu, .network, .diskIO: true
         }
     }
 
-    /// After each accepted tick, schedule a freshness check at 2× that series'
-    /// cadence. A later tick cancels and re-arms, so an actively sampled series
-    /// never flickers to absent on one missed beat; once sampling stops, live
-    /// fields go `nil` and primaries fall through to the em-dash path.
+    /// After each accepted tick, schedule a freshness check one threshold out.
+    /// A later tick cancels and re-arms, so an actively sampled series never
+    /// flickers to absent on one missed beat; once sampling stops, live fields
+    /// go `nil` and primaries fall through to the em-dash path.
+    ///
+    /// The check sweeps every series rather than just `key`. That is deliberate
+    /// belt-and-braces: a series that has already stopped ticking has nothing
+    /// left to re-arm its own watch, so it relies on some other series' watch
+    /// firing. With nothing ticking at all, the last watch to fire clears
+    /// everything that has gone stale.
     private func armStalenessWatch(for key: SeriesKey) {
+        guard expiresWhenStale(key) else { return }
         stalenessWatches[key]?.cancel()
-        let threshold = cadence(for: key).liveStalenessThreshold
+        let threshold = LiveStaleness.threshold(forInterval: samplingInterval(for: key))
         stalenessWatches[key] = Task { @MainActor [weak self] in
             try? await Task.sleep(for: threshold)
             guard !Task.isCancelled, let self else { return }
@@ -163,20 +199,30 @@ public final class MetricsStore {
         }
     }
 
-    /// Nils any live field whose last sample is older than 2× its series
-    /// cadence at `now`. History is left alone so charts keep gap-breaking.
+    /// Nils any live field whose last sample has aged past its series'
+    /// threshold at `now`. History is left alone so charts keep gap-breaking.
     ///
     /// Called from the per-series staleness watch; `now` is injectable so tests
     /// can advance past the threshold without waiting on wall clock (which
     /// races under a parallel suite on a busy MainActor).
     func expireStaleLiveSamples(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        for key in SeriesKey.allCases {
+        for key in SeriesKey.allCases where expiresWhenStale(key) {
             guard let stampedAt = lastAppliedTimestamp[key] else { continue }
-            guard !cadence(for: key).isLive(sampleTimestamp: stampedAt, now: now) else { continue }
+            let live = LiveStaleness.isLive(
+                sampleTimestamp: stampedAt,
+                now: now,
+                interval: samplingInterval(for: key)
+            )
+            guard !live else { continue }
             clearLiveSample(for: key)
         }
     }
 
+    /// Clears one series' live field. Which series are exempt is decided in
+    /// `expiresWhenStale` and nowhere else — a second guard here would mean
+    /// the exemption could be removed there without any behaviour changing,
+    /// which is precisely what made the first version of `volumesNeverExpire`
+    /// pass against deliberately broken code.
     private func clearLiveSample(for key: SeriesKey) {
         switch key {
         case .cpu: cpu = nil
@@ -185,6 +231,7 @@ public final class MetricsStore {
         case .storage: volumes = nil
         case .network: network = nil
         case .diskIO: diskIO = nil
+        // The only genuinely unreachable arm: processes has no live field.
         case .processes: break
         }
     }

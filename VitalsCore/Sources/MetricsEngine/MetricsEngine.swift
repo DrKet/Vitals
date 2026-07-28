@@ -55,6 +55,21 @@ public actor MetricsEngine {
         )
     }
 
+    /// The interval this series is genuinely sampled at, honouring any test
+    /// override. `nil` when the series is not registered.
+    ///
+    /// `MetricsStore`'s staleness gate reads this rather than re-deriving a
+    /// cadence from the series key. The engine is the only thing that knows
+    /// what a series is really sampled at: a key's cadence is chosen in
+    /// `StandardSamplers.registerAll`, and `intervalOverride` can collapse
+    /// every cadence to one interval regardless. Mirroring either of those
+    /// elsewhere would drift silently — a wrong threshold expires readings too
+    /// early or leaves stale ones looking live, and no test would fail.
+    public func samplingInterval(for key: SeriesKey) -> Duration? {
+        guard let entry = series[key] else { return nil }
+        return intervalOverride ?? entry.registration.cadence.interval
+    }
+
     /// Series currently being sampled. Exposed for tests and diagnostics.
     public var activeSeries: Set<SeriesKey> {
         Set(series.filter { $0.value.task != nil }.keys)

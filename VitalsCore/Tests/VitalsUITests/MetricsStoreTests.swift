@@ -242,6 +242,15 @@ struct MetricsStoreTests {
         let engine = await engineYielding([Self.load(0.4)])
         let store = MetricsStore(engine: engine, profile: nil)
 
+        // Resolved up front, while suspending is still harmless. Derived from
+        // the interval the ENGINE reports, which is what the store now uses:
+        // re-deriving it from the key would reintroduce exactly the duplicated
+        // cadence table this design removed, and this engine runs on an
+        // intervalOverride, so a key-derived cadence would disagree with what
+        // sampling actually did.
+        let interval = try #require(await engine.samplingInterval(for: .cpu))
+        let threshold = LiveStaleness.threshold(forInterval: interval).timeInterval
+
         let task = Task { await store.stream(.cpu) }
         try await waitUntil { store.cpu != nil }
         task.cancel()
@@ -252,10 +261,15 @@ struct MetricsStoreTests {
         let historyCount = store.cpuHistory.count
         #expect(store.cpu != nil)
 
-        // Advance past 2× Fast without waiting on wall clock — a parallel
-        // suite keeps MainActor busy enough that a real 2s sleep races with
+        // Advance past the threshold without waiting on wall clock — a parallel
+        // suite keeps MainActor busy enough that a real sleep races with
         // drained applies and soft wait timeouts.
-        let threshold = SamplingCadence.fast.liveStalenessThreshold.timeInterval
+        //
+        // `threshold` was resolved BEFORE the snapshot above on purpose: it
+        // comes from the actor-isolated engine, and awaiting it here would
+        // hand the MainActor back long enough for an in-flight `apply` to land,
+        // moving `lastAppliedTimestamp` past the `stampedAt` this assertion
+        // depends on.
         store.expireStaleLiveSamples(now: stampedAt + threshold + 0.001)
 
         #expect(store.cpu == nil)
@@ -263,8 +277,8 @@ struct MetricsStoreTests {
         #expect(historyCount > 0)
     }
 
-    @Test("live CPU stays present within one missed Fast tick after sampling stops")
-    func liveCPUSurvivesOneMissedTickWindow() async throws {
+    @Test("live CPU survives a tick delayed by several seconds, not just one missed beat")
+    func liveCPUSurvivesADelayedTick() async throws {
         let engine = await engineYielding([Self.load(0.4)])
         let store = MetricsStore(engine: engine, profile: nil)
 
@@ -274,10 +288,13 @@ struct MetricsStoreTests {
         try await waitUntilAsync { await engine.activeSeries.contains(.cpu) == false }
 
         let stampedAt = try #require(store.cpuHistory.last?.timestamp)
-        // Half the staleness window — still inside the one-missed-tick tolerance.
-        store.expireStaleLiveSamples(
-            now: stampedAt + SamplingCadence.fast.interval.timeInterval
-        )
+        // Four seconds — twice what a bare 2x-of-1s threshold would have
+        // tolerated. `MetricsStore` is @MainActor, and this project measured
+        // concurrent window renders starving a main-actor poll loop for over
+        // two seconds, so a tick arriving this late is a real scenario. Blanking
+        // the largest number on screen for it, then restoring it a moment
+        // later, is a worse lie than showing a four-second-old figure.
+        store.expireStaleLiveSamples(now: stampedAt + 4.0)
         #expect(store.cpu != nil)
     }
 
@@ -289,6 +306,12 @@ struct MetricsStoreTests {
         await engine.register(AnySampler { network }, for: .network, cadence: .fast)
         await engine.register(AnySampler { disk }, for: .diskIO, cadence: .fast)
         let store = MetricsStore(engine: engine, profile: nil)
+
+        // Resolved before the snapshot below: awaiting the actor-isolated
+        // engine mid-assertion hands the MainActor back, and an in-flight
+        // `apply` then moves the timestamps the assertions depend on.
+        let interval = try #require(await engine.samplingInterval(for: .network))
+        let threshold = LiveStaleness.threshold(forInterval: interval).timeInterval
 
         let netTask = Task { await store.stream(.network) }
         let diskTask = Task { await store.stream(.diskIO) }
@@ -304,7 +327,6 @@ struct MetricsStoreTests {
         let diskStamped = try #require(store.diskIOHistory.last?.timestamp)
         let netHistory = store.networkHistory.count
         let diskHistory = store.diskIOHistory.count
-        let threshold = SamplingCadence.fast.liveStalenessThreshold.timeInterval
         let now = max(netStamped, diskStamped) + threshold + 0.001
         store.expireStaleLiveSamples(now: now)
 
@@ -314,6 +336,48 @@ struct MetricsStoreTests {
         #expect(store.diskIOHistory.count == diskHistory)
         #expect(netHistory > 0)
         #expect(diskHistory > 0)
+    }
+
+    @Test("volume capacity does not expire, however long sampling has been stopped")
+    func volumesNeverExpire() async throws {
+        // The store deliberately keeps no history for volumes because capacity
+        // "changes over minutes, not seconds". A free-space figure a few
+        // seconds old is not stale in any sense a reader cares about, and
+        // expiring it would blank the Storage page's volume bars and capacity
+        // rows on any pause. Every other live field is a rate or a utilisation,
+        // where seconds old genuinely is out of date.
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let volumes = [
+            Volume(name: "Macintosh HD", totalBytes: 500_000_000_000,
+                   availableBytes: 200_000_000_000, isInternal: true)
+        ]
+        await engine.register(AnySampler { volumes }, for: .storage, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.storage) }
+        try await waitUntil { store.volumes != nil }
+        task.cancel()
+        try await waitUntilAsync { await engine.activeSeries.contains(.storage) == false }
+
+        // An hour later — far past any threshold that expires a rate.
+        store.expireStaleLiveSamples(now: ProcessInfo.processInfo.systemUptime + 3_600)
+        #expect(store.volumes?.count == 1)
+        #expect(store.volumes?.first?.name == "Macintosh HD")
+    }
+
+    @Test("the staleness gate reads the engine's real interval, not one derived from the key")
+    func stalenessUsesTheEnginesInterval() async {
+        // The cadence for a key lives in StandardSamplers, and intervalOverride
+        // can collapse it. A copy of that table in the store would drift
+        // silently — a wrong threshold only shows up as readings expiring too
+        // early or too late, which no test would catch.
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(AnySampler { [Volume]() }, for: .storage, cadence: .slow)
+
+        // Registered .slow (5s nominal) but overridden to 5ms: the engine
+        // reports what it actually does, not what the cadence implies.
+        #expect(await engine.samplingInterval(for: .storage) == .milliseconds(5))
+        #expect(await engine.samplingInterval(for: .cpu) == nil)
     }
 }
 

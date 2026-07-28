@@ -2,41 +2,59 @@ import Foundation
 import Testing
 @testable import MetricsEngine
 
-@Suite("SamplingCadence staleness")
+@Suite("Live staleness threshold")
 struct SamplingCadenceTests {
 
-    @Test("Fast live threshold is exactly two cadence intervals")
-    func fastThresholdIsTwoIntervals() {
-        // Fast is 1 Hz; 2× means ~2s without a tick before a primary must
-        // stop claiming currency. Derive from the cadence — never a bare 2.0.
-        #expect(SamplingCadence.fast.interval == .seconds(1))
-        #expect(SamplingCadence.stalenessCadenceMultiples == 2)
-        #expect(SamplingCadence.fast.liveStalenessThreshold == .seconds(2))
+    private let fast = SamplingCadence.fast.interval
+    private let slow = SamplingCadence.slow.interval
+
+    @Test("the fast cadence's threshold is the floor, not two of its intervals")
+    func fastThresholdIsTheFloor() {
+        // Fast is 1 Hz, so a bare 2x multiple would be 2s. `MetricsStore` is
+        // @MainActor, and this project measured concurrent window renders
+        // starving a main-actor poll loop for over two seconds — at 2s the
+        // largest number on screen would blank during a window resize and come
+        // back a moment later. The floor is what prevents that.
+        #expect(fast == .seconds(1))
+        #expect(LiveStaleness.intervalMultiple == 2)
+        #expect(LiveStaleness.floor == .seconds(10))
+        #expect(LiveStaleness.threshold(forInterval: fast) == .seconds(10))
+        #expect(abs(LiveStaleness.threshold(forInterval: fast).timeInterval - 10.0) < 0.000_001)
+    }
+
+    @Test("a sample well inside the threshold is still live")
+    func withinThresholdIsLive() {
+        let stamped: TimeInterval = 100
+        // Exactly at the threshold remains live ("older than" is stale).
+        #expect(LiveStaleness.isLive(sampleTimestamp: stamped, now: stamped + 10.0, interval: fast))
+        #expect(LiveStaleness.isLive(sampleTimestamp: stamped, now: stamped + 1.5, interval: fast))
+        // The case the floor exists for: a tick delayed several seconds by a
+        // busy main actor must not expire the reading.
+        #expect(LiveStaleness.isLive(sampleTimestamp: stamped, now: stamped + 4.0, interval: fast))
+    }
+
+    @Test("a sample past the threshold is stale, and an hour old certainly is")
+    func pastThresholdIsStale() {
+        let stamped: TimeInterval = 100
         #expect(
-            abs(SamplingCadence.fast.liveStalenessThreshold.timeInterval - 2.0) < 0.000_001
+            LiveStaleness.isLive(sampleTimestamp: stamped, now: stamped + 10.001, interval: fast)
+                == false
+        )
+        // The behaviour this whole gate exists for.
+        #expect(
+            LiveStaleness.isLive(sampleTimestamp: stamped, now: stamped + 3_600, interval: fast)
+                == false
         )
     }
 
-    @Test("a sample within one missed tick is still live")
-    func withinOneMissedTickIsLive() {
-        let cadence = SamplingCadence.fast
-        let stamped: TimeInterval = 100
-        // Exactly at the threshold remains live ("older than" is stale).
-        #expect(cadence.isLive(sampleTimestamp: stamped, now: stamped + 2.0))
-        #expect(cadence.isLive(sampleTimestamp: stamped, now: stamped + 1.5))
-    }
-
-    @Test("a sample older than two cadence intervals is stale")
-    func olderThanTwoIntervalsIsStale() {
-        let cadence = SamplingCadence.fast
-        let stamped: TimeInterval = 100
-        #expect(cadence.isLive(sampleTimestamp: stamped, now: stamped + 2.0 + 0.001) == false)
-        #expect(cadence.isLive(sampleTimestamp: stamped, now: stamped + 3_600) == false)
-    }
-
-    @Test("Slow cadence scales the threshold with its own interval")
-    func slowThresholdScales() {
-        #expect(SamplingCadence.slow.interval == .seconds(5))
-        #expect(SamplingCadence.slow.liveStalenessThreshold == .seconds(10))
+    @Test("an interval slower than the floor scales past it instead of being clamped")
+    func slowIntervalScalesAboveTheFloor() {
+        // The floor is a minimum, not a fixed value: a series sampled every
+        // 30s must not be called stale 10s after its last tick, which would
+        // expire it for two thirds of every sampling period.
+        #expect(slow == .seconds(5))
+        #expect(LiveStaleness.threshold(forInterval: slow) == .seconds(10))
+        #expect(LiveStaleness.threshold(forInterval: .seconds(30)) == .seconds(60))
+        #expect(LiveStaleness.threshold(forInterval: .seconds(60)) == .seconds(120))
     }
 }
