@@ -66,6 +66,11 @@ public final class MetricsStore {
     /// one series concurrently.
     private var lastAppliedTimestamp: [SeriesKey: TimeInterval] = [:]
 
+    /// Per-series watch that nils the live field once the sample ages past
+    /// `SamplingCadence.liveStalenessThreshold`. History is left alone so
+    /// charts keep gap-breaking across the quiet stretch.
+    private var stalenessWatches: [SeriesKey: Task<Void, Never>] = [:]
+
     public init(engine: MetricsEngine, profile: HardwareProfile?, historyLimit: Int = 600) {
         self.engine = engine
         self.profile = profile
@@ -102,21 +107,26 @@ public final class MetricsStore {
             guard let sample = value.value as? CPULoadSample else { return }
             cpu = sample
             append(Timestamped(timestamp: value.timestamp, sample: sample), to: &cpuHistory)
+            armStalenessWatch(for: key)
         case .memory:
             guard let sample = value.value as? MemorySample else { return }
             memory = sample
             append(Timestamped(timestamp: value.timestamp, sample: sample), to: &memoryHistory)
+            armStalenessWatch(for: key)
         case .gpu:
             guard let samples = value.value as? [GPUSample] else { return }
             gpu = samples
             append(Timestamped(timestamp: value.timestamp, sample: samples), to: &gpuHistory)
+            armStalenessWatch(for: key)
         case .storage:
             guard let latest = value.value as? [Volume] else { return }
             volumes = latest
+            armStalenessWatch(for: key)
         case .network:
             guard let throughput = value.value as? [String: NetworkThroughput] else { return }
             network = throughput
             append(Timestamped(timestamp: value.timestamp, sample: throughput), to: &networkHistory)
+            armStalenessWatch(for: key)
         case .processes:
             // The Processes pane is M1-B-3. Ignored rather than crashed on, so
             // a page that subscribes early does not fault.
@@ -125,6 +135,57 @@ public final class MetricsStore {
             guard let throughput = value.value as? [String: DiskThroughput] else { return }
             diskIO = throughput
             append(Timestamped(timestamp: value.timestamp, sample: throughput), to: &diskIOHistory)
+            armStalenessWatch(for: key)
+        }
+    }
+
+    /// Cadence used for the live-staleness gate. Mirrors
+    /// `StandardSamplers.registerAll` — every series the store currently
+    /// surfaces as a live field is Fast except processes (not yet surfaced).
+    private func cadence(for key: SeriesKey) -> SamplingCadence {
+        switch key {
+        case .processes: .slow
+        case .cpu, .memory, .gpu, .storage, .network, .diskIO: .fast
+        }
+    }
+
+    /// After each accepted tick, schedule a freshness check at 2× that series'
+    /// cadence. A later tick cancels and re-arms, so an actively sampled series
+    /// never flickers to absent on one missed beat; once sampling stops, live
+    /// fields go `nil` and primaries fall through to the em-dash path.
+    private func armStalenessWatch(for key: SeriesKey) {
+        stalenessWatches[key]?.cancel()
+        let threshold = cadence(for: key).liveStalenessThreshold
+        stalenessWatches[key] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: threshold)
+            guard !Task.isCancelled, let self else { return }
+            self.expireStaleLiveSamples()
+        }
+    }
+
+    /// Nils any live field whose last sample is older than 2× its series
+    /// cadence at `now`. History is left alone so charts keep gap-breaking.
+    ///
+    /// Called from the per-series staleness watch; `now` is injectable so tests
+    /// can advance past the threshold without waiting on wall clock (which
+    /// races under a parallel suite on a busy MainActor).
+    func expireStaleLiveSamples(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        for key in SeriesKey.allCases {
+            guard let stampedAt = lastAppliedTimestamp[key] else { continue }
+            guard !cadence(for: key).isLive(sampleTimestamp: stampedAt, now: now) else { continue }
+            clearLiveSample(for: key)
+        }
+    }
+
+    private func clearLiveSample(for key: SeriesKey) {
+        switch key {
+        case .cpu: cpu = nil
+        case .memory: memory = nil
+        case .gpu: gpu = nil
+        case .storage: volumes = nil
+        case .network: network = nil
+        case .diskIO: diskIO = nil
+        case .processes: break
         }
     }
 

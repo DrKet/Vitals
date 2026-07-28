@@ -1,7 +1,7 @@
 import Foundation
-import MetricsEngine
 import SystemMetrics
 import Testing
+@testable import MetricsEngine
 @testable import VitalsUI
 
 @MainActor
@@ -206,6 +206,87 @@ struct MetricsStoreTests {
 
         #expect(store.gpu == nil)
         #expect(store.gpuHistory.isEmpty)
+    }
+
+    @Test("live CPU clears after 2× Fast cadence once sampling stops; history is kept")
+    func liveCPUClearsWhenStaleButHistoryRemains() async throws {
+        // Primaries must not keep an hour-old reading styled as live after the
+        // page unsubscribes. Charts still need the retained history to gap-break.
+        let engine = await engineYielding([Self.load(0.4)])
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.cpu) }
+        try await waitUntil { store.cpu != nil }
+        task.cancel()
+        try await waitUntilAsync { await engine.activeSeries.contains(.cpu) == false }
+        #expect(await engine.activeSeries.contains(.cpu) == false)
+
+        let stampedAt = try #require(store.cpuHistory.last?.timestamp)
+        let historyCount = store.cpuHistory.count
+        #expect(store.cpu != nil)
+
+        // Advance past 2× Fast without waiting on wall clock — a parallel
+        // suite keeps MainActor busy enough that a real 2s sleep races with
+        // drained applies and soft wait timeouts.
+        let threshold = SamplingCadence.fast.liveStalenessThreshold.timeInterval
+        store.expireStaleLiveSamples(now: stampedAt + threshold + 0.001)
+
+        #expect(store.cpu == nil)
+        #expect(store.cpuHistory.count == historyCount)
+        #expect(historyCount > 0)
+    }
+
+    @Test("live CPU stays present within one missed Fast tick after sampling stops")
+    func liveCPUSurvivesOneMissedTickWindow() async throws {
+        let engine = await engineYielding([Self.load(0.4)])
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.cpu) }
+        try await waitUntil { store.cpu != nil }
+        task.cancel()
+        try await waitUntilAsync { await engine.activeSeries.contains(.cpu) == false }
+
+        let stampedAt = try #require(store.cpuHistory.last?.timestamp)
+        // Half the staleness window — still inside the one-missed-tick tolerance.
+        store.expireStaleLiveSamples(
+            now: stampedAt + SamplingCadence.fast.interval.timeInterval
+        )
+        #expect(store.cpu != nil)
+    }
+
+    @Test("live network and diskIO clear when stale without wiping history")
+    func liveThroughputClearsWhenStale() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let network = ["en0": NetworkThroughput(bytesInPerSecond: 100, bytesOutPerSecond: 50)]
+        let disk = ["disk0": DiskThroughput(bytesReadPerSecond: 200, bytesWrittenPerSecond: 100)]
+        await engine.register(AnySampler { network }, for: .network, cadence: .fast)
+        await engine.register(AnySampler { disk }, for: .diskIO, cadence: .fast)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let netTask = Task { await store.stream(.network) }
+        let diskTask = Task { await store.stream(.diskIO) }
+        try await waitUntil { store.network != nil && store.diskIO != nil }
+        netTask.cancel()
+        diskTask.cancel()
+        try await waitUntilAsync {
+            let active = await engine.activeSeries
+            return !active.contains(.network) && !active.contains(.diskIO)
+        }
+
+        let netStamped = try #require(store.networkHistory.last?.timestamp)
+        let diskStamped = try #require(store.diskIOHistory.last?.timestamp)
+        let netHistory = store.networkHistory.count
+        let diskHistory = store.diskIOHistory.count
+        let threshold = SamplingCadence.fast.liveStalenessThreshold.timeInterval
+        let now = max(netStamped, diskStamped) + threshold + 0.001
+        store.expireStaleLiveSamples(now: now)
+
+        #expect(store.network == nil)
+        #expect(store.diskIO == nil)
+        #expect(store.networkHistory.count == netHistory)
+        #expect(store.diskIOHistory.count == diskHistory)
+        #expect(netHistory > 0)
+        #expect(diskHistory > 0)
     }
 }
 

@@ -25,6 +25,30 @@ public enum SamplingCadence: Sendable, Equatable {
         case .static: .seconds(60)
         }
     }
+
+    /// Cadence multiples without a fresh tick before a live reading must not
+    /// be presented as current. Two tolerates one missed tick; it does not
+    /// leave an hour-old value looking live after sampling stopped.
+    public static let stalenessCadenceMultiples = 2
+
+    /// Age past which a sample is too old to headline as live.
+    public var liveStalenessThreshold: Duration {
+        interval * Self.stalenessCadenceMultiples
+    }
+
+    /// Whether a sample taken at `sampleTimestamp` (system uptime) is still
+    /// current at `now`. Strictly older than the threshold is stale.
+    public func isLive(sampleTimestamp: TimeInterval, now: TimeInterval) -> Bool {
+        now - sampleTimestamp <= liveStalenessThreshold.timeInterval
+    }
+}
+
+extension Duration {
+    /// Seconds as `TimeInterval`, for comparing against system-uptime stamps.
+    var timeInterval: TimeInterval {
+        let parts = components
+        return TimeInterval(parts.seconds) + TimeInterval(parts.attoseconds) / 1e18
+    }
 }
 
 /// One timestamped measurement. The engine is generic over payload type, so
