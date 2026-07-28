@@ -72,13 +72,20 @@ struct ProcessTableTests {
 
     @Test("a process that exits leaves its slot rather than shifting everything")
     func exitedProcessIsDropped() {
-        let ordered = ProcessTable.ordered([row(1), row(3)], keeping: [1, 2, 3])
+        // Input order is deliberately not the expected output order (3 before 1),
+        // so an identity passthrough of `rows` would wrongly yield [3, 1]. This
+        // proves the established order [1, 2, 3] is actually applied and pid 2
+        // (absent from `rows`) is actually dropped, rather than merely not invented.
+        let ordered = ProcessTable.ordered([row(3), row(1)], keeping: [1, 2, 3])
         #expect(ordered.map(\.pid) == [1, 3])
     }
 
     @Test("a newly started process is appended, not inserted mid-table")
     func newProcessIsAppended() {
-        let ordered = ProcessTable.ordered([row(1), row(2), row(99)], keeping: [1, 2])
+        // pid 99 (not in the established order) leads the input; an identity
+        // passthrough would wrongly yield [99, 1, 2]. This proves 99 is actually
+        // moved to the end rather than left wherever it happened to appear.
+        let ordered = ProcessTable.ordered([row(99), row(1), row(2)], keeping: [1, 2])
         #expect(ordered.map(\.pid) == [1, 2, 99])
     }
 
