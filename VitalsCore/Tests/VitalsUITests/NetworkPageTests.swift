@@ -57,6 +57,22 @@ struct NetworkPageTests {
         #expect(NetworkPage.activeInterfaces(sample) == ["en0"])
     }
 
+    @Test("header vendor mark is nil, never the alphabetically-first busy interface")
+    func vendorNameIsNilNotRotatingActiveInterface() {
+        // The previous badge used `activeInterfaces(current).first`. With
+        // awdl0, bridge0 and en0 all carrying traffic that sorts to
+        // "awdl0" — and flips as traffic shifts — which is not §6.2's
+        // vendor mark. Unknown primary → nil, not a guess at en0.
+        let busy = [
+            "awdl0": NetworkThroughput(bytesInPerSecond: 1000, bytesOutPerSecond: 0),
+            "bridge0": NetworkThroughput(bytesInPerSecond: 2000, bytesOutPerSecond: 0),
+            "en0": NetworkThroughput(bytesInPerSecond: 5000, bytesOutPerSecond: 0),
+        ]
+        #expect(NetworkPage.activeInterfaces(busy).first == "awdl0")
+        #expect(NetworkPage.vendorName(for: busy) == nil)
+        #expect(NetworkPage.vendorName(for: [:]) == nil)
+    }
+
     @Test("bands carry timestamps so gaps still break")
     func bandsCarryTimestamps() {
         let history = Self.stamped([
