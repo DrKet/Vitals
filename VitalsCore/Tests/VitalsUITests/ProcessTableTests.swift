@@ -1,0 +1,125 @@
+import Foundation
+import SystemMetrics
+import Testing
+@testable import MetricsEngine
+@testable import VitalsUI
+
+@MainActor
+@Suite("Process table")
+struct ProcessTableTests {
+
+    private func row(_ pid: pid_t, name: String = "p", cpu: Double? = 0, memory: UInt64? = 0) -> ProcessRow {
+        ProcessRow(
+            pid: pid, name: name, userName: "u", cpuFraction: cpu, memoryBytes: memory,
+            threadCount: nil, cpuTimeSeconds: nil, diskReadBytes: nil,
+            diskWrittenBytes: nil, architecture: .native
+        )
+    }
+
+    // MARK: Building rows
+
+    @Test("a process with no CPU entry becomes a row with a nil fraction, not zero")
+    func missingCPUEntryBecomesNil() {
+        let snapshot = ProcessSnapshot(
+            pid: 9, parentPID: 1, name: "syslogd", userID: 0,
+            memoryFootprintBytes: 1000, cpuTimeSeconds: nil, threadCount: 2,
+            diskBytesRead: nil, diskBytesWritten: nil, architecture: .native
+        )
+        let sample = ProcessSeriesSample(processes: [snapshot], cpuUsage: [:])
+        let rows = ProcessTable.rows(from: sample, resolver: UserNameResolver())
+
+        #expect(rows.count == 1)
+        #expect(rows[0].cpuFraction == nil)
+        #expect(rows[0].userName == "root")
+    }
+
+    // MARK: Filtering
+
+    @Test("filtering matches a name substring, ignoring case")
+    func filterMatchesNameSubstring() {
+        let rows = [row(1, name: "Xcode"), row(2, name: "WindowServer"), row(3, name: "finder")]
+        #expect(ProcessTable.filtered(rows, query: "wind").map(\.pid) == [2])
+        #expect(ProcessTable.filtered(rows, query: "XCODE").map(\.pid) == [1])
+    }
+
+    @Test("a numeric query also matches an exact pid")
+    func filterMatchesExactPID() {
+        let rows = [row(42, name: "Xcode"), row(7, name: "finder")]
+        #expect(ProcessTable.filtered(rows, query: "42").map(\.pid) == [42])
+    }
+
+    @Test("an empty query returns every row untouched")
+    func emptyQueryReturnsEverything() {
+        let rows = [row(1), row(2)]
+        #expect(ProcessTable.filtered(rows, query: "").count == 2)
+        #expect(ProcessTable.filtered(rows, query: "   ").count == 2)
+    }
+
+    @Test("a query matching nothing returns nothing, which is distinct from having no data")
+    func nonMatchingQueryReturnsEmpty() {
+        #expect(ProcessTable.filtered([row(1, name: "Xcode")], query: "zzz").isEmpty)
+    }
+
+    // MARK: Order holding
+
+    @Test("rows keep the established order even when their values change")
+    func establishedOrderIsKept() {
+        // The heart of "values update, order holds": pid 3 becoming the
+        // heaviest must not move it while the user is reading.
+        let ordered = ProcessTable.ordered([row(3, cpu: 9.0), row(1, cpu: 0.1)], keeping: [1, 3])
+        #expect(ordered.map(\.pid) == [1, 3])
+    }
+
+    @Test("a process that exits leaves its slot rather than shifting everything")
+    func exitedProcessIsDropped() {
+        let ordered = ProcessTable.ordered([row(1), row(3)], keeping: [1, 2, 3])
+        #expect(ordered.map(\.pid) == [1, 3])
+    }
+
+    @Test("a newly started process is appended, not inserted mid-table")
+    func newProcessIsAppended() {
+        let ordered = ProcessTable.ordered([row(1), row(2), row(99)], keeping: [1, 2])
+        #expect(ordered.map(\.pid) == [1, 2, 99])
+    }
+
+    @Test("with no established order the rows are returned as given")
+    func emptyOrderReturnsInputOrder() {
+        #expect(ProcessTable.ordered([row(5), row(2)], keeping: []).map(\.pid) == [5, 2])
+    }
+
+    // MARK: Heat map
+
+    @Test("the largest value in a column is fully saturated and the rest are proportional")
+    func heatScalesToTheColumnMaximum() {
+        let rows = [row(1, cpu: 1.0), row(2, cpu: 4.0)]
+        let maximum = ProcessTable.maximum(of: \.cpuFraction, in: rows)
+        #expect(abs((maximum ?? 0) - 4.0) < 1e-9)
+        #expect(abs((ProcessTable.heatFraction(4.0, maximum: maximum) ?? 0) - 1.0) < 1e-9)
+        #expect(abs((ProcessTable.heatFraction(1.0, maximum: maximum) ?? 0) - 0.25) < 1e-9)
+    }
+
+    @Test("an unreadable value gets no shading, because absence is not a low value")
+    func unreadableValueHasNoShade() {
+        #expect(ProcessTable.heatFraction(nil, maximum: 4.0) == nil)
+    }
+
+    @Test("a column where nothing is readable has no maximum and shades nothing")
+    func allUnknownColumnHasNoMaximum() {
+        let rows = [row(1, cpu: nil), row(2, cpu: nil)]
+        #expect(ProcessTable.maximum(of: \.cpuFraction, in: rows) == nil)
+        #expect(ProcessTable.heatFraction(nil, maximum: nil) == nil)
+        #expect(ProcessTable.heatFraction(1.0, maximum: nil) == nil)
+    }
+
+    @Test("an all-zero column shades nothing rather than dividing by zero")
+    func zeroMaximumShadesNothing() {
+        #expect(ProcessTable.heatFraction(0, maximum: 0) == nil)
+    }
+
+    @Test("a single row is fully saturated, since it is its own maximum")
+    func singleRowIsItsOwnMaximum() {
+        let rows = [row(1, cpu: 0.02)]
+        let maximum = ProcessTable.maximum(of: \.cpuFraction, in: rows)
+        #expect(abs((ProcessTable.heatFraction(0.02, maximum: maximum) ?? 0) - 1.0) < 1e-9)
+    }
+}
