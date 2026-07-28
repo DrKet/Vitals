@@ -399,6 +399,47 @@ struct MetricsStoreTests {
         #expect(store.processes == nil)
     }
 
+    @Test("live process listing clears once its sample ages past the staleness threshold")
+    func liveProcessesClearWhenStale() async throws {
+        // .processes was moved into expiresWhenStale's true branch and given a
+        // clearLiveSample case in the same change. Unlike CPU/throughput there
+        // is no history array here to assert survives — the store deliberately
+        // keeps none for processes (a 600-sample ring of ~600 processes would
+        // be 360,000 snapshots) — so this only has the "clears" half to prove.
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let snapshot = ProcessSnapshot(
+            pid: 42, parentPID: 1, name: "loginwindow", userID: 501,
+            memoryFootprintBytes: 12_000_000, cpuTimeSeconds: 3.5, threadCount: 4,
+            diskBytesRead: 1024, diskBytesWritten: 2048, architecture: .native
+        )
+        let sample = ProcessSeriesSample(processes: [snapshot], cpuUsage: [42: 0.25])
+        await engine.register(AnySampler { sample }, for: .processes, cadence: .slow)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let task = Task { await store.stream(.processes) }
+        try await waitUntil { store.processes != nil }
+        task.cancel()
+        try await waitUntilAsync { await engine.activeSeries.contains(.processes) == false }
+
+        // The store keeps no history for processes, so unlike the CPU/network
+        // tests there is no synchronous store-side timestamp to snapshot.
+        // The engine's own retained history is the next best source. Both
+        // reads here are actor awaits, resolved together right before the
+        // synchronous assertions below and with no further await in between —
+        // by this point the subscription is confirmed torn down (the
+        // `waitUntilAsync` above), so nothing is left running that could move
+        // `store.processes` out from under the snapshot.
+        let interval = try #require(await engine.samplingInterval(for: .processes))
+        let threshold = LiveStaleness.threshold(forInterval: interval).timeInterval
+        let stampedAt = try #require(await engine.history(for: .processes).last?.timestamp)
+
+        #expect(store.processes != nil)
+
+        store.expireStaleLiveSamples(now: stampedAt + threshold + 0.001)
+
+        #expect(store.processes == nil)
+    }
+
     @Test("the staleness gate reads the engine's real interval, not one derived from the key")
     func stalenessUsesTheEnginesInterval() async {
         // The cadence for a key lives in StandardSamplers, and intervalOverride
