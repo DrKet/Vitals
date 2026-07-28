@@ -253,10 +253,15 @@ decomposition:
 | Page | Stacked series |
 |---|---|
 | CPU | Performance cores / Efficiency cores |
-| Memory | Wired / Active / Compressed / Cached |
+| Memory | Wired / App / Compressed / Cached |
 | GPU | Renderer / Tiler |
-| Network | Up / Down |
+| Network | Down / Up |
 | Disk | Read / Write |
+
+Series order is load-bearing: the first series is the base band, is painted frontmost,
+and is the one the live dot marks. Memory uses **App** (not Active) because that is the
+field `MemorySample` exposes and what Activity Monitor labels "App Memory". Network leads
+with **Down** (not Up) because inbound throughput is the figure people actually watch.
 
 Stacking collapses to a single series on request.
 
