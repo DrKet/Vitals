@@ -68,7 +68,9 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
     // MARK: Display
 
     /// Absence in a table cell, worded exactly as `MetricTile` words it.
-    /// `PageConsistencyTests` holds the two together.
+    /// `ProcessRowTests.absenceMatchesTileVocabulary` holds the two together —
+    /// `PageConsistencyTests` ties `MetricTile` to `StatRow`, but knows nothing
+    /// of this type.
     public static func displayValue(_ value: String?) -> String {
         MetricTile.displayValue(value)
     }
