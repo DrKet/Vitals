@@ -13,6 +13,13 @@ public struct StorageDevice: Sendable, Equatable {
     public let medium: StorageMedium
     public let interconnect: String?
     public let revision: String?
+
+    public init(name: String, medium: StorageMedium, interconnect: String?, revision: String?) {
+        self.name = name
+        self.medium = medium
+        self.interconnect = interconnect
+        self.revision = revision
+    }
 }
 
 public struct Volume: Sendable, Equatable {

@@ -61,6 +61,56 @@ struct StoragePageTests {
         #expect(StoragePage.throughputSeries(history: []).isEmpty)
     }
 
+    @Test("a single storage device is named in the vendor-mark slot")
+    func singleDeviceIsNamed() {
+        let device = StorageDevice(
+            name: "APPLE SSD AP0512Z",
+            medium: .solidState,
+            interconnect: "Apple Fabric",
+            revision: "555"
+        )
+        #expect(StoragePage.vendorName(devices: [device]) == "APPLE SSD AP0512Z")
+    }
+
+    @Test("an empty card reader beside one SSD still names the SSD")
+    func cardReaderDoesNotBlockSSDName() {
+        let ssd = StorageDevice(
+            name: "APPLE SSD AP0512Z",
+            medium: .solidState,
+            interconnect: "Apple Fabric",
+            revision: "555"
+        )
+        let reader = StorageDevice(
+            name: "Built In SDXC Reader",
+            medium: .unknown,
+            interconnect: "Secure Digital",
+            revision: nil
+        )
+        #expect(StoragePage.vendorName(devices: [ssd, reader]) == "APPLE SSD AP0512Z")
+    }
+
+    @Test("two stated-media devices withhold the vendor mark rather than picking one")
+    func twoStatedMediaWithholdName() {
+        let ssd = StorageDevice(
+            name: "APPLE SSD AP0512Z",
+            medium: .solidState,
+            interconnect: "Apple Fabric",
+            revision: nil
+        )
+        let hdd = StorageDevice(
+            name: "ST2000DM008-2FR102",
+            medium: .rotational,
+            interconnect: "SATA",
+            revision: nil
+        )
+        #expect(StoragePage.vendorName(devices: [ssd, hdd]) == nil)
+    }
+
+    @Test("no devices yields no vendor mark")
+    func noDevicesYieldsNoVendorMark() {
+        #expect(StoragePage.vendorName(devices: []) == nil)
+    }
+
     @Test("a device that drops out and returns is summed fresh each tick, never carried forward from an earlier one")
     func deviceDroppingOutAndReturningIsRecomputedEachTick() {
         // Tick 1: disk0 and disk4 both present.

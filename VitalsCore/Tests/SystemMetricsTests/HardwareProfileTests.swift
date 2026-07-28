@@ -11,6 +11,8 @@ struct HardwareProfileTests {
         #expect(try #require(profile.cpu.physicalCores) > 0)
         #expect(profile.gpus.isEmpty == false)
         #expect(profile.memory.totalBytes > 0)
+        #expect(profile.storageDevices.isEmpty == false)
+        #expect(profile.storageDevices.allSatisfy { !$0.name.isEmpty })
     }
 
     @Test("Apple Silicon is reported as unified memory")

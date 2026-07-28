@@ -67,6 +67,15 @@ struct StorageTests {
         )
     }
 
+    @Test("live device enumeration finds at least one named physical device")
+    func liveDevicesFindPhysicalDevice() {
+        let devices = StorageSampler.devices()
+        #expect(devices.isEmpty == false)
+        #expect(devices.allSatisfy { !$0.name.isEmpty })
+        // Virtual disk images must not appear in the hardware inventory.
+        #expect(devices.contains { $0.interconnect == "Virtual Interface" } == false)
+    }
+
     @Test("used fraction is computed from total and available")
     func usedFraction() {
         let volume = Volume(

@@ -4,6 +4,52 @@ import IOKit.storage
 
 public enum StorageSampler {
 
+    /// Static description of each physical block storage device, parsed from
+    /// `IOBlockStorageDevice` device/protocol characteristics via
+    /// `StorageDeviceParser`.
+    ///
+    /// Virtual / file-backed images (`Physical Interconnect` = "Virtual
+    /// Interface") are omitted — they are not hardware. A device whose
+    /// characteristics lack a product name is omitted rather than filed under
+    /// a placeholder, matching `StorageDeviceParser`'s rejection rule.
+    public static func devices() -> [StorageDevice] {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(
+            kIOMainPortDefault,
+            IOServiceMatching("IOBlockStorageDevice"),
+            &iterator
+        ) == KERN_SUCCESS else { return [] }
+        defer { IOObjectRelease(iterator) }
+
+        var result: [StorageDevice] = []
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+
+            var properties: Unmanaged<CFMutableDictionary>?
+            guard IORegistryEntryCreateCFProperties(
+                service, &properties, kCFAllocatorDefault, 0
+            ) == KERN_SUCCESS,
+                  let dictionary = properties?.takeRetainedValue() as? [String: Any],
+                  let deviceCharacteristics = dictionary["Device Characteristics"] as? [String: Any]
+            else { continue }
+
+            let protocolCharacteristics =
+                dictionary["Protocol Characteristics"] as? [String: Any] ?? [:]
+
+            guard let device = StorageDeviceParser.parse(
+                deviceCharacteristics: deviceCharacteristics,
+                protocolCharacteristics: protocolCharacteristics
+            ) else { continue }
+
+            // Disk images publish as block devices but are not hardware; keep
+            // them out of the inventory the UI attributes readings to.
+            if device.interconnect == "Virtual Interface" { continue }
+
+            result.append(device)
+        }
+        return result
+    }
+
     /// Mounted volumes with capacity. Uses
     /// `volumeAvailableCapacityForImportantUsageKey`, which accounts for
     /// APFS purgeable space and therefore matches what Finder reports.

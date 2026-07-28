@@ -57,6 +57,20 @@ public struct StoragePage: View {
         totalThroughputMBs(diskIO).map(Vitals.formatMegabytesPerSecond)
     }
 
+    /// Product name for the header vendor-mark slot, from
+    /// `HardwareProfile.storageDevices` (via `StorageDeviceParser`).
+    ///
+    /// A single device is named unconditionally. When several are present,
+    /// only a solitary device with a *stated* medium (SSD/HDD) is attributed
+    /// — an empty card reader publishing no medium type beside one SSD must
+    /// not force an em dash, and two stated media must not pick arbitrarily.
+    static func vendorName(devices: [StorageDevice]) -> String? {
+        if devices.count == 1 { return devices[0].name }
+        let stated = devices.filter { $0.medium == .solidState || $0.medium == .rotational }
+        guard stated.count == 1 else { return nil }
+        return stated[0].name
+    }
+
     // MARK: View
 
     /// Latest-only, per `MetricsStore.volumes`: volume capacity changes over
@@ -68,7 +82,7 @@ public struct StoragePage: View {
     public var body: some View {
         HardwarePage(
             title: "Storage",
-            vendorName: volumes.first(where: \.isInternal)?.name,
+            vendorName: Self.vendorName(devices: store.profile?.storageDevices ?? []),
             showsAppleMark: false,
             primaryValue: Self.primaryValue(store.diskIO),
             series: Self.throughputSeries(history: store.diskIOHistory),

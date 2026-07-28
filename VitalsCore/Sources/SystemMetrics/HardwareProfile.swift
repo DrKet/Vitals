@@ -12,6 +12,9 @@ public struct HardwareProfile: Sendable {
     public let cpu: CPUTopology
     public let memory: MemoryHardware
     public let gpus: [GPUDevice]
+    /// Physical block devices from `StorageSampler.devices()`. Empty when
+    /// IOKit publishes none with a product name — never a fabricated entry.
+    public let storageDevices: [StorageDevice]
     public let sensorsAvailable: MetricAvailability
     public let frequencyAvailable: MetricAvailability
 
@@ -21,6 +24,7 @@ public struct HardwareProfile: Sendable {
     ) throws -> HardwareProfile {
         let cpu = CPUTopology.detect(using: sysctl)
         let gpus = GPUSampler.devices()
+        let storageDevices = StorageSampler.devices()
 
         // Installed memory is not optional in the way a sensor reading is —
         // a Mac that cannot report `hw.memsize` is not a machine we can
@@ -46,6 +50,7 @@ public struct HardwareProfile: Sendable {
             cpu: cpu,
             memory: memory,
             gpus: gpus,
+            storageDevices: storageDevices,
             sensorsAvailable: sensors.availability,
             frequencyAvailable: cpu.frequencyAvailable
                 ? .available
