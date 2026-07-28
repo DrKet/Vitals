@@ -57,20 +57,25 @@ struct NetworkPageTests {
         #expect(NetworkPage.activeInterfaces(sample) == ["en0"])
     }
 
-    @Test("header vendor mark is nil, never the alphabetically-first busy interface")
-    func vendorNameIsNilNotRotatingActiveInterface() {
-        // The previous badge used `activeInterfaces(current).first`. With
-        // awdl0, bridge0 and en0 all carrying traffic that sorts to
-        // "awdl0" — and flips as traffic shifts — which is not §6.2's
-        // vendor mark. Unknown primary → nil, not a guess at en0.
+    @Test("the busiest interface is not the one activeInterfaces sorts first")
+    func firstActiveInterfaceIsNotThePrimaryOne() {
+        // Why the header badge no longer derives a name from throughput at
+        // all. `activeInterfaces` sorts, so `.first` is alphabetical: with
+        // awdl0, bridge0 and en0 all carrying traffic it picks awdl0, even
+        // though en0 has five times the volume — and the answer flips as
+        // traffic shifts. That is not spec §6.2's stable vendor mark, so the
+        // page passes nil rather than guessing.
+        //
+        // This pins the property that made the old rule wrong. It cannot
+        // guard the page's own `vendorName: nil`, which is now a literal at
+        // the call site with nothing to call.
         let busy = [
             "awdl0": NetworkThroughput(bytesInPerSecond: 1000, bytesOutPerSecond: 0),
             "bridge0": NetworkThroughput(bytesInPerSecond: 2000, bytesOutPerSecond: 0),
             "en0": NetworkThroughput(bytesInPerSecond: 5000, bytesOutPerSecond: 0),
         ]
         #expect(NetworkPage.activeInterfaces(busy).first == "awdl0")
-        #expect(NetworkPage.vendorName(for: busy) == nil)
-        #expect(NetworkPage.vendorName(for: [:]) == nil)
+        #expect(busy["en0"]?.bytesInPerSecond == 5000)
     }
 
     @Test("bands carry timestamps so gaps still break")

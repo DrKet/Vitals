@@ -119,24 +119,17 @@ public struct NetworkPage: View {
         totalThroughputMBs(network).map(Vitals.formatMegabytesPerSecond)
     }
 
-    /// Spec §6.2's vendor-mark slot (CPU brand, installed memory, GPU name,
-    /// storage product). Network has no analogous stable hardware identity:
-    /// BSD interface names are not a vendor mark, and deriving one from
-    /// `activeInterfaces(_).first` made the badge rotate among whichever
-    /// busy interface sorted first alphabetically — typically `awdl0` or
-    /// `bridge0` rather than `en0` — as traffic shifted.
-    ///
-    /// An unknown primary is `nil`, never a guess. Throughput is accepted
-    /// so a future rule that can name a primary without fabricating one
-    /// has a place to live; today every input yields `nil`.
-    static func vendorName(for _: [String: NetworkThroughput]) -> String? {
-        nil
-    }
-
     public var body: some View {
         HardwarePage(
             title: "Network",
-            vendorName: Self.vendorName(for: current),
+            // Spec §6.2's vendor-mark slot holds a stable hardware identity —
+            // CPU brand, installed memory, GPU name, storage product. Network
+            // has no analogue: BSD interface names are not a vendor mark, and
+            // deriving one from `activeInterfaces(_).first` made the badge
+            // rotate among whichever busy interface sorted first alphabetically
+            // (typically `awdl0` or `bridge0` rather than `en0`) as traffic
+            // shifted. An unknown primary is nil, never a guess.
+            vendorName: nil,
             showsAppleMark: false,
             primaryValue: Self.primaryValue(store.network),
             series: Self.throughputSeries(history: store.networkHistory),
