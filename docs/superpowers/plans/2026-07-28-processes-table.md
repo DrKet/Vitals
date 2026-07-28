@@ -933,13 +933,19 @@ struct ProcessTableTests {
 
     @Test("a process that exits leaves its slot rather than shifting everything")
     func exitedProcessIsDropped() {
-        let ordered = ProcessTable.ordered([row(1), row(3)], keeping: [1, 2, 3])
+        // Input deliberately scrambled relative to the expected output. With
+        // the rows already in order, an inert `ordered` that just returned its
+        // input would satisfy this — the test would prove only that a missing
+        // pid is not invented, which is trivially true.
+        let ordered = ProcessTable.ordered([row(3), row(1)], keeping: [1, 2, 3])
         #expect(ordered.map(\.pid) == [1, 3])
     }
 
     @Test("a newly started process is appended, not inserted mid-table")
     func newProcessIsAppended() {
-        let ordered = ProcessTable.ordered([row(1), row(2), row(99)], keeping: [1, 2])
+        // Scrambled for the same reason: pid 99 leads the input but must end
+        // up last, so identity-passthrough gives [99, 1, 2] and fails.
+        let ordered = ProcessTable.ordered([row(99), row(1), row(2)], keeping: [1, 2])
         #expect(ordered.map(\.pid) == [1, 2, 99])
     }
 
@@ -1089,7 +1095,7 @@ Expected: PASS, 14 tests.
 
 Temporarily make `ordered(_:keeping:)` return `rows` unchanged as its first line. Run the suite.
 
-Expected: `establishedOrderIsKept` and `exitedProcessIsDropped` FAIL. Restore and confirm green.
+Expected: `establishedOrderIsKept`, `exitedProcessIsDropped` and `newProcessIsAppended` all FAIL. `emptyOrderReturnsInputOrder` correctly stays green — an inert `ordered` genuinely is right for an empty order. Restore and confirm green.
 
 - [ ] **Step 6: Commit**
 
