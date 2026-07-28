@@ -14,6 +14,15 @@ public struct MemoryPage: View {
 
     // MARK: Pure helpers, tested directly
 
+    /// Quiet line under the stacked chart. `used` (the primary) is
+    /// App + Wired + Compressed — Activity Monitor's "Memory Used" — so the
+    /// Cached band that tops the stack sits above the fraction the big number
+    /// implies. Without this, the correct definitions read as a bug.
+    ///
+    /// Same treatment as `CPUPage`'s "6 Performance" / "4 Efficiency" labels:
+    /// `Typography.label` + secondary, no chrome.
+    public static let chartCaption = "Used excludes Cached files"
+
     /// The four bands from spec §6.3, as fractions of installed memory.
     ///
     /// Base first: Wired is the floor the kernel will not give back, App sits
@@ -60,7 +69,9 @@ public struct MemoryPage: View {
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {
-            EmptyView()
+            Text(Self.chartCaption)
+                .font(Vitals.Typography.label)
+                .foregroundStyle(.secondary)
         } specifications: {
             specificationRows
         }

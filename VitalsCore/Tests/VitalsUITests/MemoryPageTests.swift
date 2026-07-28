@@ -62,6 +62,15 @@ struct MemoryPageTests {
         #expect(Vitals.formatByteCount(UInt64(1_073_741_824))?.isEmpty == false)
     }
 
+    /// Locks the caption that explains why the stacked chart tops out above
+    /// the primary: Used is App+Wired+Compressed (Activity Monitor's Memory
+    /// Used), and Cached files are the fourth band. Dropping or rewriting
+    /// this without intent makes the page read as a bug again.
+    @Test("chart caption states that Used excludes Cached files")
+    func chartCaptionStatesUsedExcludesCached() {
+        #expect(MemoryPage.chartCaption == "Used excludes Cached files")
+    }
+
     /// The whole point of this test: nothing before it ever constructed a
     /// `MemoryPage` from a `MetricsStore` and rendered it — every prior test
     /// in this file covers only the static, pure `breakdownSeries` helper.
