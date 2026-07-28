@@ -803,11 +803,25 @@ Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Prove the tests are not vacuous**
 
-Temporarily change `compareOptional`'s `case (nil, _): return .orderedDescending` to `return applying(.orderedDescending)`, which is what a naive implementation does. Run the suite again.
+Two mutations, because they trip different tests and only the second exercises the rule the design is actually about. Run each, observe, then restore before the next.
 
-Expected: `ascendingAlsoPutsUnknownsLast` FAILS. That test is the design; if it passes with the direction flipped, it is not testing anything.
+**Mutation A — fold `nil` in as zero.** Replace the whole `compareOptional` body with:
 
-Restore the line and confirm the suite is green again.
+```swift
+        applying(compareValues(lhs ?? 0, rhs ?? 0))
+```
+
+This is the bug the design exists to prevent: it treats "could not read" as "idle".
+
+Expected: `ascendingAlsoPutsUnknownsLast` FAILS — ascending now promotes unreadable processes above one measured at 0.1%. That test is the design; if it survives this mutation, it is testing nothing.
+
+**Mutation B — flip presence with the sort direction.** Restore, then change only `case (nil, _): return .orderedDescending` to `return applying(.orderedDescending)`.
+
+Expected: `descendingPutsUnknownsLast` and `memorySortsWithUnknownsLast` FAIL — but `ascendingAlsoPutsUnknownsLast` **passes**. That is not a gap in the test: `applying` is a no-op when `order == .forward`, so this mutation cannot change ascending behaviour at all. What it does break is antisymmetry — one arm now says nil-first while the other still says nil-last, so the two disagree and the descending sort is corrupted rather than merely reordered.
+
+Restore and confirm the suite is green.
+
+Report which test went red under each mutation. If the observed behaviour differs from the above, that is a finding worth reporting, not something to reconcile silently.
 
 - [ ] **Step 6: Commit**
 
