@@ -33,6 +33,8 @@ public struct AppShell: View {
         switch selection {
         case .overview:
             OverviewPage(store: store)
+        case .processes:
+            ProcessesPage(store: store)
         case .cpu:
             CPUPage(store: store)
         case .memory:

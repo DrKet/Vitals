@@ -18,13 +18,30 @@ import SwiftUI
 struct ProcessSortKey<Value: Comparable>: Comparable {
     let value: Value?
 
+    /// Deliberately traps rather than implementing nil-first ordering.
+    ///
+    /// This type's whole reason to exist is that its `<` is a promise nothing
+    /// keeps: `SwiftUI.Table` only ever reads `.keyPath`/`.order` off the bound
+    /// `KeyPathComparator` (see `resort()`), never calls `sorted(using:)` on it
+    /// directly. A correct-looking `<` that returned `true` for `(nil, _)`
+    /// would sort unreadable processes FIRST ascending — exactly the bug this
+    /// milestone exists to prevent — and nothing would notice, because nothing
+    /// exercises it today. `rows.sorted(using: sortOrder)` is also the most
+    /// idiomatic line in every SwiftUI `Table` tutorial, so it is exactly what
+    /// a future maintainer would reach for. Trapping turns "silently wrong
+    /// order in production" into "crashes immediately, naming why," the first
+    /// time anyone actually calls it — enforcing the invariant instead of
+    /// merely documenting it.
     static func < (lhs: Self, rhs: Self) -> Bool {
-        switch (lhs.value, rhs.value) {
-        case (nil, nil): false
-        case (nil, _): true
-        case (_, nil): false
-        case let (l?, r?): l < r
-        }
+        preconditionFailure("""
+            ProcessSortKey.< must never be called. SwiftUI's Table reads only \
+            .keyPath and .order off the bound KeyPathComparator (see \
+            ProcessesPage.resort()); actual ordering always goes through \
+            ProcessComparator, which is where unreadable values are kept last \
+            in both directions. If this fired, something started calling \
+            sorted(using:) on the raw KeyPathComparator directly, bypassing \
+            that rule.
+            """)
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.value == rhs.value }
@@ -37,6 +54,20 @@ extension ProcessRow {
     var cpuTimeSecondsKey: ProcessSortKey<Double> { ProcessSortKey(value: cpuTimeSeconds) }
     var diskReadBytesKey: ProcessSortKey<UInt64> { ProcessSortKey(value: diskReadBytes) }
     var diskWrittenBytesKey: ProcessSortKey<UInt64> { ProcessSortKey(value: diskWrittenBytes) }
+
+    /// A dedicated, plain-`String` binding for the Architecture column.
+    ///
+    /// `String` is already `Comparable`, so — unlike the fields above — this
+    /// needs no `ProcessSortKey` wrapper: architecture is never absent, and
+    /// there is no meaningful order between native and translated beyond the
+    /// words `ProcessComparator.architecture` already sorts by, so wrapping it
+    /// as `Comparable` conformance on `ProcessArchitecture` itself would be
+    /// manufacturing an ordering nobody asked for. Distinct from `\.name` so
+    /// `TableColumn("Architecture", value:)` no longer shares a key path with
+    /// the Process column — sharing one made both columns' sort indicators
+    /// indistinguishable and meant clicking "Architecture" silently sorted by
+    /// name.
+    var architectureKey: String { ProcessRow.formatArchitecture(architecture) }
 }
 
 /// The live process table.
@@ -60,21 +91,41 @@ public struct ProcessesPage: View {
     /// available from the header's context menu.
     @State private var columns = TableColumnCustomization<ProcessRow>()
 
-    /// PIDs in the order they are currently displayed. Recomputed only when the
-    /// sort changes or the view appears — between those, values refresh in
-    /// place so a row can be read without it moving underneath the pointer.
+    /// PIDs in the order they are currently displayed. Recomputed whenever the
+    /// sort changes, the filter changes, the view appears, or a listing first
+    /// arrives — between those, values refresh in place so a row can be read
+    /// without it moving underneath the pointer.
+    ///
+    /// Starts empty, which `ProcessTable.ordered(_:keeping:)` treats as "no
+    /// order established yet" and passes its input through unchanged — i.e.
+    /// sampler order. That is only ever what's on screen for the fraction of a
+    /// frame between a listing landing and the `onChange` below reacting to it
+    /// (see `body`'s doc comment), never a state a user can see settle.
     @State private var displayOrder: [pid_t] = []
+
+    /// Whether the page has locked in its one-time default ordering from a
+    /// sample that could actually differentiate processes by CPU. See the
+    /// `onChange(of: store.processes?.cpuUsage.isEmpty)` handler in `body`
+    /// for why "the first sample to arrive" and "the first sample worth
+    /// sorting by" are not the same tick.
+    @State private var establishedDefaultOrder = false
 
     public init(store: MetricsStore) {
         self.store = store
     }
 
     public var body: some View {
-        // Computed ONCE per body evaluation and threaded down. These were
-        // computed properties in an earlier draft, which meant every heat cell
-        // re-filtered, re-ordered and re-scanned all ~600 rows — thousands of
-        // passes per redraw.
-        let rows = orderedRows()
+        // `all`/`filtered` computed ONCE per body evaluation and threaded down
+        // to both rendering and `resort`. These were computed properties in an
+        // earlier draft, which meant every heat cell re-filtered, re-ordered
+        // and re-scanned all ~600 rows — thousands of passes per redraw. The
+        // sharing is also what stops each `onChange`/`onAppear` below from
+        // doing its own redundant `ProcessTable.rows(from:resolver:)` pass:
+        // `resort` here closes over `filtered` rather than rebuilding it, so a
+        // header click walks the ~600 rows once (for this render), not twice.
+        let all = currentRows()
+        let filtered = ProcessTable.filtered(all, query: filter)
+        let rows = ProcessTable.ordered(filtered, keeping: displayOrder)
         let cpuMaximum = ProcessTable.maximum(of: \.cpuFraction, in: rows)
         let memoryMaximum = ProcessTable.maximum(
             of: { $0.memoryBytes.map(Double.init) }, in: rows
@@ -86,14 +137,67 @@ public struct ProcessesPage: View {
         }
         .padding(Vitals.Metrics.contentPadding)
         .task { await store.stream(.processes) }
-        .onAppear(perform: resort)
-        .onChange(of: sortOrder) { _, _ in resort() }
+        .onAppear {
+            resort(filtered: filtered)
+            markDefaultOrderEstablishedIfMeaningful()
+        }
+        .onChange(of: sortOrder) { _, _ in resort(filtered: filtered) }
+        // Narrowing the filter is harmless on its own — a subset preserves
+        // `displayOrder`'s existing relative order. Clearing it is not: rows
+        // the old filter hid are absent from `displayOrder`, so `ordered`
+        // would append them below in raw sampler order, leaving a visibly
+        // unsorted tail. Resorting on every filter change (not just when it
+        // widens) is what keeps that tail from ever appearing.
+        .onChange(of: filter) { _, _ in resort(filtered: filtered) }
+        // The default sort's whole point: on a cold page `store.processes`
+        // starts nil, so `displayOrder` starts empty and `ordered` passes
+        // sampler order straight through. Nothing previously re-ran `resort`
+        // when the first listing landed, so the very first thing a user saw
+        // was raw sampler order, not CPU-descending — the one moment this
+        // milestone is about.
+        //
+        // Keyed on `cpuUsage.isEmpty` rather than plain nil-ness, and gated by
+        // `establishedDefaultOrder` rather than firing exactly once, for a
+        // reason discovered only by running the real app against a live
+        // engine: `ProcessCPUTracker.update(_:at:)` computes a process' CPU
+        // fraction as a delta against the PREVIOUS sample, so the very FIRST
+        // `ProcessSeriesSample` a cold engine ever delivers has an entirely
+        // EMPTY `cpuUsage` — every process is unreadable on tick one, not
+        // because anything is broken, but because there is nothing yet to
+        // diff against. Locking `displayOrder` in from that tick "sorts"
+        // a column where everything ties, which is a stable no-op
+        // indistinguishable from sampler order — exactly the bug this fix
+        // exists to close, just one tick later than the naive nil-check
+        // catches. Re-triggering on each `cpuUsage.isEmpty` transition (nil
+        // -> true -> false) and only setting `establishedDefaultOrder` once a
+        // tick actually has readable CPU data means the frozen order always
+        // comes from the first sample capable of showing one, while still
+        // never touching `displayOrder` again afterward — preserving "order
+        // holds" for every tick after that. (Not keyed on the sample itself:
+        // `ProcessSeriesSample` isn't `Equatable`, and it changes on every
+        // live tick regardless — resorting every tick would fight that same
+        // "order holds" contract this is careful not to break.)
+        .onChange(of: store.processes?.cpuUsage.isEmpty) { _, _ in
+            guard !establishedDefaultOrder else { return }
+            resort(filtered: filtered)
+            markDefaultOrderEstablishedIfMeaningful()
+        }
     }
 
-    private func orderedRows() -> [ProcessRow] {
+    /// Locks in `establishedDefaultOrder` once — and only once — `resort()`
+    /// has run against a sample that could actually tell processes apart by
+    /// CPU. Shared by `onAppear` (the pre-populated-fixture / already-warm
+    /// path, where the first sample this page ever sees may already be a
+    /// real one) and the `cpuUsage.isEmpty` handler above (the cold-launch
+    /// path, where it usually is not).
+    private func markDefaultOrderEstablishedIfMeaningful() {
+        guard let sample = store.processes, !sample.cpuUsage.isEmpty else { return }
+        establishedDefaultOrder = true
+    }
+
+    private func currentRows() -> [ProcessRow] {
         guard let sample = store.processes else { return [] }
-        let all = ProcessTable.rows(from: sample, resolver: resolver)
-        return ProcessTable.ordered(ProcessTable.filtered(all, query: filter), keeping: displayOrder)
+        return ProcessTable.rows(from: sample, resolver: resolver)
     }
 
     private var header: some View {
@@ -148,7 +252,8 @@ public struct ProcessesPage: View {
             TableColumn("Memory", value: \.memoryBytesKey) { row in
                 heatCell(ProcessRow.formatMemory(row.memoryBytes),
                          heat: ProcessTable.heatFraction(row.memoryBytes.map(Double.init),
-                                                         maximum: memoryMaximum))
+                                                         maximum: memoryMaximum),
+                         tint: Vitals.Palette.memory)
             }
             .customizationID("memory")
 
@@ -189,7 +294,7 @@ public struct ProcessesPage: View {
             .customizationID("diskWrite")
             .defaultVisibility(.hidden)
 
-            TableColumn("Architecture", value: \.name) { row in
+            TableColumn("Architecture", value: \.architectureKey) { row in
                 Text(ProcessRow.formatArchitecture(row.architecture))
             }
             .customizationID("architecture")
@@ -200,23 +305,33 @@ public struct ProcessesPage: View {
 
     /// A numeric cell with the heat-map background behind it. An unreadable
     /// value gets no background at all — absence is not a low value.
-    private func heatCell(_ text: String?, heat: Double?) -> some View {
+    ///
+    /// `tint` defaults to CPU's accent so every existing call site (before
+    /// this had a Memory-specific one to pass) keeps its prior colour, but
+    /// each column now passes its own subsystem hue — see `Vitals.Palette` —
+    /// rather than every heat cell on the page reading CPU-blue regardless of
+    /// which column it is in.
+    private func heatCell(_ text: String?, heat: Double?, tint: Color = Vitals.Palette.cpu) -> some View {
         Text(ProcessRow.displayValue(text))
             .monospacedDigit()
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.horizontal, 4)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Vitals.Palette.cpu.opacity((heat ?? 0) * 0.35))
+                    .fill(tint.opacity((heat ?? 0) * 0.35))
             )
     }
 
     /// Freezes a new display order from the current sort, translating SwiftUI's
     /// `KeyPathComparator` into the comparator that keeps unknowns last.
-    private func resort() {
-        guard let sample = store.processes else { return }
-        let all = ProcessTable.rows(from: sample, resolver: resolver)
-        displayOrder = ProcessTable.filtered(all, query: filter)
+    ///
+    /// Takes the already filtered rows rather than rebuilding them from
+    /// `store.processes` — `body` builds `filtered` once per render and every
+    /// caller here (`onAppear`, and the three `onChange`s above) closes over
+    /// that same value, so this never repeats the ~600-row
+    /// `ProcessTable.rows(from:resolver:)` pass `body` already paid for.
+    private func resort(filtered: [ProcessRow]) {
+        displayOrder = filtered
             .sorted(using: processComparator())
             .map(\.pid)
     }
@@ -243,6 +358,7 @@ public struct ProcessesPage: View {
         case \ProcessRow.cpuTimeSecondsKey: .cpuTime
         case \ProcessRow.diskReadBytesKey: .diskRead
         case \ProcessRow.diskWrittenBytesKey: .diskWrite
+        case \ProcessRow.architectureKey: .architecture
         default: nil
         }
     }
