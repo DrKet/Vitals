@@ -40,6 +40,20 @@ struct ProcessRowTests {
         #expect(ProcessRow.formatCPU(4.02) == "402%")
     }
 
+    @Test("an unrepresentable CPU fraction renders as absent instead of trapping")
+    func unrepresentableCPUFractionDoesNotTrap() {
+        // `Int(Double)` traps on a non-finite or out-of-range value. Unreachable
+        // from a live sampler today, but this is the column most likely to
+        // eventually carry a computed float, and a trap-on-bad-input here would
+        // take the whole page down. An unrepresentable value is not a
+        // measurement, so — same as any other absent reading — the honest
+        // rendering is `nil` (the em dash), never a crash and never "0%".
+        #expect(ProcessRow.formatCPU(.nan) == nil)
+        #expect(ProcessRow.formatCPU(.infinity) == nil)
+        #expect(ProcessRow.formatCPU(-.infinity) == nil)
+        #expect(ProcessRow.formatCPU(.greatestFiniteMagnitude) == nil)
+    }
+
     // MARK: CPU time
 
     @Test("CPU time is formatted as hours, minutes and seconds")

@@ -94,6 +94,16 @@ struct ProcessTableTests {
         #expect(ProcessTable.ordered([row(5), row(2)], keeping: []).map(\.pid) == [5, 2])
     }
 
+    @Test("a pid repeated in the established order is placed once, not duplicated")
+    func repeatedPIDInOrderIsPlacedOnce() {
+        // `order` is meant to hold each displayed pid at most once; a repeat
+        // (however it got there) must not hand `Table` two rows sharing one
+        // `Identifiable` id. Without the dedup, this would wrongly yield
+        // [1, 1, 2].
+        let ordered = ProcessTable.ordered([row(1), row(2)], keeping: [1, 1, 2])
+        #expect(ordered.map(\.pid) == [1, 2])
+    }
+
     // MARK: Heat map
 
     @Test("the largest value in a column is fully saturated and the rest are proportional")
@@ -108,6 +118,13 @@ struct ProcessTableTests {
     @Test("an unreadable value gets no shading, because absence is not a low value")
     func unreadableValueHasNoShade() {
         #expect(ProcessTable.heatFraction(nil, maximum: 4.0) == nil)
+
+        // The contrast this test's name claims: a READABLE value at the same
+        // maximum does shade — proportionally, not just "non-nil". Without
+        // this, a `heatFraction` degenerated to `return value` (ignoring
+        // `maximum` entirely) would still pass: its only other probe here is
+        // `nil`, which round-trips through such a stub unnoticed.
+        #expect(abs((ProcessTable.heatFraction(4.0, maximum: 4.0) ?? -1) - 1.0) < 1e-9)
     }
 
     @Test("a column where nothing is readable has no maximum and shades nothing")

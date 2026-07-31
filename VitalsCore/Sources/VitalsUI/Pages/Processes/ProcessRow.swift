@@ -79,7 +79,12 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
     /// not 100%. Clamping to 100 would hide the thing you opened the table for.
     public static func formatCPU(_ fraction: Double?) -> String? {
         guard let fraction else { return nil }
-        return "\(Int((fraction * 100).rounded()))%"
+        let percentage = (fraction * 100).rounded()
+        // `Int(_:)` on a non-finite or out-of-range `Double` traps. A NaN or
+        // overflowing fraction is not a measurement — the honest rendering is
+        // the same em dash absence already gets, not a crash.
+        guard let wholePercentage = Int(exactly: percentage) else { return nil }
+        return "\(wholePercentage)%"
     }
 
     public static func formatMemory(_ bytes: UInt64?) -> String? {

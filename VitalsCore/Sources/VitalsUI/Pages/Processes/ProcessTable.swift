@@ -51,9 +51,12 @@ public enum ProcessTable {
         var placed = Set<pid_t>(minimumCapacity: rows.count)
 
         for pid in order {
-            guard let row = byPID[pid] else { continue }   // exited since the last sort
+            // `byPID[pid] == nil` means the process exited since the last sort;
+            // `placed.insert(pid).inserted == false` means `order` itself
+            // repeats a pid — without this second check, a repeated pid would
+            // hand `Table` two rows sharing one `Identifiable` id.
+            guard let row = byPID[pid], placed.insert(pid).inserted else { continue }
             result.append(row)
-            placed.insert(pid)
         }
         for row in rows where !placed.contains(row.pid) {  // started since the last sort
             result.append(row)

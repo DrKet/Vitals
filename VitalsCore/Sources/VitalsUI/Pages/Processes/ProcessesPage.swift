@@ -78,7 +78,7 @@ public struct ProcessesPage: View {
 
     private let store: MetricsStore
     @State private var resolver = UserNameResolver()
-    @State private var filter = ""
+    @State private var filter: String
 
     /// Bound to the `Table` so headers show and drive their sort indicators.
     /// SwiftUI types this to whatever `TableColumn(_:value:)` produces —
@@ -111,7 +111,22 @@ public struct ProcessesPage: View {
     @State private var establishedDefaultOrder = false
 
     public init(store: MetricsStore) {
+        self.init(store: store, initialFilter: "")
+    }
+
+    /// Seeds the filter at construction rather than leaving it at `""`.
+    ///
+    /// Not `public`: application code has no reason to pre-seed a filter —
+    /// this exists purely so `ProcessesPageTests` can exercise the Filtering
+    /// section (visible rows narrowing, heat rescaling to what remains) at
+    /// the page level. The filter field is private `@State` driven by a
+    /// `TextField`, which the offscreen `NSHostingView` harness this suite
+    /// uses has no way to type into; seeding it here is the one legitimate
+    /// way in short of adding UI automation this project has no other need
+    /// for.
+    init(store: MetricsStore, initialFilter: String) {
         self.store = store
+        self._filter = State(initialValue: initialFilter)
     }
 
     public var body: some View {
@@ -216,9 +231,12 @@ public struct ProcessesPage: View {
     ) -> some View {
         if store.processes == nil {
             message("No process listing available.")
-        } else if rows.isEmpty {
+        } else if rows.isEmpty && !filter.isEmpty {
             // Distinct from having no data: this is a real listing that the
-            // filter excluded everything from.
+            // filter excluded everything from. Keyed on the filter also being
+            // non-empty so a listing that is itself genuinely empty (nothing
+            // to filter away) never renders `No process matches ""` — nonsense
+            // that blames a filter which was never applied.
             message("No process matches \u{201C}\(filter)\u{201D}.")
         } else {
             table(rows: rows, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum)

@@ -45,6 +45,35 @@ struct ProcessesPageTests {
         return store
     }
 
+    /// Six processes for `filteringNarrowsRowsAndRescalesHeat`: three whose
+    /// names never match "helper" (Xcode, Safari, Finder — CPU 100/80/50, the
+    /// top three rows unfiltered) and two that do (Xcodehelper, somehelper —
+    /// CPU 2.5/0.05). The huge gap between the helper processes' CPU and the
+    /// non-matching ones' is deliberate: see the test's own comment for why.
+    private static nonisolated func filteringFixture() -> ProcessSeriesSample {
+        ProcessSeriesSample(
+            processes: [
+                Self.snapshot(1, "launchd", cpuTime: 12),
+                Self.snapshot(42, "Xcode", cpuTime: 900),
+                Self.snapshot(43, "Safari", cpuTime: 900),
+                Self.snapshot(44, "Finder", cpuTime: 900),
+                Self.snapshot(50, "Xcodehelper", cpuTime: 900),
+                Self.snapshot(51, "somehelper", cpuTime: 900),
+            ],
+            cpuUsage: [1: 0.01, 42: 100, 43: 80, 44: 50, 50: 2.5, 51: 0.05]
+        )
+    }
+
+    private func storeWithFilteringFixture() async throws -> MetricsStore {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(AnySampler { Self.filteringFixture() }, for: .processes, cadence: .slow)
+        let store = MetricsStore(engine: engine, profile: nil)
+        let task = Task { await store.stream(.processes) }
+        try await waitUntil { store.processes != nil }
+        task.cancel()
+        return store
+    }
+
     /// Hosts `ProcessesPage(store:)` in a live, real `NSHostingView`/`NSWindow`
     /// — the same technique `RenderHarness.renderPNG` uses internally — but
     /// keeps the hosting view alive and returns it rather than capturing
@@ -286,6 +315,139 @@ struct ProcessesPageTests {
             in: rendered, region: Self.topRowCPUCell, matchingHueOf: [hue(of: Vitals.Palette.cpu)]
         ))
         #expect(try regionHasSaturatedColor(in: rendered, region: Self.thirdRowCPUCell) == false)
+    }
+
+    // MARK: Order holding across live updates
+
+    @Test("""
+        values refresh, order holds: a tick where a different process becomes the heaviest \
+        does not move it to the top row — it stays wherever the established order already put it
+        """)
+    func establishedOrderSurvivesANewHeaviestProcess() async throws {
+        // The mirror image of `defaultOrderWaitsForSampleThatCanDifferentiateByCPU` above:
+        // that test is about the sort actually happening once; this one is about it NOT
+        // happening again after that. `ProcessTable.ordered(_:keeping:)` is already unit
+        // tested for exactly this ("rows keep the established order even when their values
+        // change" in `ProcessTableTests`), but nothing before this test proved the PAGE
+        // actually calls it on every tick rather than, say, re-sorting the live rows by the
+        // current comparator on every render — a change that would make every tick look
+        // perfectly sorted, which is precisely why it could pass unnoticed.
+        //
+        // Tick one is this file's shared fixture: Xcode is heaviest, so the default sort
+        // (established once, per `markDefaultOrderEstablishedIfMeaningful`) puts Xcode in
+        // the top row and kernel_task (unreadable) in the bottom row. Tick two swaps which
+        // process is heaviest — launchd, not Xcode — without touching `sortOrder` or
+        // `filter`, so neither `onChange` that would legitimately re-run `resort()` fires.
+        // Under "order holds," Xcode stays in the top row, now reading barely any heat
+        // (launchd/5.0 dwarfs it), so the top row's CPU cell goes dark. Under a page that
+        // re-sorts every tick, launchd (now heaviest) jumps into the top row instead and it
+        // stays lit — the exact regression this test exists to catch.
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let advanceToTickTwo = SamplerState(false)
+        await engine.register(AnySampler {
+            if advanceToTickTwo.withLock({ $0 }) {
+                return ProcessSeriesSample(
+                    processes: [
+                        Self.snapshot(1, "launchd", cpuTime: 12),
+                        Self.snapshot(42, "Xcode", cpuTime: 900),
+                        Self.snapshot(77, "kernel_task", cpuTime: nil),
+                    ],
+                    cpuUsage: [1: 5.0, 42: 0.01]   // tick two: launchd is now the heaviest
+                )
+            }
+            return Self.processSample()   // tick one: Xcode is the heaviest (see the shared fixture above)
+        }, for: .processes, cadence: .slow)
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let size = CGSize(width: 900, height: 600)
+        let (hosting, window) = hostLive(store: store, size: size)
+        defer { window.orderOut(nil) }
+
+        let task = Task { await store.stream(.processes) }
+        // Confirm tick one's own signature (Xcode's 3.5, not tick two's 0.01) landed before
+        // moving on, so the default order is guaranteed to be established from tick one and
+        // not accidentally skipped straight to tick two.
+        try await waitUntil { store.processes?.cpuUsage[42] == 3.5 }
+        let baseline = try captureLive(hosting, size: size, named: "processes-page-order-holds-tick-one")
+        #expect(try regionHasSaturatedColor(
+            in: baseline, region: Self.topRowCPUCell, matchingHueOf: [hue(of: Vitals.Palette.cpu)]
+        ))
+
+        advanceToTickTwo.withLock { $0 = true }
+        // Tick two's own signature: launchd's 5.0.
+        try await waitUntil { store.processes?.cpuUsage[1] == 5.0 }
+        task.cancel()
+        let rendered = try captureLive(hosting, size: size, named: "processes-page-order-holds-tick-two")
+
+        // Order held: Xcode (0.01 of a new 5.0 ceiling) is still in the top row, so the top
+        // row's CPU cell is no longer the one carrying colour — it must NOT still read as
+        // fully lit. (launchd, now heaviest, lit up the MIDDLE row instead — the row the
+        // first ordering already gave it — which this file has no dedicated probe for, since
+        // every existing fixture only ever needed row 0 and row 2.)
+        #expect(try regionHasSaturatedColor(
+            in: rendered, region: Self.topRowCPUCell, matchingHueOf: [hue(of: Vitals.Palette.cpu)]
+        ) == false)
+    }
+
+    // MARK: Filtering
+
+    @Test("""
+        narrowing the filter changes which processes are visible AND rescales the heat map to \
+        what remains — the largest of the reduced set fully saturates even though it was far \
+        from the ceiling set by processes the filter now hides
+        """)
+    func filteringNarrowsRowsAndRescalesHeat() async throws {
+        // Exercises the Filtering section and Decision 3's "filtering rescales the shading" at
+        // the page level. The filter is private `@State` driven by a `TextField`, which this
+        // file's offscreen-`NSHostingView` harness cannot type into — there is no keyboard
+        // event path from `hostLive`/`captureLive` into a live `TextField`'s focus and input
+        // handling. `ProcessesPage(store:initialFilter:)` (an internal, test-only initialiser
+        // added alongside this test) seeds the filter at construction instead, which drives
+        // the exact same `body` computation (`ProcessTable.filtered` then `ProcessTable.
+        // maximum`) a typed filter would.
+        //
+        // Six processes, ranked by CPU descending: Xcode (100, excluded by the filter) tops
+        // the unfiltered table; Safari (80, excluded) is second; Finder (50, excluded) is
+        // third — landing exactly in `thirdRowCPUCell`, with a heat of 50/100 = 0.5, well
+        // above anything this file has previously treated as "too faint to register." Only
+        // Xcodehelper (2.5) and somehelper (0.05) match "helper". The gap between 2.5 and
+        // Xcode's 100 is deliberately enormous: if the maximum were ever computed over the
+        // unfiltered listing instead of what's actually shown, Xcodehelper's rescaled-wrong
+        // heat (2.5/100 = 0.025) would be just as unmistakably dark as the correct one
+        // (2.5/2.5 = 1.0) is unmistakably lit — no fragile near-threshold judgement call
+        // either way.
+        let unfilteredStore = try await storeWithFilteringFixture()
+        let filteredStore = try await storeWithFilteringFixture()
+
+        let size = CGSize(width: 900, height: 600)
+        let baseline = try renderPNG(
+            ProcessesPage(store: unfilteredStore),
+            size: size, named: "processes-page-filter-baseline"
+        )
+        let filtered = try renderPNG(
+            ProcessesPage(store: filteredStore, initialFilter: "helper"),
+            size: size, named: "processes-page-filter-applied"
+        )
+
+        // Baseline, unfiltered: Xcode saturates the top row; Finder — ranked third, and about
+        // to be hidden by the filter below — still saturates the third row.
+        #expect(try regionHasSaturatedColor(
+            in: baseline, region: Self.topRowCPUCell, matchingHueOf: [hue(of: Vitals.Palette.cpu)]
+        ))
+        #expect(try regionHasSaturatedColor(
+            in: baseline, region: Self.thirdRowCPUCell, matchingHueOf: [hue(of: Vitals.Palette.cpu)]
+        ))
+
+        // Filtered to "helper": only Xcodehelper and somehelper remain, so there is no third
+        // row at all any more — the visible row set changed, and Finder's old spot is empty.
+        #expect(try regionHasSaturatedColor(in: filtered, region: Self.thirdRowCPUCell) == false)
+
+        // The shading rescaled to the two rows actually shown: Xcodehelper (2.5) is now the
+        // largest of what remains, so it fully saturates the top row — a value that was
+        // nowhere near the old, now-hidden ceiling of 100.
+        #expect(try regionHasSaturatedColor(
+            in: filtered, region: Self.topRowCPUCell, matchingHueOf: [hue(of: Vitals.Palette.cpu)]
+        ))
     }
 
     // MARK: Header key path -> sort field mapping
