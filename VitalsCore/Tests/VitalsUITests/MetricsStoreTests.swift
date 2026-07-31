@@ -488,9 +488,19 @@ final class ValueBox: @unchecked Sendable {
 
 /// Polls a main-actor condition with a bounded timeout, so a regression fails
 /// rather than hanging.
+///
+/// The deadline is deliberately generous. This is a soft wait for an async
+/// condition, not a performance assertion: the loop returns the instant the
+/// condition holds, so a longer deadline costs nothing on a passing run and
+/// only extends a genuine failure. At the previous two seconds, tests across
+/// unrelated suites timed out whenever the machine was busy — the whole suite
+/// runs its main-actor polls and its off-screen `NSWindow` renders in parallel,
+/// and they contend both with each other and with whatever else is running,
+/// including WindowServer. Those failures said nothing about the code under
+/// test; they said the box was loaded.
 @MainActor
 func waitUntil(
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(10),
     _ condition: () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now + timeout
@@ -501,9 +511,11 @@ func waitUntil(
     Issue.record("Condition not met within \(timeout)")
 }
 
+/// The async-condition twin of `waitUntil`, with the same generous deadline and
+/// for the same reason.
 @MainActor
 func waitUntilAsync(
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(10),
     _ condition: () async -> Bool
 ) async throws {
     let deadline = ContinuousClock.now + timeout
