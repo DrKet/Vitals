@@ -74,20 +74,24 @@ swift test
 | Page | State |
 |---|---|
 | Overview | Live tiles for all five subsystems |
+| Processes | Sortable live table — CPU, memory, threads, user, PID, with heat shading |
 | CPU | Per-cluster load, core grid, topology, cache, uptime |
 | Memory | Wired / App / Compressed / Cached breakdown, swap, pressure |
 | GPU | Renderer / Tiler utilisation, memory topology |
 | Storage | Read / write throughput, volume capacity, device name |
 | Network | Down / up throughput, active interfaces |
 
-Every page has a live chart with a scrubbing crosshair that reads values back
-with their age, and a sticky *Full specifications* section.
+Every hardware page has a live chart with a scrubbing crosshair that reads values
+back with their age, and a sticky *Full specifications* section.
 
-**Not built yet:** the Processes table, the Sensors page (temperatures, fans and
-power need a private framework and an empirical spike), desktop widgets, the
-menu-bar extra, a privileged helper for per-process GPU and SMART health, and the
-Startup / Services / Users / History pages. Those sidebar entries are visible but
-show a placeholder.
+**Not built yet:** the Sensors page (temperatures, fans and power need a private
+framework and an empirical spike), desktop widgets, the menu-bar extra, a
+privileged helper for per-process GPU and SMART health, and the Startup /
+Services / Users / History pages. Those sidebar entries are visible but show a
+placeholder.
+
+The Processes table is read-only for now — no context menu, no process tree, no
+inspector.
 
 ## The rule the whole thing is built around
 
@@ -141,7 +145,8 @@ Two that will bite you immediately:
 
 ## Status
 
-Early. The foundation and the five hardware pages are complete and tested, but
-this is not a finished app — there's no menu-bar extra or desktop widgets yet,
-and several sidebar entries are placeholders. Bug reports and observations
-from actually running it are the most useful thing right now.
+Early. The foundation, the five hardware pages and the Processes table are
+complete and tested, but this is not a finished app — there's no menu-bar extra
+or desktop widgets yet, and several sidebar entries are placeholders. Bug
+reports and observations from actually running it are the most useful thing
+right now, particularly anything that looks like a fabricated number.
