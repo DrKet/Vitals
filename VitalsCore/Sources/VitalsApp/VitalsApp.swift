@@ -4,21 +4,14 @@ import SwiftUI
 import SystemMetrics
 import VitalsUI
 
-/// Promotes the process to a normal windowed app.
+/// Quits when the window closes — this is a single-window utility, and a
+/// lingering invisible process is a real failure mode this project has hit.
 ///
-/// A SwiftPM executable has no bundle and no `Info.plist`, so AppKit launches it
-/// as a background-only process: `WindowGroup` builds its scene but no window is
-/// ever ordered on screen, and the app is invisible while appearing to run
-/// perfectly. Setting the policy explicitly is what a bundle's `Info.plist`
-/// would otherwise do. Remove this when the app gains a real bundle in M2.
+/// The activation policy that used to live here is now the bundle's job:
+/// `Info.plist` makes this a normal windowed app, which is what a SwiftPM
+/// executable could not do on its own. `scripts/verify-app.sh` launches the
+/// built bundle and asserts a window appears, which is what proves that.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    /// Quit when the window closes — this is a single-window utility, and a
-    /// lingering invisible process is exactly the failure mode above.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
