@@ -67,7 +67,19 @@ The icon is committed rather than generated at build time: it changes almost nev
 
 - [ ] **Step 1: Write the renderer**
 
-Create `scripts/make-icon.swift`:
+Create `scripts/make-icon.swift`.
+
+> **This listing has a known bug — do not paste it verbatim.** It uses
+> `NSImage.lockFocus()`, which rasterises at the *screen's* backing scale
+> factor: on any Retina Mac the "1024×1024" PNG comes out 2048×2048. The packer
+> then copies that file straight into the `icon_512x512@2x` slot, `iconutil`
+> rejects it for being the wrong pixel size, and you get a **9-entry `.icns`**
+> — precisely the silent truncation Step 3 exists to catch.
+>
+> Render into an explicitly-sized `NSBitmapImageRep` with an
+> `NSGraphicsContext` instead, which is independent of screen scale. The
+> geometry and colours below are correct; only the rasterisation plumbing
+> changes. The committed `scripts/make-icon.swift` has the corrected version.
 
 ```swift
 // Renders the Vitals app icon to a 1024x1024 PNG.
