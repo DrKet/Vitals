@@ -64,4 +64,32 @@ extension ChartGeometry {
             )
         }
     }
+
+    /// A single band summing every rate function together — built on top of
+    /// `throughputBands` rather than a second copy of its tick-filtering, so
+    /// a tile's "one line" total can never drift from the stacked bands it
+    /// summarizes. The per-entry sum (all `rates` applied to one device/
+    /// interface's reading, e.g. its read *and* write) is computed first, then
+    /// summed across whatever entries survive a tick's exclusion — the same
+    /// order of operations `throughputBands` itself uses, just with the
+    /// caller's several rate functions folded into one before it ever sees
+    /// them. That means this inherits `throughputBands`' per-tick exclusion
+    /// and empty-tick-drop exactly: a tick with nothing left to sum after
+    /// exclusion is omitted here too, never summed to a fabricated zero.
+    ///
+    /// Returns zero or one series: empty exactly when `throughputBands`
+    /// itself would yield nothing for a single band (empty history, or a
+    /// history whose every tick has nothing left after exclusion).
+    public static func throughputTotal<Value>(
+        history: [Timestamped<[String: Value]>],
+        excluding: Set<String> = [],
+        name: String,
+        rates: [(Value) -> Double]
+    ) -> [ChartSeries] {
+        throughputBands(
+            history: history,
+            excluding: excluding,
+            bands: [(name: name, rate: { value in rates.reduce(0) { $0 + $1(value) } })]
+        )
+    }
 }

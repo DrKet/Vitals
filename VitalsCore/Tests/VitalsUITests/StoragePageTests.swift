@@ -150,6 +150,55 @@ struct StoragePageTests {
         #expect(abs(read[2] - 4.0) < 1e-9)
     }
 
+    // MARK: totalThroughputSeries (Overview tile)
+
+    @Test("the tile's total series sums Read and Write into a single line, matching the two stacked bands' own sum")
+    func totalSeriesSumsReadAndWrite() {
+        let history = Self.stamped([
+            ["disk0": DiskThroughput(bytesReadPerSecond: 2_097_152, bytesWrittenPerSecond: 1_048_576)]
+        ])
+        let bands = StoragePage.throughputSeries(history: history)
+        let total = StoragePage.totalThroughputSeries(history: history)
+
+        #expect(total.count == 1)
+        #expect(abs(total[0].values[0] - (bands[0].values[0] + bands[1].values[0])) < 1e-9)
+    }
+
+    @Test("the total series is still summed across every device")
+    func totalSeriesSumsAcrossDevices() {
+        let history = Self.stamped([[
+            "disk0": DiskThroughput(bytesReadPerSecond: 1_048_576, bytesWrittenPerSecond: 0),
+            "disk4": DiskThroughput(bytesReadPerSecond: 0, bytesWrittenPerSecond: 1_048_576),
+        ]])
+        #expect(abs(StoragePage.totalThroughputSeries(history: history)[0].values[0] - 2.0) < 1e-9)
+    }
+
+    @Test("a tick with no devices at all is dropped from the total, never summed to a fabricated zero")
+    func totalSeriesDropsEmptyTick() {
+        let history = Self.stamped([
+            [:],
+            ["disk0": DiskThroughput(bytesReadPerSecond: 1_048_576, bytesWrittenPerSecond: 0)],
+        ])
+        let total = StoragePage.totalThroughputSeries(history: history)
+        #expect(total[0].values.count == 1)
+        #expect(abs(total[0].values[0] - 1.0) < 1e-9)
+        #expect(total[0].timestamps == [1001])
+    }
+
+    @Test("the total series carries timestamps too")
+    func totalSeriesCarriesTimestamps() {
+        let history = Self.stamped([
+            ["disk0": DiskThroughput(bytesReadPerSecond: 0, bytesWrittenPerSecond: 0)],
+            ["disk0": DiskThroughput(bytesReadPerSecond: 0, bytesWrittenPerSecond: 0)],
+        ])
+        #expect(StoragePage.totalThroughputSeries(history: history)[0].timestamps == [1000, 1001])
+    }
+
+    @Test("empty history yields no total series")
+    func totalSeriesEmptyHistoryYieldsNoSeries() {
+        #expect(StoragePage.totalThroughputSeries(history: []).isEmpty)
+    }
+
     @Test("renders a volume bar")
     func rendersVolumeBar() throws {
         let bar = VolumeBar(

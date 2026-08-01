@@ -103,4 +103,55 @@ struct ThroughputBandsTests {
         )
         #expect(bands.isEmpty)
     }
+
+    // MARK: throughputTotal
+
+    @Test("throughputTotal sums across both keys and rate functions into a single named band")
+    func throughputTotalSumsAcrossKeysAndRates() {
+        let history = Self.stamped([
+            ["dev": 2_097_152],
+        ])
+        let total = ChartGeometry.throughputTotal(
+            history: history,
+            name: "Total",
+            rates: [{ $0 }, { $0 / 2 }]
+        )
+        #expect(total.map(\.name) == ["Total"])
+        // dev's own rate1 (2 MB/s) + rate2 (1 MB/s) = 3 MB/s.
+        #expect(abs(total[0].values[0] - 3.0) < 1e-9)
+    }
+
+    @Test("throughputTotal drops a tick whose only entries were excluded, exactly as throughputBands does")
+    func throughputTotalDropsAllExcludedTick() {
+        let history = Self.stamped([
+            ["lo0": 9_000_000],
+            ["dev": 1_048_576],
+        ])
+        let total = ChartGeometry.throughputTotal(
+            history: history,
+            excluding: ["lo0"],
+            name: "Total",
+            rates: [{ $0 }]
+        )
+        #expect(total[0].values.count == 1)
+        #expect(abs(total[0].values[0] - 1.0) < 1e-9)
+        #expect(total[0].timestamps == [501])
+    }
+
+    @Test("throughputTotal on a history whose only tick has nothing left after exclusion yields no series at all")
+    func throughputTotalAllExcludedOnlyHistoryYieldsNoSeries() {
+        let history = Self.stamped([["lo0": 9_000_000]])
+        let total = ChartGeometry.throughputTotal(history: history, excluding: ["lo0"], name: "Total", rates: [{ $0 }])
+        #expect(total.isEmpty)
+    }
+
+    @Test("throughputTotal on an empty history yields no series")
+    func throughputTotalEmptyHistoryYieldsNoSeries() {
+        let total = ChartGeometry.throughputTotal(
+            history: [Timestamped<[String: Double]>](),
+            name: "Total",
+            rates: [{ $0 }]
+        )
+        #expect(total.isEmpty)
+    }
 }

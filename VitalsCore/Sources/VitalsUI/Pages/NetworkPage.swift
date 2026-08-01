@@ -40,6 +40,26 @@ public struct NetworkPage: View {
         )
     }
 
+    /// Overview's Network tile chart: down+up summed per tick into a single
+    /// line, in MB/s, loopback excluded — the tile's own headline number
+    /// (`totalThroughputMBs`/`primaryValue`), never the two stacked bands
+    /// above. Built on `ChartGeometry.throughputTotal`, which itself sits on
+    /// top of `throughputBands` — the exact tick-filtering `throughputSeries`
+    /// above uses, not a second copy of it — so an interface excluded/absent
+    /// this tick contributes nothing, and a tick with nothing real left after
+    /// that (e.g. lo0-only) is dropped rather than summed to a fabricated
+    /// zero.
+    public static func totalThroughputSeries(
+        history: [Timestamped<[String: NetworkThroughput]>]
+    ) -> [ChartSeries] {
+        ChartGeometry.throughputTotal(
+            history: history,
+            excluding: excludedInterfaces,
+            name: "Network",
+            rates: [{ $0.bytesInPerSecond }, { $0.bytesOutPerSecond }]
+        )
+    }
+
     /// Interfaces currently carrying traffic, loopback excluded. An idle
     /// interface is omitted rather than listed at zero — a Mac has many.
     public static func activeInterfaces(_ throughput: [String: NetworkThroughput]) -> [String] {

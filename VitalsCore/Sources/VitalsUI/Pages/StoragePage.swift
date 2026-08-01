@@ -37,6 +37,24 @@ public struct StoragePage: View {
         )
     }
 
+    /// Overview's Storage tile chart: read+write summed per tick into a
+    /// single line, in MB/s — the tile's own headline number
+    /// (`totalThroughputMBs`/`primaryValue`), never the two stacked bands
+    /// above. Built on `ChartGeometry.throughputTotal`, which itself sits on
+    /// top of `throughputBands` — the exact tick-filtering `throughputSeries`
+    /// above uses, not a second copy of it — so a device excluded/absent this
+    /// tick contributes nothing, and a tick with nothing left after that is
+    /// dropped rather than summed to a fabricated zero.
+    public static func totalThroughputSeries(
+        history: [Timestamped<[String: DiskThroughput]>]
+    ) -> [ChartSeries] {
+        ChartGeometry.throughputTotal(
+            history: history,
+            name: "Storage",
+            rates: [{ $0.bytesReadPerSecond }, { $0.bytesWrittenPerSecond }]
+        )
+    }
+
     /// Summed read+write across every device, in MB/s — or `nil` when nothing
     /// has been sampled yet. Internal so Overview's Storage tile (and
     /// `StoragePageTests`) call the same total the page's primary value uses,

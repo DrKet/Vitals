@@ -115,9 +115,31 @@ public struct OverviewPage: View {
             .deviceUtilisation.map { "\(Int(($0 * 100).rounded()))%" }
     }
 
-    private var gpuSeries: [ChartSeries] {
+    /// Overview's GPU tile chart: whole-device utilisation, never
+    /// Renderer+Tiler summed — see `GPUPage.deviceUtilisationSeries`'s doc
+    /// comment for why that sum would be a fabricated quantity. Gated by the
+    /// same multi-GPU attribution rule as the tile's value and as `GPUPage`'s
+    /// own chart.
+    ///
+    /// Internal so `OverviewPageTests` can prove the tile is wired to
+    /// `deviceUtilisationSeries` and not `engineSeries` — a regression a
+    /// pixel probe over the tile's tiny chart could not reliably catch,
+    /// since both would paint *some* line.
+    static func gpuTileSeries(
+        history: [Timestamped<[GPUSample]>],
+        gpuCount: Int,
+        sampleCount: Int
+    ) -> [ChartSeries] {
         GPUPage.attributableSeries(
-            GPUPage.engineSeries(history: store.gpuHistory),
+            GPUPage.deviceUtilisationSeries(history: history),
+            gpuCount: gpuCount,
+            sampleCount: sampleCount
+        )
+    }
+
+    private var gpuSeries: [ChartSeries] {
+        Self.gpuTileSeries(
+            history: store.gpuHistory,
             gpuCount: store.profile?.gpus.count ?? 0,
             sampleCount: store.gpu?.count ?? 0
         )
@@ -125,8 +147,16 @@ public struct OverviewPage: View {
 
     // MARK: Storage
 
+    /// Overview's Storage tile chart: the same read+write total as the
+    /// tile's own headline (`StoragePage.primaryValue`), never the page's two
+    /// stacked bands. Internal so `OverviewPageTests` can prove the tile
+    /// routes through `totalThroughputSeries`, not `throughputSeries`.
+    static func storageTileSeries(history: [Timestamped<[String: DiskThroughput]>]) -> [ChartSeries] {
+        StoragePage.totalThroughputSeries(history: history)
+    }
+
     private var storageSeries: [ChartSeries] {
-        StoragePage.throughputSeries(history: store.diskIOHistory)
+        Self.storageTileSeries(history: store.diskIOHistory)
     }
 
     // MARK: Network
@@ -141,7 +171,15 @@ public struct OverviewPage: View {
         NetworkPage.primaryValue(network)
     }
 
+    /// Overview's Network tile chart: the same down+up total as the tile's
+    /// own headline (`NetworkPage.primaryValue`), never the page's two
+    /// stacked bands. Internal so `OverviewPageTests` can prove the tile
+    /// routes through `totalThroughputSeries`, not `throughputSeries`.
+    static func networkTileSeries(history: [Timestamped<[String: NetworkThroughput]>]) -> [ChartSeries] {
+        NetworkPage.totalThroughputSeries(history: history)
+    }
+
     private var networkSeries: [ChartSeries] {
-        NetworkPage.throughputSeries(history: store.networkHistory)
+        Self.networkTileSeries(history: store.networkHistory)
     }
 }

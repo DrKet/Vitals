@@ -14,6 +14,22 @@ public struct GPUPage: View {
 
     // MARK: Pure helpers, tested directly
 
+    /// A band is emitted only if every tick in `history` has a reading — a
+    /// partially-present band would imply measurements the driver never
+    /// actually took for the ticks it's missing. Shared by `engineSeries`
+    /// (Renderer/Tiler) and `deviceUtilisationSeries` (the Overview tile's
+    /// single line) rather than each keeping its own copy of this rule.
+    private static func allOrNothingBand(
+        name: String,
+        history: [Timestamped<[GPUSample]>],
+        timestamps: [TimeInterval],
+        value: (GPUSample) -> Double?
+    ) -> ChartSeries? {
+        let values = history.compactMap { entry in entry.sample.first.flatMap(value) }
+        guard values.count == history.count else { return nil }
+        return ChartSeries(name: name, values: values, timestamps: timestamps)
+    }
+
     /// Renderer and tiler utilisation, per spec §6.3.
     ///
     /// Both fields are optional because which keys a driver publishes varies.
@@ -23,15 +39,26 @@ public struct GPUPage: View {
         guard !history.isEmpty else { return [] }
         let timestamps = history.map(\.timestamp)
 
-        func band(_ name: String, _ value: @escaping (GPUSample) -> Double?) -> ChartSeries? {
-            let values = history.compactMap { entry in entry.sample.first.flatMap(value) }
-            guard values.count == history.count else { return nil }
-            return ChartSeries(name: name, values: values, timestamps: timestamps)
-        }
+        return [
+            allOrNothingBand(name: "Renderer", history: history, timestamps: timestamps) { $0.rendererUtilisation },
+            allOrNothingBand(name: "Tiler", history: history, timestamps: timestamps) { $0.tilerUtilisation },
+        ].compactMap { $0 }
+    }
+
+    /// Overview's GPU tile chart: whole-device utilisation as a single line —
+    /// never Renderer+Tiler summed. Those are concurrent engines, not
+    /// additive components of a whole; summing them would draw a quantity
+    /// the machine never reported, which is exactly what this project's
+    /// never-fabricate rule forbids. The tile's own headline
+    /// (`OverviewPage.gpuTileValue`) already reads `deviceUtilisation`, so
+    /// this is that same number's history — follows the identical
+    /// all-or-nothing rule as `engineSeries`, via the same shared helper.
+    public static func deviceUtilisationSeries(history: [Timestamped<[GPUSample]>]) -> [ChartSeries] {
+        guard !history.isEmpty else { return [] }
+        let timestamps = history.map(\.timestamp)
 
         return [
-            band("Renderer") { $0.rendererUtilisation },
-            band("Tiler") { $0.tilerUtilisation },
+            allOrNothingBand(name: "GPU", history: history, timestamps: timestamps) { $0.deviceUtilisation }
         ].compactMap { $0 }
     }
 

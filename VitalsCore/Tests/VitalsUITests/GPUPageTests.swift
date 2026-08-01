@@ -12,9 +12,9 @@ struct GPUPageTests {
         samples.enumerated().map { Timestamped(timestamp: 1000 + TimeInterval($0.offset), sample: $0.element) }
     }
 
-    private static func sample(renderer: Double?, tiler: Double?) -> GPUSample {
+    private static func sample(device: Double? = 0.5, renderer: Double?, tiler: Double?) -> GPUSample {
         GPUSample(
-            deviceUtilisation: 0.5, rendererUtilisation: renderer,
+            deviceUtilisation: device, rendererUtilisation: renderer,
             tilerUtilisation: tiler, inUseMemoryBytes: nil, allocatedMemoryBytes: nil
         )
     }
@@ -81,6 +81,51 @@ struct GPUPageTests {
     @Test("empty history yields no bands")
     func emptyHistoryYieldsNoBands() {
         #expect(GPUPage.engineSeries(history: []).isEmpty)
+    }
+
+    // MARK: deviceUtilisationSeries (Overview tile)
+
+    @Test("the device utilisation series is deviceUtilisation itself, never Renderer+Tiler summed")
+    func deviceUtilisationSeriesIsNotEngineSum() {
+        // Renderer 0.3 + Tiler 0.2 = 0.5, deliberately different from
+        // deviceUtilisation's 0.72 here: a naive port of `engineSeries` that
+        // summed the two engines would land on 0.5, not 0.72, so this catches
+        // that fabrication directly rather than by coincidence.
+        let history = Self.stamped([[Self.sample(device: 0.72, renderer: 0.3, tiler: 0.2)]])
+        let series = GPUPage.deviceUtilisationSeries(history: history)
+
+        #expect(series.map(\.name) == ["GPU"])
+        #expect(abs(series[0].values[0] - 0.72) < 1e-9)
+    }
+
+    @Test("a tick missing device utilisation withholds the whole series, not a short one")
+    func deviceUtilisationSeriesIsAllOrNothing() {
+        let history = Self.stamped([
+            [Self.sample(device: 0.5, renderer: 0.3, tiler: 0.2)],
+            [Self.sample(device: nil, renderer: 0.4, tiler: 0.1)],
+            [Self.sample(device: 0.6, renderer: 0.5, tiler: 0.3)],
+        ])
+        #expect(GPUPage.deviceUtilisationSeries(history: history).isEmpty)
+    }
+
+    @Test("a driver reporting no device utilisation at all yields no series")
+    func deviceUtilisationSeriesEmptyWhenNeverReported() {
+        let history = Self.stamped([[Self.sample(device: nil, renderer: 0.3, tiler: 0.1)]])
+        #expect(GPUPage.deviceUtilisationSeries(history: history).isEmpty)
+    }
+
+    @Test("the device utilisation series carries timestamps so gaps still break")
+    func deviceUtilisationSeriesCarriesTimestamps() {
+        let history = Self.stamped([
+            [Self.sample(device: 0.5, renderer: 0.3, tiler: 0.2)],
+            [Self.sample(device: 0.6, renderer: 0.4, tiler: 0.1)],
+        ])
+        #expect(GPUPage.deviceUtilisationSeries(history: history)[0].timestamps == [1000, 1001])
+    }
+
+    @Test("empty history yields no device utilisation series")
+    func deviceUtilisationSeriesEmptyHistoryYieldsNoSeries() {
+        #expect(GPUPage.deviceUtilisationSeries(history: []).isEmpty)
     }
 
     @Test("a single GPU is attributed, matching today's one-GPU-Mac behaviour")

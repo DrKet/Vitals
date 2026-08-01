@@ -198,6 +198,50 @@ struct NetworkPageTests {
         #expect(NetworkPage.activeInterfaceCountDisplay(active) == "1")
     }
 
+    // MARK: totalThroughputSeries (Overview tile)
+
+    @Test("the tile's total series sums Down and Up into a single line, matching the two stacked bands' own sum")
+    func totalSeriesSumsDownAndUp() {
+        let history = Self.stamped([
+            ["en0": NetworkThroughput(bytesInPerSecond: 2_097_152, bytesOutPerSecond: 1_048_576)]
+        ])
+        let bands = NetworkPage.throughputSeries(history: history)
+        let total = NetworkPage.totalThroughputSeries(history: history)
+
+        #expect(total.count == 1)
+        #expect(abs(total[0].values[0] - (bands[0].values[0] + bands[1].values[0])) < 1e-9)
+    }
+
+    @Test("loopback is excluded from the total too, not just the bands")
+    func totalSeriesExcludesLoopback() {
+        let sample = [
+            "lo0": NetworkThroughput(bytesInPerSecond: 9_000_000, bytesOutPerSecond: 9_000_000),
+            "en0": NetworkThroughput(bytesInPerSecond: 1_048_576, bytesOutPerSecond: 0),
+        ]
+        let total = NetworkPage.totalThroughputSeries(history: Self.stamped([sample]))
+        #expect(abs(total[0].values[0] - 1.0) < 1e-9)
+    }
+
+    @Test("an lo0-only tick yields no total series at all, matching the bands' own empty-tick drop")
+    func totalSeriesDropsLoopbackOnlyTick() {
+        let lo0Only = ["lo0": NetworkThroughput(bytesInPerSecond: 9_000_000, bytesOutPerSecond: 9_000_000)]
+        #expect(NetworkPage.totalThroughputSeries(history: Self.stamped([lo0Only])).isEmpty)
+    }
+
+    @Test("the total series carries timestamps too")
+    func totalSeriesCarriesTimestamps() {
+        let history = Self.stamped([
+            ["en0": NetworkThroughput(bytesInPerSecond: 0, bytesOutPerSecond: 0)],
+            ["en0": NetworkThroughput(bytesInPerSecond: 0, bytesOutPerSecond: 0)],
+        ])
+        #expect(NetworkPage.totalThroughputSeries(history: history)[0].timestamps == [1000, 1001])
+    }
+
+    @Test("empty history yields no total series")
+    func totalSeriesEmptyHistoryYieldsNoSeries() {
+        #expect(NetworkPage.totalThroughputSeries(history: []).isEmpty)
+    }
+
     /// The whole point of this test: nothing before it ever constructed a
     /// `NetworkPage` from a `MetricsStore` and rendered it — every prior test
     /// in this file covers only the static, pure `throughputSeries` and
