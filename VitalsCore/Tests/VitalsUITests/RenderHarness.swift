@@ -392,3 +392,57 @@ func saturatedRowExtent(
     guard let top, let bottom else { return nil }
     return (CGFloat(top) / image.scale)...(CGFloat(bottom) / image.scale)
 }
+
+/// The horizontal extent, in points, of saturated (non-grayscale) pixels
+/// inside `region` — `nil` when the region is entirely neutral.
+///
+/// The horizontal twin of `saturatedRowExtent` above, for tests that need to
+/// know *where along x* something painted rather than how tall it is —
+/// e.g. checking that a readout box landed at the x-position its anchor
+/// implies, not merely that it painted somewhere inside a chart. A test that
+/// only asks "is there saturated colour in this rectangle" cannot
+/// distinguish a box placed correctly from one placed at the wrong x inside
+/// the same rectangle, or from one that ignored its anchor entirely and
+/// landed at a fixed corner that happens to fall inside the probed region.
+/// This answers the stronger question by reporting the actual left and right
+/// edges of what was drawn, so a caller can compare them against an
+/// independently computed expected position.
+///
+/// Returned in points, not pixels, by dividing through `image.scale` — the
+/// same scale the bitmap itself reported, so a 1x and a 2x render give the
+/// same answer.
+@MainActor
+func saturatedColumnExtent(
+    in image: RenderedImage,
+    region: CGRect,
+    minimumSpread: CGFloat = 16.0 / 255.0
+) throws -> ClosedRange<CGFloat>? {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return nil }
+
+    var left: Int?
+    var right: Int?
+    for x in minX..<maxX {
+        for y in minY..<maxY {
+            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
+            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
+            if max(r, g, b) - min(r, g, b) > minimumSpread {
+                if left == nil { left = x }
+                right = x
+                break
+            }
+        }
+    }
+
+    guard let left, let right else { return nil }
+    return (CGFloat(left) / image.scale)...(CGFloat(right) / image.scale)
+}
