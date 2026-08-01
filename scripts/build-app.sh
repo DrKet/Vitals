@@ -58,3 +58,6 @@ echo "==> Signing (ad-hoc — see README on Gatekeeper)"
 codesign --force --sign - --timestamp=none "$APP"
 
 echo "==> Built $APP  version $VERSION  build $BUILD_NUMBER"
+
+echo
+"$ROOT/scripts/verify-app.sh" "$APP"
