@@ -5,6 +5,30 @@ per-subsystem detail pages. Native SwiftUI, no third-party dependencies.
 
 ![The Vitals overview, showing live CPU, memory, GPU, storage and network tiles](docs/images/overview.png)
 
+## Download
+
+Grab the latest `Vitals-<version>.zip` from
+[Releases](https://github.com/DrKet/Vitals/releases), unzip, and move
+`Vitals.app` to your Applications folder.
+
+**macOS 26 or later is required.** On anything older the app will not launch.
+
+### The first time you open it
+
+Vitals is signed ad-hoc, not with a paid Apple Developer certificate, so
+macOS will say:
+
+> "Apple could not verify Vitals is free of malware."
+
+That is Gatekeeper telling you the truth: this app has not been notarized by
+Apple. To open it anyway, either:
+
+- **right-click** `Vitals.app` → **Open** → **Open**, once; or
+- run `xattr -dr com.apple.quarantine /Applications/Vitals.app`
+
+You only need to do this once. If you would rather not, build from source
+instead — the instructions below produce the same app.
+
 ## Requirements
 
 - **macOS 26.0 or later.** This is a hard floor set in `Package.swift`, not a
@@ -18,24 +42,30 @@ per-subsystem detail pages. Native SwiftUI, no third-party dependencies.
 
 ## Running it
 
-There is **no `.app` bundle yet** — a real bundle, a menu-bar extra and desktop
-widgets are the next milestone. For now:
+The easiest way is the [Download](#download) section above. To build from
+source instead:
 
 ```bash
 git clone https://github.com/DrKet/Vitals.git
-cd Vitals/VitalsCore
-swift run VitalsApp
+cd Vitals
+./scripts/build-app.sh
+open build/Vitals.app
 ```
 
-First build takes a minute or two. To see the raw sampler output without any UI:
+First build takes a minute or two. This produces the same ad-hoc-signed
+bundle as a Release download, so the Gatekeeper warning above still applies.
+
+To see the raw sampler output without any UI:
 
 ```bash
+cd VitalsCore
 swift run vitals-dump
 ```
 
 And to run the tests:
 
 ```bash
+cd VitalsCore
 swift test
 ```
 
@@ -112,6 +142,6 @@ Two that will bite you immediately:
 ## Status
 
 Early. The foundation and the five hardware pages are complete and tested, but
-this is not a finished app — there's no bundle to install, and several sidebar
-entries are placeholders. Bug reports and observations from actually running it
-are the most useful thing right now.
+this is not a finished app — there's no menu-bar extra or desktop widgets yet,
+and several sidebar entries are placeholders. Bug reports and observations
+from actually running it are the most useful thing right now.

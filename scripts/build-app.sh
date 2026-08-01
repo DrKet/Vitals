@@ -61,3 +61,9 @@ echo "==> Built $APP  version $VERSION  build $BUILD_NUMBER"
 
 echo
 "$ROOT/scripts/verify-app.sh" "$APP"
+
+ZIP="$OUT/Vitals-$VERSION.zip"
+rm -f "$ZIP"
+# ditto, not zip: a plain zip mangles a bundle's symlinks and resource forks.
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+echo "==> Packaged $ZIP"
