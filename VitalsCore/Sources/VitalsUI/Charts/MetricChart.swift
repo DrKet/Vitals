@@ -24,15 +24,6 @@ public enum ChartStyle: Sendable, Equatable {
     }
 }
 
-/// Measures the readout box so its placement can be clamped to the chart's
-/// actual bounds instead of an assumed width.
-private struct ReadoutSizeKey: PreferenceKey {
-    static let defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        value = nextValue()
-    }
-}
-
 /// The one chart in Vitals. Two render modes over one geometry.
 public struct MetricChart: View {
     private let series: [ChartSeries]
@@ -53,7 +44,6 @@ public struct MetricChart: View {
     }
 
     @State private var hoverX: CGFloat?
-    @State private var readoutSize: CGSize = .zero
 
     /// The stroke width `drawAreas` paints a band's boundary line with.
     /// Shared with `ChartGeometry.headroom` so the top margin it reserves is
@@ -152,8 +142,6 @@ public struct MetricChart: View {
            let readout = ChartGeometry.readout(at: index, series: series),
            let x = ChartGeometry.sampleX(at: index, in: rect, count: sampleCount, spacing: spacing) {
 
-            let origin = ChartGeometry.readoutOrigin(atX: x, in: rect, boxSize: readoutSize)
-
             ZStack(alignment: .topLeading) {
                 Rectangle()
                     .fill(.white.opacity(0.25))
@@ -161,35 +149,29 @@ public struct MetricChart: View {
                     .position(x: x, y: rect.midY)
                     .frame(height: rect.height)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    if let timestamp = readout.timestamp {
-                        Text(ChartGeometry.relativeAge(
-                            of: timestamp,
-                            now: ProcessInfo.processInfo.systemUptime
-                        ))
-                        .font(Vitals.Typography.label)
-                        .foregroundStyle(.secondary)
-                    }
-                    ForEach(readout.values, id: \.name) { entry in
-                        Text("\(entry.name)  \(unit(for: entry.name).formatted(entry.value))")
+                // Anchored to whichever side of the crosshair has more room and
+                // clamped in both axes against the box's real size — see
+                // `ReadoutPlacement`, which measures it during layout rather
+                // than routing it back through view state.
+                ReadoutPlacement(anchorX: x) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let timestamp = readout.timestamp {
+                            Text(ChartGeometry.relativeAge(
+                                of: timestamp,
+                                now: ProcessInfo.processInfo.systemUptime
+                            ))
                             .font(Vitals.Typography.label)
+                            .foregroundStyle(.secondary)
+                        }
+                        ForEach(readout.values, id: \.name) { entry in
+                            Text("\(entry.name)  \(unit(for: entry.name).formatted(entry.value))")
+                                .font(Vitals.Typography.label)
+                        }
                     }
+                    .padding(6)
+                    .glassSurface(cornerRadius: 8)
                 }
-                .padding(6)
-                .glassSurface(cornerRadius: 8)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: ReadoutSizeKey.self, value: proxy.size)
-                    }
-                )
-                // Anchored to whichever side of the crosshair has more room
-                // and clamped in both axes against the box's actual measured
-                // size (ChartGeometry.readoutOrigin), so the readout can
-                // never be pushed outside the chart regardless of its
-                // content's width or height.
-                .offset(x: origin.x - rect.minX, y: origin.y - rect.minY)
             }
-            .onPreferenceChange(ReadoutSizeKey.self) { readoutSize = $0 }
         }
     }
 
