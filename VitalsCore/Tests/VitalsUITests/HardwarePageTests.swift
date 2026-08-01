@@ -96,4 +96,45 @@ struct HardwarePageTests {
         let rendered = try renderPNG(view, size: CGSize(width: 600, height: 400), named: "hardware-page-empty")
         #expect(FileManager.default.fileExists(atPath: rendered.url.path))
     }
+
+    /// The chart must stop growing at `Metrics.chartMaxHeight`, so the four
+    /// pages with an empty `secondary` slot do not hand it half the window.
+    ///
+    /// Asserts across two window heights rather than against one absolute
+    /// number: the defect this guards is *unbounded growth*, so the thing that
+    /// must hold is that 300 extra points of window produce zero extra points
+    /// of chart. A single-height assertion would pass against the old
+    /// fill-everything behaviour at whichever height happened to be picked.
+    ///
+    /// The probe is the full panel width at both heights, and saturated pixels
+    /// inside it can only come from the chart's own accent-tinted drawing —
+    /// this fixture's `secondary` is neutral `Text`, and so is every other
+    /// element on the page.
+    @Test("the chart stops growing at the max-height token")
+    func chartStopsGrowing() throws {
+        let probe = CGRect(x: 40, y: 100, width: 720, height: 900)
+
+        let short = try renderPNG(
+            page(primaryValue: "13.9 GB", stats: []),
+            size: CGSize(width: 800, height: 700),
+            named: "hardware-page-cap-700"
+        )
+        let tall = try renderPNG(
+            page(primaryValue: "13.9 GB", stats: []),
+            size: CGSize(width: 800, height: 1000),
+            named: "hardware-page-cap-1000"
+        )
+
+        let shortExtent = try #require(try saturatedRowExtent(in: short, region: probe))
+        let tallExtent = try #require(try saturatedRowExtent(in: tall, region: probe))
+
+        let shortHeight = shortExtent.upperBound - shortExtent.lowerBound
+        let tallHeight = tallExtent.upperBound - tallExtent.lowerBound
+
+        // Tolerance, never equality: these are measured pixel extents rounded
+        // through a scale factor, and this project has been bitten four times
+        // by exact float comparison.
+        #expect(abs(tallHeight - shortHeight) < 2.0)
+        #expect(tallHeight <= Vitals.Metrics.chartMaxHeight + 2.0)
+    }
 }

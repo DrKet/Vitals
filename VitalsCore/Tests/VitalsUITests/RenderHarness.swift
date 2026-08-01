@@ -144,9 +144,10 @@ func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
 /// layout above it, so this holds regardless of which page it is. The
 /// `MetricChart` beneath it grows past its `Vitals.Metrics.chartHeight`
 /// (132pt) floor to fill leftover space, so its actual rendered height
-/// varies by page (207pt measured for CPU's, more for pages with no
-/// secondary content below the chart) — but the floor itself is a
-/// *guarantee*, so a probe rectangle that stays within `y ∈ [111, 111+132]`
+/// varies by page (207pt measured for CPU's; every hardware page's is now
+/// held at or below `Vitals.Metrics.chartMaxHeight` — 220pt — by
+/// `HardwarePage`) — but the floor itself is a *guarantee*, so a probe
+/// rectangle that stays within `y ∈ [111, 111+132]`
 /// is always entirely inside the chart's canvas no matter how much extra
 /// room it grows into, and always well short of secondary content
 /// (`CoreGrid`, `VolumeBar`) that only ever starts after the chart's actual
@@ -340,4 +341,54 @@ private func isNotBlank(_ bitmap: NSBitmapImageRep) -> Bool {
         }
     }
     return false
+}
+
+/// The vertical extent, in points, of saturated (non-grayscale) pixels inside
+/// `region` — `nil` when the region is entirely neutral.
+///
+/// `regionHasSaturatedColor` answers "did the chart paint here at all". This
+/// answers "how tall is what it painted", which is what a test of the chart's
+/// *height* needs. Every hardware page's chrome — the offscreen material fill,
+/// gridlines, `StatRow` text, the disclosure chevron — renders in neutral
+/// greys (see `regionHasSaturatedColor`'s doc comment), so inside a page's
+/// panel the saturated extent is the chart's own drawn height and nothing
+/// else.
+///
+/// Returned in points, not pixels, by dividing through `image.scale` — the
+/// same scale the bitmap itself reported, so a 1x and a 2x render give the
+/// same answer.
+@MainActor
+func saturatedRowExtent(
+    in image: RenderedImage,
+    region: CGRect,
+    minimumSpread: CGFloat = 16.0 / 255.0
+) throws -> ClosedRange<CGFloat>? {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return nil }
+
+    var top: Int?
+    var bottom: Int?
+    for y in minY..<maxY {
+        for x in minX..<maxX {
+            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
+            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
+            if max(r, g, b) - min(r, g, b) > minimumSpread {
+                if top == nil { top = y }
+                bottom = y
+                break
+            }
+        }
+    }
+
+    guard let top, let bottom else { return nil }
+    return (CGFloat(top) / image.scale)...(CGFloat(bottom) / image.scale)
 }

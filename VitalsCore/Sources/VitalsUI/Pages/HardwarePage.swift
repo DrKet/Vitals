@@ -98,6 +98,12 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
                                     style: .area(stacked: series.count > 1),
                                     colors: Vitals.seriesColors(startingAt: accent, count: max(series.count, 1))
                                 )
+                                // The cap lives here, not inside `MetricChart`:
+                                // Overview tiles embed the same chart and size
+                                // it from the tile's own geometry, and they do
+                                // not have this problem. See
+                                // `Metrics.chartMaxHeight`.
+                                .frame(maxHeight: Vitals.Metrics.chartMaxHeight)
                             }
 
                             secondary
