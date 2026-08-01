@@ -80,12 +80,20 @@ One flag, and it removes an entire class of "it will not launch" reports from
 anyone on an Intel Mac. Costs a slower build and a roughly doubled binary — an
 acceptable trade for a build whose purpose is being handed to other people.
 
-**Caveat, to verify rather than assume:** it is not certain that a macOS 26
-deployment target admits an `x86_64` slice at all. If the toolchain rejects the
-combination, the honest outcome is an arm64-only build and a README that says
-so plainly — not a universal build that quietly contains a slice which could
-never run. The implementation should try it and report what actually happens
-rather than assuming either way.
+**Resolved by measurement** before the implementation plan was written. A macOS
+26 deployment target does admit an `x86_64` slice:
+
+```
+$ swift build -c release --arch arm64 --arch x86_64 --product VitalsApp
+Build complete!
+$ lipo -archs .build/apple/Products/Release/VitalsApp
+x86_64 arm64            # ~2.98 MB
+```
+
+One gotcha found while checking: a universal build lands in
+`.build/apple/Products/Release`, **not** `.build/release`. A script hardcoding
+the usual path picks up a stale single-arch binary or nothing at all, so the
+path must come from `swift build … --show-bin-path`.
 
 ### 5. Version derived, never declared
 
