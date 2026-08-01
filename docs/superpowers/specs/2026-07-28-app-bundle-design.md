@@ -41,8 +41,15 @@ double-clicking produces *"Apple could not verify Vitals is free of malware."*
 **The only honest response is to document the way through**, in both the README
 and the release notes:
 
-- right-click → **Open**, then confirm; or
+- System Settings → Privacy & Security → **Open Anyway**, then authenticate
+  and confirm; or
 - `xattr -dr com.apple.quarantine Vitals.app`
+
+Apple removed the one-click right-click → Open bypass in macOS 15 Sequoia:
+on every macOS version this app can run on (the floor is 26), right-clicking
+an unnotarized, quarantined app shows the same blocking dialog as
+double-clicking it, with no override in the dialog itself. The only way
+through, short of stripping the quarantine attribute, is System Settings.
 
 Pretending the warning is not there just produces confused messages. If a
 Developer ID becomes available later, notarization slots into the same build

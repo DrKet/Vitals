@@ -699,8 +699,9 @@ gh release create v0.1.0 build/Vitals-v0.1.0.zip \
   --title "Vitals v0.1.0" \
   --notes "First downloadable build. Requires macOS 26 or later.
 
-Vitals is signed ad-hoc, so the first launch needs a right-click → Open, or
-\`xattr -dr com.apple.quarantine /Applications/Vitals.app\`. See the README.
+Vitals is signed ad-hoc, so the first launch needs System Settings > Privacy
+& Security > Open Anyway (macOS 15+ removed the right-click → Open bypass),
+or \`xattr -dr com.apple.quarantine /Applications/Vitals.app\`. See the README.
 
 Built: Overview, Processes, CPU, Memory, GPU, Storage and Network.
 Not yet built: Sensors, Startup, Services, Users, History."

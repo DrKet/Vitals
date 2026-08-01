@@ -7,6 +7,11 @@
 // Run: swift scripts/make-icon.swift <output.png>
 import AppKit
 
+guard CommandLine.arguments.count == 2 else {
+    FileHandle.standardError.write("usage: make-icon.swift <output.png>\n".data(using: .utf8)!)
+    exit(2)
+}
+
 let side: CGFloat = 1024
 // macOS icons supply their own rounded shape and are not masked by the system,
 // so the artwork insets itself. ~10% margin matches Apple's own grid.
@@ -41,8 +46,17 @@ guard let rep = NSBitmapImageRep(
 }
 rep.size = NSSize(width: side, height: side)
 
+// NSGraphicsContext(bitmapImageRep:) returns Optional, and a nil here would
+// silently send every draw call that follows nowhere: the rep would stay
+// fully transparent while still being exactly 1024x1024, so the packer would
+// still produce a 10-entry .icns — one that passes every existing check while
+// being blank. Unwrap and fail loudly instead of drawing into the void.
+guard let context = NSGraphicsContext(bitmapImageRep: rep) else {
+    FileHandle.standardError.write("failed to create a graphics context for the bitmap\n".data(using: .utf8)!)
+    exit(1)
+}
 NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+NSGraphicsContext.current = context
 
 // Transparent outside the plate.
 NSColor.clear.setFill()
@@ -87,10 +101,6 @@ line.stroke()
 
 NSGraphicsContext.restoreGraphicsState()
 
-guard CommandLine.arguments.count == 2 else {
-    FileHandle.standardError.write("usage: make-icon.swift <output.png>\n".data(using: .utf8)!)
-    exit(2)
-}
 guard let png = rep.representation(using: .png, properties: [:]) else {
     FileHandle.standardError.write("failed to encode PNG\n".data(using: .utf8)!)
     exit(1)

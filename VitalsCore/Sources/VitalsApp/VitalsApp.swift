@@ -7,10 +7,18 @@ import VitalsUI
 /// Quits when the window closes — this is a single-window utility, and a
 /// lingering invisible process is a real failure mode this project has hit.
 ///
-/// The activation policy that used to live here is now the bundle's job:
-/// `Info.plist` makes this a normal windowed app, which is what a SwiftPM
-/// executable could not do on its own. `scripts/verify-app.sh` launches the
-/// built bundle and asserts a window appears, which is what proves that.
+/// The activation policy that used to live here is now automatic: AppKit
+/// defaults a bundled `.app`'s activation policy to `.regular` on its own.
+/// `Info.plist`'s role is only the *absence* of `LSUIElement` /
+/// `LSBackgroundOnly` — either would opt back out of that default.
+///
+/// That default only applies to a real bundle. Running the raw executable
+/// outside one — `swift run VitalsApp`, or the binary under `.build/`
+/// directly — still launches background-only with zero windows; this is the
+/// trap Task 4 found and the one the next person will hit again if they reach
+/// for `swift run` out of habit. Use `scripts/build-app.sh && open
+/// build/Vitals.app` instead. `scripts/verify-app.sh` is what actually proves
+/// a window appears.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true

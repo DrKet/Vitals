@@ -23,11 +23,16 @@ macOS will say:
 That is Gatekeeper telling you the truth: this app has not been notarized by
 Apple. To open it anyway, either:
 
-- **right-click** `Vitals.app` → **Open** → **Open**, once; or
-- run `xattr -dr com.apple.quarantine /Applications/Vitals.app`
+- open **System Settings → Privacy & Security**, scroll to the Security
+  section, and click **Open Anyway** next to the message about Vitals, then
+  authenticate and confirm **Open Anyway** again in the dialog that follows
+  (on current macOS, right-clicking → Open shows the same blocking dialog as
+  double-clicking — there is no one-click override left, only this path); or
+- run `xattr -dr com.apple.quarantine /Applications/Vitals.app`, which skips
+  all of the above
 
 You only need to do this once. If you would rather not, build from source
-instead — the instructions below produce the same app.
+instead — see below for why that sidesteps the warning entirely.
 
 ## Requirements
 
@@ -53,7 +58,12 @@ open build/Vitals.app
 ```
 
 First build takes a minute or two. This produces the same ad-hoc-signed
-bundle as a Release download, so the Gatekeeper warning above still applies.
+bundle as a Release download, but **the Gatekeeper warning above does not
+apply to it.** Gatekeeper only interrogates files carrying the
+`com.apple.quarantine` extended attribute, which browsers, Mail and Finder's
+unarchiver attach to things they receive from the network. A binary you
+compiled locally was never downloaded, so nothing ever sets that attribute —
+`open build/Vitals.app` just launches it, no warning, no override needed.
 
 To see the raw sampler output without any UI:
 
@@ -121,6 +131,8 @@ VitalsCore/Sources/
   VitalsUI/        SwiftUI views, charts, design tokens.
   VitalsApp/       The app executable.
   vitals-dump/     CLI for eyeballing live sampler output.
+scripts/           build-app.sh, verify-app.sh and the icon renderer.
+Resources/         Vitals.icns — committed, only regenerated when the artwork changes.
 docs/              Design spec and implementation plans.
 ```
 

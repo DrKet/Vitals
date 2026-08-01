@@ -10,13 +10,18 @@ PKG="$ROOT/VitalsCore"
 OUT="$ROOT/build"
 APP="$OUT/Vitals.app"
 
+# shellcheck source=lib-version.sh
+source "$ROOT/scripts/lib-version.sh"
+
+# A git-less export would otherwise die mid-way through with a raw
+# "fatal: not a git repository" from whichever of describe/rev-list happens
+# to run first. Fail up front with a message that says why.
+vitals_require_git "$ROOT" || exit 1
+
 # Version derived, never declared. An untagged working build says so instead of
 # claiming a release number nobody minted.
-VERSION="$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null || true)"
-if [ -z "$VERSION" ]; then
-    VERSION="0.0.0-dev+$(git -C "$ROOT" rev-parse --short HEAD)"
-fi
-BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD)"
+VERSION="$(vitals_version "$ROOT")"
+BUILD_NUMBER="$(vitals_build_number "$ROOT")"
 
 echo "==> Building universal release binary (this takes a few minutes)"
 cd "$PKG"
@@ -63,7 +68,24 @@ echo
 "$ROOT/scripts/verify-app.sh" "$APP"
 
 ZIP="$OUT/Vitals-$VERSION.zip"
-rm -f "$ZIP"
+# Remove every old zip, not just the one whose name matches this version —
+# otherwise stale zips from earlier builds/versions just accumulate in build/.
+rm -f "$OUT"/Vitals-*.zip
 # ditto, not zip: a plain zip mangles a bundle's symlinks and resource forks.
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+# No --sequesterRsrc: the bundle has no resource forks or symlinks for it to
+# protect, and it only adds a __MACOSX/ sibling that looks like a stray folder
+# to anyone extracting with plain `unzip` instead of Archive Utility.
+ditto -c -k --keepParent "$APP" "$ZIP"
 echo "==> Packaged $ZIP"
+
+# The zip is what a downloader actually receives, and ditto/zip round-tripping
+# is exactly the kind of thing that can silently mangle a bundle (permissions,
+# the code signature's extended attributes, etc.) even when the pre-zip copy
+# verified cleanly. Extract it and run the full verifier again rather than
+# trusting the round-trip because it was checked by hand once.
+echo
+echo "==> Verifying the zip round-trips"
+ZIP_CHECK="$(mktemp -d)"
+trap 'rm -rf "$ZIP_CHECK"' EXIT
+ditto -x -k "$ZIP" "$ZIP_CHECK"
+"$ROOT/scripts/verify-app.sh" "$ZIP_CHECK/Vitals.app"

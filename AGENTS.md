@@ -67,8 +67,15 @@ views. Nothing upstream knows about anything downstream.
 cd VitalsCore
 swift build
 swift test
-swift run VitalsApp     # the app
 swift run vitals-dump   # live sampler output, no UI
+```
+
+To run the app itself, build the bundle rather than `swift run VitalsApp`: a
+SwiftPM executable has no bundle, so AppKit launches it background-only with
+zero windows (see Platform notes below).
+
+```bash
+./scripts/build-app.sh && open build/Vitals.app
 ```
 
 Swift 6 language mode, strict concurrency, macOS 26.0 floor.
@@ -123,10 +130,13 @@ pages sharing one colour, and clipped chart peaks all passed the full suite and
 were obvious on screen. To look:
 
 ```bash
-cd VitalsCore && swift run VitalsApp
+./scripts/build-app.sh && open build/Vitals.app
 ```
 
-then get the window bounds via System Events and capture with
+`swift run VitalsApp` will not do here — it shows no window at all (see
+Platform notes below), which makes it useless for a screenshot workflow.
+
+Once it's running, get the window bounds via System Events and capture with
 `screencapture -R"$X,$Y,$W,$H" out.png`. No Screen Recording permission needed.
 **Confirm via the accessibility API which page is actually selected before
 describing a screenshot** — an agent here once reported a capture that turned out
@@ -170,8 +180,11 @@ to be a different page.
 - Distinguish `ESRCH` from `EPERM` when walking processes, or every root process
   silently vanishes.
 - Use `phys_footprint`, not RSS, for process memory.
-- A SwiftPM executable has no bundle, so AppKit launches it background-only.
-  `AppDelegate` sets `.regular` activation policy — without it the app runs with
+- A SwiftPM executable has no bundle, so AppKit launches it background-only —
+  `swift run VitalsApp` and the raw `.build/` binary both still do this. A
+  bundled `.app` gets AppKit's default `.regular` activation policy for free;
+  `AppDelegate` no longer sets it (that line came out once the bundle existed
+  to provide it — see `VitalsApp.swift`). Outside a bundle the app runs with
   **zero windows** and every "it launches" check is meaningless.
 - `AsyncStream.onTermination` does **not** fire on `break` out of a `for await`
   while the stream is still in scope. Drive teardown via task cancellation.
