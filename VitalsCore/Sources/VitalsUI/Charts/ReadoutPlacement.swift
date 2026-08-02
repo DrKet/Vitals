@@ -31,12 +31,16 @@ struct ReadoutPlacement: Layout {
     /// clamped and placed against the wrong rectangle entirely.
     ///
     /// A `nil` dimension in `proposal` means "you decide," not "there is no
-    /// space" — collapsing it to `0` would starve `placeSubviews` of any real
-    /// bounds to clamp against and is exactly how the original bug (a
-    /// zero-sized box, see `placeSubviews`'s doc comment) came back in a
-    /// different shape. `replacingUnspecifiedDimensions` resolves that by
-    /// falling back to the one subview's own preferred size instead of
-    /// fabricating zero.
+    /// space" — collapsing it to `0` would report a zero-sized footprint for
+    /// this whole `Layout` to whatever embeds it (a sibling `.background`, a
+    /// `GeometryReader` measuring it, anything that trusts the size a layout
+    /// reports rather than re-measuring its content itself). `placeSubviews`
+    /// below still independently re-measures and paints the one subview at
+    /// its own true size regardless of what this method reports, so a `?? 0`
+    /// regression here does not make the rendered box vanish — it only makes
+    /// this `Layout`'s own reported size a lie. `replacingUnspecifiedDimensions`
+    /// avoids that by falling back to the subview's own preferred size
+    /// instead of fabricating zero.
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard let subview = subviews.first else { return .zero }
         return proposal.replacingUnspecifiedDimensions(by: subview.sizeThatFits(.unspecified))
