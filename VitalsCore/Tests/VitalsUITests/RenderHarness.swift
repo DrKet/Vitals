@@ -404,9 +404,15 @@ func saturatedRowExtent(
 /// distinguish a box placed correctly from one placed at the wrong x inside
 /// the same rectangle, or from one that ignored its anchor entirely and
 /// landed at a fixed corner that happens to fall inside the probed region.
-/// This answers the stronger question by reporting the actual left and right
-/// edges of what was drawn, so a caller can compare them against an
-/// independently computed expected position.
+/// This answers the stronger question — but what it reports is the *index*
+/// of the first and the last pixel column found to contain a saturated
+/// pixel, not the drawn content's true left and right edges: the last
+/// saturated column's own right-hand edge is one more pixel past
+/// `upperBound`, so the true painted width is one pixel wider than
+/// `upperBound - lowerBound`. Close enough for every caller here, all of
+/// which compare against an independently computed expected position with a
+/// multi-point tolerance, but worth knowing before reading this as an exact
+/// bounding box.
 ///
 /// Returned in points, not pixels, by dividing through `image.scale` — the
 /// same scale the bitmap itself reported, so a 1x and a 2x render give the

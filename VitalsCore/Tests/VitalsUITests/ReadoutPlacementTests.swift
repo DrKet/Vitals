@@ -50,24 +50,30 @@ struct ReadoutPlacementTests {
         )
     }
 
-    /// The chart's rect within the render canvas — the same rect `anchorX`
-    /// is expressed against below, and (empirically confirmed by a temporary
+    /// The chart's rect within the render canvas — the rect `placeSubviews`
+    /// actually receives as `bounds` (empirically confirmed by a temporary
     /// debug print in `ReadoutPlacement.placeSubviews` while writing this
-    /// test) the same rect `ReadoutPlacement` actually receives as `bounds`.
+    /// test), NOT the rect `anchorX` is expressed against below.
     ///
-    /// That equality is not a framework guarantee this test gets for free —
-    /// it is exactly finding 4's point. Apple's `Layout` protocol documents
-    /// `bounds`'s origin as "not necessarily `(0, 0)`," and this was
-    /// confirmed directly here: giving the chart 200pt of leading surplus
-    /// (below) makes `placeSubviews` receive `bounds = (200, 0, 600, 200)`,
-    /// *not* `(0, 0, 600, 200)` — even though `ReadoutPlacement` is nested
-    /// exactly the way `MetricChart` nests it (`GeometryReader` → `ZStack` →
-    /// `ReadoutPlacement`, no offsets or extra modifiers). A `GeometryReader`
-    /// resetting its own coordinate queries to `.local` does not reset what
-    /// the `Layout` protocol hands a nested custom `Layout` — those are two
-    /// different mechanisms. Every `anchorX` used below is therefore built
-    /// from `chartRect.origin`, not `0`, so it lands in the same coordinate
-    /// space this rect — and `bounds` — actually occupy.
+    /// Those being different rects is exactly finding 4's point. Apple's
+    /// `Layout` protocol documents `bounds`'s origin as "not necessarily
+    /// `(0, 0)`," and this was confirmed directly here: giving the chart
+    /// 200pt of leading surplus (below) makes `placeSubviews` receive
+    /// `bounds = (200, 0, 600, 200)`, *not* `(0, 0, 600, 200)` — even though
+    /// `ReadoutPlacement` is nested exactly the way `MetricChart` nests it
+    /// (`GeometryReader` → `ZStack` → `ReadoutPlacement`, no offsets or extra
+    /// modifiers). A `GeometryReader` resetting its own coordinate queries to
+    /// `.local` does not reset what the `Layout` protocol hands a nested
+    /// custom `Layout` — those are two different mechanisms.
+    ///
+    /// `MetricChart` computes `anchorX` against its own zero-origin rect
+    /// (`CGRect(origin: .zero, size: proxy.size)`), which this harness's
+    /// 200pt leading surplus makes different from `chartRect` by exactly
+    /// `chartRect.minX` — the same δ production ships with. Every `anchorX`
+    /// passed to `harness(anchorX:)` below is therefore chart-LOCAL (`0` at
+    /// the chart's own left edge), matching what `MetricChart` actually
+    /// feeds `ReadoutPlacement`, and every expected position is computed
+    /// against `chartRect` translated by `chartRect.minX` to match.
     private let chartRect = CGRect(x: 200, y: 0, width: 600, height: 200)
 
     /// The full render canvas: `chartRect` inset by 200pt of surplus on the
@@ -117,12 +123,19 @@ struct ReadoutPlacementTests {
     /// passes them just as well as a correct one, since "nowhere in the
     /// surplus" is also true of a box stuck in a corner. Comparing the box's
     /// measured edges against `ChartGeometry.readoutOrigin` — the same,
-    /// untouched, independently-tested production formula, computed from the
-    /// same `anchorX` and `chartRect` — closes that gap: it fails for any
-    /// `placeSubviews` that doesn't actually thread `anchorX` and `bounds`
-    /// through to that formula, which is the wiring these tests exist to
-    /// guard, not the formula's own maths (that's `ChartScrubberTests`'s
-    /// job).
+    /// untouched, independently-tested production formula, computed from a
+    /// zero-origin copy of `chartRect` (matching what `anchorX` is expressed
+    /// against) and then translated by `chartRect.origin` — closes that gap:
+    /// it fails for any `placeSubviews` that doesn't actually reconcile
+    /// `anchorX`'s coordinate space with `bounds`'s, which is the wiring
+    /// these tests exist to guard, not the formula's own maths (that's
+    /// `ChartScrubberTests`'s job).
+    ///
+    /// `anchorX` here is chart-LOCAL — expressed against `CGRect(origin:
+    /// .zero, size: chartRect.size)`, exactly as `MetricChart` computes it —
+    /// not against `chartRect` itself. See `chartRect`'s doc comment for why
+    /// that distinction, and this harness's 200pt leading surplus, are what
+    /// make this test exercise the δ ≠ 0 case that was shipping broken.
     private func assertBoxLandsAtAnchor(anchorX: CGFloat, named name: String) throws {
         let rendered = try renderPNG(
             harness(anchorX: anchorX),
@@ -143,34 +156,105 @@ struct ReadoutPlacementTests {
 
         // The box must actually have been drawn inside the chart, or the
         // checks above pass for a readout that rendered nothing at all.
-        let extent = try #require(
+        let columns = try #require(
             try saturatedColumnExtent(in: rendered, region: chartRect),
+            "no saturated pixels found inside the chart"
+        )
+        let rows = try #require(
+            try saturatedRowExtent(in: rendered, region: chartRect),
             "no saturated pixels found inside the chart"
         )
 
         // …and it must be where anchorX implies, not just "somewhere inside".
+        // `readoutOrigin` is computed against a zero-origin rect the same
+        // size as `chartRect` — matching the space `anchorX` is expressed in
+        // — then translated back into canvas space by `chartRect.origin`,
+        // the same translation `placeSubviews` now performs internally.
         let boxSize = try measuredBoxSize()
-        let expectedOrigin = ChartGeometry.readoutOrigin(atX: anchorX, in: chartRect, boxSize: boxSize)
+        let localRect = CGRect(origin: .zero, size: chartRect.size)
+        let localOrigin = ChartGeometry.readoutOrigin(atX: anchorX, in: localRect, boxSize: boxSize)
+        let expectedOrigin = CGPoint(
+            x: localOrigin.x + chartRect.minX,
+            y: localOrigin.y + chartRect.minY
+        )
         let expectedLeft = expectedOrigin.x
         let expectedRight = expectedLeft + boxSize.width
+        let expectedTop = expectedOrigin.y
+        let expectedBottom = expectedTop + boxSize.height
 
         // Never float equality: rendering, measuring, and rounding to pixel
-        // boundaries each introduce their own slack.
+        // boundaries each introduce their own slack. 3pt stays well under the
+        // smallest constant in the formula under test — `readoutOrigin`'s 8pt
+        // margin — while comfortably covering the ~0 measurement error this
+        // harness actually exhibits.
         let tolerance: CGFloat = 3
-        #expect(abs(extent.lowerBound - expectedLeft) <= tolerance)
-        #expect(abs(extent.upperBound - expectedRight) <= tolerance)
+        #expect(abs(columns.lowerBound - expectedLeft) <= tolerance)
+        #expect(abs(columns.upperBound - expectedRight) <= tolerance)
+        #expect(abs(rows.lowerBound - expectedTop) <= tolerance)
+        #expect(abs(rows.upperBound - expectedBottom) <= tolerance)
     }
 
     @Test("a readout anchored at the right edge stays inside the chart, at the position anchorX implies")
     func staysInsideAtRightEdge() throws {
-        // 2 points from the chart's own trailing edge — the position that
-        // clips in the running app. Expressed against `chartRect`, not `0`;
-        // see `chartRect`'s doc comment.
-        try assertBoxLandsAtAnchor(anchorX: chartRect.maxX - 2, named: "readout-right-edge")
+        // 2 points from the chart's own trailing edge, in chart-LOCAL space —
+        // the position that clips in the running app. See `chartRect`'s and
+        // `assertBoxLandsAtAnchor`'s doc comments for why this is
+        // `chartRect.width - 2`, not `chartRect.maxX - 2`.
+        try assertBoxLandsAtAnchor(anchorX: chartRect.width - 2, named: "readout-right-edge")
     }
 
     @Test("a readout anchored at the left edge stays inside the chart, at the position anchorX implies")
     func staysInsideAtLeftEdge() throws {
-        try assertBoxLandsAtAnchor(anchorX: chartRect.minX + 2, named: "readout-left-edge")
+        // 2 points from the chart's own leading edge, in chart-LOCAL space —
+        // i.e. `2`, not `chartRect.minX + 2`. See `chartRect`'s doc comment.
+        try assertBoxLandsAtAnchor(anchorX: 2, named: "readout-left-edge")
+    }
+
+    /// `sizeThatFits` only exercises its `replacingUnspecifiedDimensions`
+    /// branch (see its doc comment) when SwiftUI actually proposes `nil` in
+    /// a dimension — every other test in this file renders through
+    /// `renderPNG`'s outer `.frame(width:height:)`, which proposes a
+    /// concrete size straight through to `ReadoutPlacement`, so none of them
+    /// take this path.
+    ///
+    /// `.fixedSize()` is confirmed (via a temporary debug print added to
+    /// `sizeThatFits` and `placeSubviews` while writing this test, then
+    /// removed) to override that outer `.frame` and force
+    /// `ProposedViewSize(width: nil, height: nil)` through to this layout —
+    /// `sizeThatFits` printed `proposal=nil,nil`, and the following
+    /// `placeSubviews` printed `bounds=(0.0, 0.0, 100.5, 58.0)`, exactly the
+    /// box's own measured ideal size, confirming `bounds` really was
+    /// resolved from the box's `sizeThatFits(.unspecified)` fallback rather
+    /// than from any size this test proposed.
+    @Test("resolves an unspecified proposal to the readout box's own size instead of collapsing to zero")
+    func handlesUnspecifiedProposal() throws {
+        let canvas = CGSize(width: 400, height: 200)
+        let rendered = try renderPNG(
+            ReadoutPlacement(anchorX: 2) { box() }.fixedSize(),
+            size: canvas,
+            named: "readout-unspecified-proposal"
+        )
+
+        // If `replacingUnspecifiedDimensions`'s fallback were ever replaced
+        // with `?? 0` (the exact defect this project's `?? 0` rule exists to
+        // prevent), `bounds` would collapse to a zero-sized rect and nothing
+        // would paint at all.
+        let boxSize = try measuredBoxSize()
+        let region = CGRect(origin: .zero, size: canvas)
+        let columns = try #require(
+            try saturatedColumnExtent(in: rendered, region: region),
+            "no saturated pixels found — an unspecified proposal collapsed the box to nothing"
+        )
+        let rows = try #require(
+            try saturatedRowExtent(in: rendered, region: region),
+            "no saturated pixels found — an unspecified proposal collapsed the box to nothing"
+        )
+
+        // The box must render at its own full, un-squashed size — proving
+        // `bounds` really was resolved to the box's ideal size, not to some
+        // incidental non-zero fallback that happens to still paint something.
+        let tolerance: CGFloat = 3
+        #expect(abs((columns.upperBound - columns.lowerBound) - boxSize.width) <= tolerance)
+        #expect(abs((rows.upperBound - rows.lowerBound) - boxSize.height) <= tolerance)
     }
 }

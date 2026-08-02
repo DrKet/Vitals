@@ -3,19 +3,24 @@ import SwiftUI
 /// Places the crosshair's readout box inside a chart, clamped to the chart
 /// whenever it fits.
 struct ReadoutPlacement: Layout {
-    /// Where on the chart's x-axis the readout is reporting from, in the
-    /// chart's own coordinate space — the same rect this layout receives as
-    /// `bounds` in `placeSubviews`, not the enclosing window or screen.
+    /// Where on the chart's x-axis the readout is reporting from, expressed
+    /// against the chart's own zero-origin rect — `CGRect(origin: .zero,
+    /// size: proxy.size)` in `MetricChart`'s `GeometryReader` — NOT against
+    /// `bounds` as received by `placeSubviews`.
     ///
-    /// `CGRect.bounds.origin` is not guaranteed to be `(0, 0)` — a caller that
-    /// computed `anchorX` in some other coordinate space and handed it to a
-    /// `ReadoutPlacement` whose `bounds` has a non-zero origin would silently
-    /// misplace the readout by `bounds.minX`, since `ChartGeometry
-    /// .readoutOrigin` treats `anchorX` as already living in `bounds`'s space.
+    /// Those two are not the same rect, and the only caller has no way to
+    /// make them the same: Apple documents `bounds.origin` as "not
+    /// necessarily `(0, 0)`," and in this app's real layout it measurably
+    /// isn't (`bounds.minX` ≈ 13.5pt on the Network page). `bounds` is only
+    /// ever known inside `placeSubviews`, once SwiftUI has already decided
+    /// where this layout sits in its parent — `MetricChart` cannot predict it
+    /// when computing `anchorX`, so it computes against the one rect it does
+    /// control, its own zero-origin canvas. `placeSubviews` is therefore the
+    /// place that reconciles the two coordinate spaces, not this parameter.
     let anchorX: CGFloat
 
     /// Fills whatever space is proposed, rather than sizing to the readout
-    /// box's own dimensions.
+    /// box's own dimensions, whenever a size is proposed.
     ///
     /// This is the invariant the whole fix depends on: `placeSubviews`
     /// receives `bounds` equal to the chart's own rect only because this
@@ -57,7 +62,19 @@ struct ReadoutPlacement: Layout {
         // matching `sizeThatFits`'s `subviews.first` above.
         guard let subview = subviews.first else { return }
         let size = subview.sizeThatFits(.unspecified)
-        let origin = ChartGeometry.readoutOrigin(atX: anchorX, in: bounds, boxSize: size)
-        subview.place(at: origin, anchor: .topLeading, proposal: ProposedViewSize(size))
+
+        // `anchorX` arrives in the chart's own zero-origin rect (`MetricChart`
+        // computes it against `CGRect(origin: .zero, size: proxy.size)`), while
+        // `bounds` is in the parent's space and Apple documents its origin as not
+        // necessarily (0, 0) — measured at x = 13.5 in this app's real layout.
+        // Clamping in a zero-origin copy and translating afterwards is what keeps
+        // the two from disagreeing, whatever SwiftUI hands us.
+        let local = CGRect(origin: .zero, size: bounds.size)
+        let origin = ChartGeometry.readoutOrigin(atX: anchorX, in: local, boxSize: size)
+        subview.place(
+            at: CGPoint(x: origin.x + bounds.minX, y: origin.y + bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(size)
+        )
     }
 }
