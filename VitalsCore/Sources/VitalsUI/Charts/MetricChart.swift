@@ -104,6 +104,7 @@ public struct MetricChart: View {
                     let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
                     drawGridlines(in: &context, rect: plotRect)
                     drawAreas(bands, bound: bound, in: &context, rect: plotRect)
+                    drawAxisMaximum(bands, in: &context, rect: plotRect)
                 case .histogram:
                     // Bars are filled shapes anchored to `rect.maxY`, not a
                     // centred stroke or a smoothed curve between samples —
@@ -111,6 +112,7 @@ public struct MetricChart: View {
                     // histogram mode keeps the full canvas.
                     drawGridlines(in: &context, rect: canvasRect)
                     drawHistogram(bands, bound: bound, in: &context, rect: canvasRect)
+                    drawAxisMaximum(bands, in: &context, rect: canvasRect)
                 }
             }
             .overlay { crosshair(in: rect) }
@@ -193,6 +195,27 @@ public struct MetricChart: View {
         case .area, .histogram:
             return series.map(\.values).filter { !$0.isEmpty }
         }
+    }
+
+    /// The y-max, drawn at the plot rect's top-leading corner.
+    ///
+    /// Absolute-unit charts only: they scale to their own data and would
+    /// otherwise draw an idle link and a saturated one identically. Painted
+    /// into the `Canvas`, so the crosshair overlay — a transient hover state on
+    /// an opaque background — draws over it. That overlap is accepted; moving
+    /// a transient readout to dodge a static label is not worth the coupling.
+    private func drawAxisMaximum(
+        _ bands: [[Double]],
+        in context: inout GraphicsContext,
+        rect: CGRect
+    ) {
+        let chartUnit = series.first?.unit ?? .fraction
+        guard let bound = ChartGeometry.axisMaximum(for: bands, unit: chartUnit),
+              let label = ChartGeometry.axisLabel(bound, unit: chartUnit) else { return }
+
+        var text = context.resolve(Text(label).font(Vitals.Typography.label))
+        text.shading = .color(.white.opacity(0.45))
+        context.draw(text, at: CGPoint(x: rect.minX + 4, y: rect.minY + 2), anchor: .topLeading)
     }
 
     private func drawGridlines(in context: inout GraphicsContext, rect: CGRect) {

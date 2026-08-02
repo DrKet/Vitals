@@ -180,4 +180,30 @@ struct MetricChartTests {
         let bands = chart.resolvedBands()
         #expect(bands.map(\.count).sorted() == [2, 3])
     }
+
+    // MARK: Axis label
+
+    /// The label is text in a neutral grey, so `regionHasSaturatedColor` is
+    /// the wrong probe — this uses `regionHasContent` against a corner of the
+    /// canvas that gridlines alone would leave at the background colour.
+    @Test("an absolute-unit chart labels its ceiling and a fractional one does not")
+    func absoluteChartsDrawAnAxisLabel() throws {
+        let absolute = MetricChart(
+            series: [ChartSeries(name: "Down", values: [0.01, 0.4, 0.12], unit: .absolute(suffix: "MB/s"))],
+            style: .area(stacked: false),
+            colors: [Vitals.Palette.network]
+        )
+        let fractional = MetricChart(
+            series: [ChartSeries(name: "Busy", values: [0.2, 0.4, 0.37])],
+            style: .area(stacked: false),
+            colors: [Vitals.Palette.cpu]
+        )
+        let corner = CGRect(x: 2, y: 0, width: 90, height: 18)
+
+        let withLabel = try renderPNG(absolute, size: CGSize(width: 400, height: 200), named: "chart-axis-label")
+        let without = try renderPNG(fractional, size: CGSize(width: 400, height: 200), named: "chart-no-axis-label")
+
+        #expect(try regionHasContent(in: withLabel, region: corner))
+        #expect(try !regionHasContent(in: without, region: corner))
+    }
 }
