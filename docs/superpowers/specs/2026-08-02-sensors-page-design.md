@@ -207,12 +207,28 @@ the two view-builder slots and nothing else.
 | Chart | Three unstacked series: die (hottest), battery, storage |
 | Secondary | `ThermometerStrip` (below) |
 | Key stats | Die average · hottest sensor's name · battery · storage |
-| Full specifications | Every distinct sensor: name, reading, instance count |
+| Full specifications | Every distinct sensor, **grouped by family**: name, reading, instance count |
 
 "Hottest sensor's name" is a stat because it is a measured fact that costs
 nothing and answers a real question. It avoids restating the 40pt headline
 number in the stats block — the redundancy that got the axis label suppressed
 on Overview tiles last milestone.
+
+**Why Full specifications is grouped rather than a flat list.** The headline is
+the hottest *die* temperature, and `PMU tcal` reads ~51.9 °C — higher than any
+die sensor. In a flat list, the largest number on the page would sit below a
+headline reading 38.8 °C, and a reader would reasonably conclude the headline
+is broken. Grouping under headings — `Die`, `Device`, `Thermal pressure`,
+`Battery`, `Storage`, `Other` (by the `tdie` / `tdev` / `TP` / known-name
+prefixes) — makes it visible that `tcal` is not a die sensor, so the two
+numbers no longer read as a contradiction.
+
+Grouping is presentation only. It must not annotate `tcal` as a "calibration
+constant" in the UI: that is an inference drawn from a handful of samples in
+one spike on one machine, and stating it on screen would assert something about
+the hardware that has not been established. The page shows what each sensor
+reports, under a heading that says which family it belongs to, and nothing
+more.
 
 ### `ThermometerStrip`
 
