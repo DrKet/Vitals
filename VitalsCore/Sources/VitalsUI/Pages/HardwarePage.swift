@@ -96,7 +96,13 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
                                 MetricChart(
                                     series: series,
                                     style: .area(stacked: series.count > 1),
-                                    colors: Vitals.seriesColors(startingAt: accent, count: max(series.count, 1))
+                                    colors: Vitals.seriesColors(startingAt: accent, count: max(series.count, 1)),
+                                    // Unlike the Overview tile, this chart is
+                                    // the only place a hardware page's own
+                                    // scale is legible: the primary value
+                                    // above states the latest reading, not the
+                                    // ceiling the chart is plotted against.
+                                    showsAxisMaximum: true
                                 )
                                 // The cap lives here, not inside `MetricChart`:
                                 // Overview tiles embed the same chart and size

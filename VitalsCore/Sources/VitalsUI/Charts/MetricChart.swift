@@ -29,6 +29,7 @@ public struct MetricChart: View {
     private let series: [ChartSeries]
     private let style: ChartStyle
     private let colors: [Color]
+    private let showsAxisMaximum: Bool
 
     /// - Parameter series: **Order is load-bearing.** In stacked area mode the
     ///   first series is the base band and every later one accumulates on top of
@@ -37,10 +38,21 @@ public struct MetricChart: View {
     ///   the one painted frontmost, so put the series a reader should track
     ///   first — Performance cores before Efficiency, download before upload.
     /// - Parameter colors: matched to `series` by index; wraps if shorter.
-    public init(series: [ChartSeries], style: ChartStyle, colors: [Color]) {
+    /// - Parameter showsAxisMaximum: Whether an absolute-unit series draws its
+    ///   ceiling (see `drawAxisMaximum`). No default on purpose: this chart is
+    ///   embedded both on hardware pages, which carry no other number for the
+    ///   reading's scale, and in `MetricTile` on the Overview, which already
+    ///   states the same quantity as its own headline — a second copy in 11pt
+    ///   grey directly beneath it restates what the tile just said. The
+    ///   ceiling label was added for the former and silently inherited by the
+    ///   latter, which is exactly the bug a defaulted parameter would let
+    ///   happen again the next time a new embedder shows up. Requiring every
+    ///   call site to choose is what stops that.
+    public init(series: [ChartSeries], style: ChartStyle, colors: [Color], showsAxisMaximum: Bool) {
         self.series = series
         self.style = style
         self.colors = colors
+        self.showsAxisMaximum = showsAxisMaximum
     }
 
     @State private var hoverX: CGFloat?
@@ -205,13 +217,18 @@ public struct MetricChart: View {
     /// into the `Canvas`, so the crosshair overlay — a transient hover state on
     /// an opaque background — draws over it. That overlap is accepted; moving
     /// a transient readout to dodge a static label is not worth the coupling.
+    ///
+    /// Gated on `showsAxisMaximum` on top of the unit check: an embedder that
+    /// already states the same reading elsewhere (`MetricTile`'s headline)
+    /// opts out here rather than the chart guessing from context.
     private func drawAxisMaximum(
         _ bands: [[Double]],
         unit chartUnit: ChartUnit,
         in context: inout GraphicsContext,
         rect: CGRect
     ) {
-        guard let bound = ChartGeometry.axisMaximum(for: bands, unit: chartUnit),
+        guard showsAxisMaximum,
+              let bound = ChartGeometry.axisMaximum(for: bands, unit: chartUnit),
               let label = ChartGeometry.axisLabel(bound, unit: chartUnit) else { return }
 
         var text = context.resolve(Text(label).font(Vitals.Typography.label))

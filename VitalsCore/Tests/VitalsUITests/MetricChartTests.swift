@@ -18,7 +18,8 @@ struct MetricChartTests {
         let chart = MetricChart(
             series: [ChartSeries(name: "CPU", values: Self.wave(60, phase: 0, scale: 0.6))],
             style: .area(stacked: false),
-            colors: [Vitals.Palette.cpu]
+            colors: [Vitals.Palette.cpu],
+            showsAxisMaximum: true
         )
         // No region-specific assertion: a single smoothed curve has no fixed
         // location a probe could target without reimplementing the curve's
@@ -36,7 +37,8 @@ struct MetricChartTests {
                 ChartSeries(name: "Efficiency", values: Self.wave(60, phase: 2, scale: 0.2)),
             ],
             style: .area(stacked: true),
-            colors: Vitals.seriesColors(count: 2)
+            colors: Vitals.seriesColors(count: 2),
+            showsAxisMaximum: true
         )
         let rendered = try renderPNG(chart, size: size, named: "chart-area-stacked")
 
@@ -57,7 +59,8 @@ struct MetricChartTests {
         let chart = MetricChart(
             series: [ChartSeries(name: "CPU", values: Self.wave(40, phase: 0, scale: 0.9))],
             style: .histogram,
-            colors: [Vitals.Palette.cpu]
+            colors: [Vitals.Palette.cpu],
+            showsAxisMaximum: true
         )
         let rendered = try renderPNG(chart, size: size, named: "chart-histogram")
 
@@ -83,7 +86,8 @@ struct MetricChartTests {
         let chart = MetricChart(
             series: [ChartSeries(name: "Idle", values: Array(repeating: 0, count: 20))],
             style: .histogram,
-            colors: [Vitals.Palette.cpu]
+            colors: [Vitals.Palette.cpu],
+            showsAxisMaximum: true
         )
         _ = try renderPNG(chart, size: CGSize(width: 300, height: 132), named: "chart-histogram-zero")
     }
@@ -100,7 +104,8 @@ struct MetricChartTests {
         let chart = MetricChart(
             series: [ChartSeries(name: "CPU", values: values, timestamps: timestamps)],
             style: .area(stacked: false),
-            colors: [Vitals.Palette.cpu]
+            colors: [Vitals.Palette.cpu],
+            showsAxisMaximum: true
         )
         let rendered = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-gap")
         #expect(FileManager.default.fileExists(atPath: rendered.url.path))
@@ -113,7 +118,8 @@ struct MetricChartTests {
         let chart = MetricChart(
             series: [ChartSeries(name: "CPU", values: Self.wave(40, phase: 0, scale: 0.7))],
             style: .area(stacked: false),
-            colors: [Vitals.Palette.cpu]
+            colors: [Vitals.Palette.cpu],
+            showsAxisMaximum: true
         )
         let rendered = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-no-timestamps")
         #expect(FileManager.default.fileExists(atPath: rendered.url.path))
@@ -124,7 +130,8 @@ struct MetricChartTests {
         let chart = MetricChart(
             series: [ChartSeries(name: "CPU", values: [])],
             style: .area(stacked: false),
-            colors: [Vitals.Palette.cpu]
+            colors: [Vitals.Palette.cpu],
+            showsAxisMaximum: true
         )
         // No content is expected at all here; the point of this test is that
         // rendering an empty series doesn't crash, so the harness's own
@@ -137,7 +144,8 @@ struct MetricChartTests {
         let chart = MetricChart(
             series: [ChartSeries(name: "CPU", values: [0.4])],
             style: .area(stacked: false),
-            colors: [Vitals.Palette.cpu]
+            colors: [Vitals.Palette.cpu],
+            showsAxisMaximum: true
         )
         _ = try renderPNG(chart, size: CGSize(width: 300, height: 132), named: "chart-single-sample")
     }
@@ -158,7 +166,8 @@ struct MetricChartTests {
                 ChartSeries(name: "en0", values: [0.4, 0.5]),
             ],
             style: .area(stacked: true),
-            colors: Vitals.seriesColors(count: 2)
+            colors: Vitals.seriesColors(count: 2),
+            showsAxisMaximum: true
         )
         let bands = chart.resolvedBands()
         #expect(bands.allSatisfy { $0.count == 2 })
@@ -175,7 +184,8 @@ struct MetricChartTests {
                 ChartSeries(name: "en0", values: [0.4, 0.5]),
             ],
             style: .area(stacked: false),
-            colors: Vitals.seriesColors(count: 2)
+            colors: Vitals.seriesColors(count: 2),
+            showsAxisMaximum: true
         )
         let bands = chart.resolvedBands()
         #expect(bands.map(\.count).sorted() == [2, 3])
@@ -191,12 +201,20 @@ struct MetricChartTests {
         let absolute = MetricChart(
             series: [ChartSeries(name: "Down", values: [0.01, 0.4, 0.12], unit: .absolute(suffix: "MB/s"))],
             style: .area(stacked: false),
-            colors: [Vitals.Palette.network]
+            colors: [Vitals.Palette.network],
+            // This is the "on" call site the parameter exists to keep
+            // honest — a hardware-page-style embedding that wants the label.
+            showsAxisMaximum: true
         )
         let fractional = MetricChart(
             series: [ChartSeries(name: "Busy", values: [0.2, 0.4, 0.37])],
             style: .area(stacked: false),
-            colors: [Vitals.Palette.cpu]
+            colors: [Vitals.Palette.cpu],
+            // `true` here too, deliberately: this half of the test proves a
+            // fractional chart never draws the label even when the embedder
+            // asks for it, which is a stronger guarantee than proving it only
+            // when both the unit *and* the flag say no.
+            showsAxisMaximum: true
         )
         let corner = CGRect(x: 2, y: 0, width: 90, height: 18)
 

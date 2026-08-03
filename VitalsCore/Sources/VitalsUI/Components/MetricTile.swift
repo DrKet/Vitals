@@ -42,8 +42,18 @@ public struct MetricTile: View {
                     .foregroundStyle(value == nil ? .secondary : .primary)
 
                 if series.contains(where: { !$0.values.isEmpty }) {
-                    MetricChart(series: series, style: .area(stacked: series.count > 1), colors: [accent])
-                        .frame(maxHeight: .infinity)
+                    // The tile's own headline (`value` above) already states
+                    // this reading — an axis-maximum label would restate it a
+                    // second time in 11pt grey directly beneath it. See
+                    // `MetricChart.init`'s doc comment for why this parameter
+                    // has no default that could silently reintroduce that.
+                    MetricChart(
+                        series: series,
+                        style: .area(stacked: series.count > 1),
+                        colors: [accent],
+                        showsAxisMaximum: false
+                    )
+                    .frame(maxHeight: .infinity)
                 } else {
                     Spacer(minLength: 0)
                 }

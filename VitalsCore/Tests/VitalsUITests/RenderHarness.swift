@@ -133,6 +133,50 @@ func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
     return false
 }
 
+/// Offscreen, `glassSurface()` falls back to `.regularMaterial` painted as a
+/// flat, fully-opaque grey — confirmed empirically at this value in this
+/// harness (see `regionHasSaturatedColor`'s doc comment, which found the same
+/// constant from the saturation angle). Stable across every panel, so it
+/// works as a fixed comparison colour rather than one re-sampled per render.
+let glassPanelMaterialFallback = NSColor(calibratedRed: 35.0 / 255, green: 35.0 / 255, blue: 35.0 / 255, alpha: 1)
+
+/// Like `regionHasContent(in:region:)`, but compares every pixel in `region`
+/// against a caller-supplied colour instead of the image's own top-left
+/// corner.
+///
+/// Two things `regionHasContent` cannot tell apart inside a `GlassPanel`,
+/// together: its corner-based background is the *page* background, which
+/// differs from the panel's own opaque material regardless of what is drawn
+/// on top — so every pixel inside a panel already "has content" by that
+/// definition (the same problem `regionHasSaturatedColor`'s doc comment
+/// describes from the saturation angle). And `regionHasSaturatedColor` itself
+/// cannot help either, because the mark this exists to find — `MetricChart`'s
+/// axis-maximum label, `.white.opacity(0.45)` text — is neutral grey with no
+/// saturation to detect. Neither existing probe fits a low-contrast,
+/// non-saturated mark inside a material panel; this is the one that does,
+/// by taking the background as a parameter instead of assuming it.
+@MainActor
+func regionHasContent(in image: RenderedImage, region: CGRect, differingFrom background: NSColor) throws -> Bool {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return false }
+
+    for x in minX..<maxX {
+        for y in minY..<maxY {
+            if bitmap.colorAt(x: x, y: y) != background { return true }
+        }
+    }
+    return false
+}
+
 /// Where a hardware page's primary chart actually paints, inside an
 /// `800x700` render — shared by every page's "renders a full page from a
 /// live store" test so they all probe the same, empirically-verified spot
@@ -159,11 +203,19 @@ func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
 /// guaranteed floor rather than right at its edge.
 ///
 /// Each page's "renders a full page" test picks its sample data so its
-/// chart's topmost band sits within the top ~10% of the canvas (fraction
-/// series: a stacked total near 1.0; absolute series such as throughput
-/// auto-scale to their own peak, so any non-zero reading already touches the
-/// canvas top) — see each test's comment — which is what makes one shared,
-/// generously-sized rectangle correct for all five without per-page tuning.
+/// chart's topmost band sits high in the canvas — see each test's comment —
+/// which is what makes one shared, generously-sized rectangle correct for all
+/// five without per-page tuning.
+///
+/// For a fraction series that means a stacked total near 1.0. For an absolute
+/// series it takes deliberate choosing: throughput charts no longer hug their
+/// own peak. `ChartGeometry.upperBound` rounds an absolute chart's ceiling up
+/// to the nearest `m x 10^n` (see `niceUpperBound`), so a reading is drawn at
+/// `value / roundedBound` of the height, not at the top — a peak of 3.0
+/// against a bound of 5 sits at 60%, well below this rectangle. Pick fixture
+/// values whose total lands near a nice bound rather than assuming any
+/// non-zero reading reaches the canvas top; that assumption was true before
+/// the rounding landed and it broke three page tests when it stopped being.
 let chartCanvasProbeRegion = CGRect(x: 40, y: 118, width: 720, height: 85)
 
 /// True when any pixel inside `region` is a saturated (non-grayscale)
