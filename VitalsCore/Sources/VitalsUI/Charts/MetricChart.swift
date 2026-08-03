@@ -69,7 +69,8 @@ public struct MetricChart: View {
                 }
                 // All series on one chart share a unit — see `unit(for:)` —
                 // so the first is representative of the whole chart.
-                let bound = ChartGeometry.upperBound(for: bands, unit: series.first?.unit ?? .fraction)
+                let chartUnit = series.first?.unit ?? .fraction
+                let bound = ChartGeometry.upperBound(for: bands, unit: chartUnit)
 
                 switch style {
                 case .area:
@@ -104,7 +105,7 @@ public struct MetricChart: View {
                     let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
                     drawGridlines(in: &context, rect: plotRect)
                     drawAreas(bands, bound: bound, in: &context, rect: plotRect)
-                    drawAxisMaximum(bands, in: &context, rect: plotRect)
+                    drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: plotRect)
                 case .histogram:
                     // Bars are filled shapes anchored to `rect.maxY`, not a
                     // centred stroke or a smoothed curve between samples —
@@ -112,7 +113,7 @@ public struct MetricChart: View {
                     // histogram mode keeps the full canvas.
                     drawGridlines(in: &context, rect: canvasRect)
                     drawHistogram(bands, bound: bound, in: &context, rect: canvasRect)
-                    drawAxisMaximum(bands, in: &context, rect: canvasRect)
+                    drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: canvasRect)
                 }
             }
             .overlay { crosshair(in: rect) }
@@ -206,10 +207,10 @@ public struct MetricChart: View {
     /// a transient readout to dodge a static label is not worth the coupling.
     private func drawAxisMaximum(
         _ bands: [[Double]],
+        unit chartUnit: ChartUnit,
         in context: inout GraphicsContext,
         rect: CGRect
     ) {
-        let chartUnit = series.first?.unit ?? .fraction
         guard let bound = ChartGeometry.axisMaximum(for: bands, unit: chartUnit),
               let label = ChartGeometry.axisLabel(bound, unit: chartUnit) else { return }
 

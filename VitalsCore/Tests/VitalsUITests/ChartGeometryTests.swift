@@ -264,6 +264,20 @@ struct ChartGeometryTests {
         }
     }
 
+    /// `peak.isFinite` guards `Int(floor(log10(peak)))` below it: without it,
+    /// `+infinity` reaches that conversion and `Int(Double.infinity)` is a
+    /// Swift runtime trap, not a thrown error. Every degenerate input —
+    /// zero, negative, NaN, and infinite — must be caught before that line
+    /// and turned into the same honest floor.
+    @Test("degenerate peaks fall back to the absolute floor instead of reaching the log")
+    func degeneratePeaksFallBackToFloor() {
+        for peak in [0.0, -1.0, Double.nan, Double.infinity] {
+            let bound = ChartGeometry.niceUpperBound(atLeast: peak)
+            #expect(abs(bound.value - ChartGeometry.absoluteFloor) < 1e-12)
+            #expect(bound.decimals == 3)
+        }
+    }
+
     @Test("decimal places are derived from the bound's own exponent")
     func niceBoundDecimals() {
         #expect(ChartGeometry.niceUpperBound(atLeast: 41.25).decimals == 0)
