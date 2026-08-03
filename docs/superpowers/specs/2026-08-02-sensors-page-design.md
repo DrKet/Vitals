@@ -48,31 +48,61 @@ whole degrees; the battery moved 0.3 °C.
 
 ## 1. Data layer — `SystemMetrics`
 
-`TemperatureSampler` resolves six private symbols from `IOKit.framework` with
+`IOHIDSensorProvider` resolves six private symbols from `IOKit.framework` with
 `dlsym` (not linking: they appear in no public header, and a symbol vanishing
 on a future OS must be a recoverable `nil`, not a launch failure). It matches
 `{"PrimaryUsagePage": 0xff00}` and reads event type 15 at field `15 << 16`.
+`scripts/spike-sensors.swift` is the working reference for every one of those
+calls — it produced the readings in the spike, so port from it rather than
+rediscovering the signatures.
+
+### Build on the interface that already exists — do not add a parallel one
+
+`Sources/SystemMetrics/Sensors/SensorReading.swift` already defines
+`SensorReading` (`name`, `kind`, `value`), a `SensorProviding` protocol
+(`availability` + `readings()`), and an `UnavailableSensorProvider` placeholder
+whose own doc comment says the IOHID implementation is "a dedicated task in a
+later plan". This is that task. `HardwareProfile.detect(sysctl:sensors:)`
+already takes a `SensorProviding` and defaults to the placeholder, and already
+surfaces `sensorsAvailable: MetricAvailability`.
+
+So: **implement the protocol, do not invent a second vocabulary.** An earlier
+draft of this spec proposed a parallel `TemperatureReading`/`TemperatureSample`
+pair; that would have duplicated a type already wired into `HardwareProfile`.
+
+Two additions to the existing file:
 
 ```swift
-/// One named temperature, aggregated across every sensor reporting that name.
-public struct TemperatureReading: Sendable, Equatable {
-    /// The raw `Product` string, e.g. "PMU tdie0". Never a friendly label —
-    /// see "Naming" below.
+public struct SensorReading: Sendable, Equatable {
     public let name: String
-    /// The hottest of the instances sharing `name`.
-    public let celsius: Double
-    /// How many sensors reported it. A measured fact, not metadata: it is the
+    public let kind: Kind
+    public let value: Double
+    /// How many sensors reported this name. Added for this milestone: with no
+    /// unique identity available, an aggregated reading must say how many
+    /// sensors stand behind it. A measured fact, not metadata — it is the
     /// honest answer to "which sensor is this", which has no better answer.
     public let sensorCount: Int
 }
 
-public struct TemperatureSample: Sendable, Equatable {
-    public let readings: [TemperatureReading]
+/// One tick of sensor data. `SensorReading` alone cannot carry `thermalState`,
+/// which is a property of the machine rather than of any sensor.
+public struct SensorSample: Sendable, Equatable {
+    public let readings: [SensorReading]
     /// Apple's own severity signal. The ONLY severity source in this design —
     /// see "Severity" below.
     public let thermalState: ProcessInfo.ThermalState
 }
 ```
+
+`SensorReading.Kind` keeps its `fanRPM` and `powerWatts` cases even though this
+milestone emits neither. They are not dead branches in the AGENTS.md sense —
+nothing switches over `Kind` expecting them — and the spike established that
+both are real future work rather than speculation.
+
+The concrete `IOHIDSensorProvider: SensorProviding` replaces
+`UnavailableSensorProvider` as `HardwareProfile.detect`'s default.
+`UnavailableSensorProvider` stays, because it is what makes the page's
+unavailable path testable without hardware.
 
 **Aggregation rule: group by `name`, take the max, count the instances.** Max
 rather than mean because a thermal readout is about the hottest point, and mean
