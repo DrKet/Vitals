@@ -191,20 +191,29 @@ to be a different page.
 
 ## Current state
 
-Complete: the metrics foundation, the UI shell, and the CPU, Memory, GPU,
-Storage and Network pages.
+Complete: the metrics foundation, the UI shell, the Overview (tiles for all
+five series), the Processes table, the CPU, Memory, GPU, Storage and Network
+pages, and a distributable `.app` bundle (v0.1.0).
 
-Not built yet: the Processes pane; the Sensors page (temperatures, fans and
-power all need `IOHIDEventSystemClient`, a private framework needing an
-empirical spike); desktop widgets, the menu-bar extra and a real `.app` bundle;
-a privileged helper for per-process GPU, power and SMART health; and the
-Startup / Services / Users / History pages.
+Not built yet: the Sensors page (temperatures, fans and power all need
+`IOHIDEventSystemClient`, a private framework needing an empirical spike);
+desktop widgets and the menu-bar extra; a privileged helper for per-process
+GPU, power and SMART health; and the Startup / Services / Users / History
+pages.
 
 Known gaps, if you're looking for something to pick up:
 
-- The Overview has tiles for all five series (CPU, Memory, GPU, Storage,
-  Network).
+- The Processes table has no `selection:` binding. Every deferred slice of
+  that milestone — context menu, inspector, tree view — needs one first.
+- `ProcessComparator.compareValues` has a NaN/transitivity edge. Unreachable
+  today, because nothing feeds it a NaN.
+
+Worth knowing, but working as intended:
+
 - Processes shows a column of em dashes for the first ~5-10s after a listing
-  arrives, before `ProcessCPUTracker` has the two samples it needs to compute
-  a rate. Correct, and now explained on-page by a caption — see
-  `ProcessesPage.showsMeasuringNotice(for:)`.
+  arrives, before `ProcessCPUTracker` has the two samples a rate needs. That
+  is the honest reading of "not measured yet", and it is explained on-page by
+  a caption — see `ProcessesPage.showsMeasuringNotice(for:)`.
+- A hardware page's chart is capped at `Metrics.chartMaxHeight`, so a tall
+  window leaves real empty space below the last panel rather than growing the
+  chart without limit. Deliberate — see the token's doc comment.
