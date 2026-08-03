@@ -202,12 +202,9 @@ Startup / Services / Users / History pages.
 
 Known gaps, if you're looking for something to pick up:
 
-- The Overview has tiles for CPU and Memory only. GPU, Storage and Network have
-  live series and pages but no tile.
-- The chart dominates the four pages whose secondary slot is empty — roughly 55%
-  of window height. CPU looks right because its core grid fills that slot.
-- The crosshair readout clips at the extreme right edge of a chart: it measures
-  its own size, starting at zero, so the first hover positions against a
-  zero-width box.
-- Absolute-unit charts scale to their own peak with no axis label, so an idle
-  link and a saturated one draw the same shape.
+- The Overview has tiles for all five series (CPU, Memory, GPU, Storage,
+  Network).
+- Processes shows a column of em dashes for the first ~5-10s after a listing
+  arrives, before `ProcessCPUTracker` has the two samples it needs to compute
+  a rate. Correct, and now explained on-page by a caption — see
+  `ProcessesPage.showsMeasuringNotice(for:)`.
