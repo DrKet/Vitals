@@ -486,4 +486,27 @@ struct ProcessesPageTests {
         // never produced by any column and stands in for one here.
         #expect(ProcessesPage.field(for: \ProcessRow.cpuFraction) == nil)
     }
+
+    // MARK: Cold-start measuring notice
+
+    @Test("the measuring notice shows only between a listing and its first rates")
+    func measuringNoticeCondition() {
+        // No listing at all: the page already says "No process listing
+        // available." and must not also claim to be measuring.
+        #expect(ProcessesPage.showsMeasuringNotice(for: nil) == false)
+
+        // A listing with no rates yet — the 5-10s cold window this exists for.
+        let cold = ProcessSeriesSample(
+            processes: [Self.snapshot(1, "launchd", cpuTime: 12)],
+            cpuUsage: [:]
+        )
+        #expect(ProcessesPage.showsMeasuringNotice(for: cold) == true)
+
+        // Rates have landed. The notice must go on its own.
+        let warm = ProcessSeriesSample(
+            processes: [Self.snapshot(1, "launchd", cpuTime: 12)],
+            cpuUsage: [1: 0.02]
+        )
+        #expect(ProcessesPage.showsMeasuringNotice(for: warm) == false)
+    }
 }

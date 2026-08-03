@@ -148,6 +148,11 @@ public struct ProcessesPage: View {
 
         return VStack(alignment: .leading, spacing: Vitals.Metrics.tileSpacing) {
             header
+            if Self.showsMeasuringNotice(for: store.processes) {
+                Text("Measuring — CPU and disk rates need a second sample.")
+                    .font(Vitals.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
             content(rows: rows, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum)
         }
         .padding(Vitals.Metrics.contentPadding)
@@ -363,6 +368,23 @@ public struct ProcessesPage: View {
         }
         let field = Self.field(for: active.keyPath) ?? .cpu
         return ProcessComparator(field: field, order: active.order)
+    }
+
+    /// Whether to explain the column of em dashes a cold page shows.
+    ///
+    /// True only in the window between the first listing arriving and the
+    /// first CPU rates being computable — `ProcessCPUTracker` needs two
+    /// samples, so for roughly 5-10 seconds every rate is genuinely
+    /// unmeasured. The dashes are correct and stay; this only says why.
+    ///
+    /// Keyed on the same `cpuUsage.isEmpty` condition the `onChange` handler
+    /// in `body` already watches to re-sort, rather than a second notion of
+    /// "cold" that could drift from it. A nil sample is excluded because that
+    /// state has its own "No process listing available." message, and showing
+    /// both would claim to be measuring something that was never listed.
+    static func showsMeasuringNotice(for sample: ProcessSeriesSample?) -> Bool {
+        guard let sample else { return false }
+        return sample.cpuUsage.isEmpty
     }
 
     static func field(for keyPath: PartialKeyPath<ProcessRow>) -> ProcessSortField? {
