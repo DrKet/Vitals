@@ -195,13 +195,23 @@ Complete: the metrics foundation, the UI shell, the Overview (tiles for all
 five series), the Processes table, the CPU, Memory, GPU, Storage, Network and
 Sensors pages, and a distributable `.app` bundle (v0.1.0).
 
-The Sensors page shows temperatures only. Fans and component power remain
-unbuilt: the spike that unlocked `IOHIDEventSystemClient` temperature reads
-(`docs/superpowers/spikes/2026-08-02-sensors-spike.md`) only exercised event
-type `15` (temperature); fan RPM and power wattage are separate IOHID event
-types the spike never probed, so there is no evidence yet that the same
-private-framework path even exposes them on this hardware. `SensorReading.Kind`
-already models `.fanRPM` and `.powerWatts` for whenever that spike happens.
+The Sensors page shows temperatures only, and the reason matters if you are
+thinking of adding fans.
+
+The spike (`docs/superpowers/spikes/2026-08-02-sensors-spike.md`) did **not**
+merely skip them. It swept **every** event type `0...63` across all 71 services
+on usage page `0xff00`, and only two families answered at all: usage `0x0005`
+(64 temperature sensors, event type `15`) and one service on `0x0004` stuck at
+`0.000`. The two services on usage `0x000b` — a tempting match for this
+machine's two fans — produce no event for any type in that range. So fans are
+positively **not reachable through `IOHIDEventSystemClient`**; they need a
+separate AppleSMC spike, not another pass over this API.
+
+Component power is a different matter again: spec §4.6 routes it through the
+IOReport Energy Model channel, an unrelated API the spike never touched.
+
+`SensorReading.Kind` already models `.fanRPM` and `.powerWatts` for whenever
+those land.
 
 Not built yet: desktop widgets and the menu-bar extra; a privileged helper for
 per-process GPU, power and SMART health; and the Startup / Services / Users /
