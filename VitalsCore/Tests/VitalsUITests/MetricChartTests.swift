@@ -224,4 +224,44 @@ struct MetricChartTests {
         #expect(try regionHasContent(in: withLabel, region: corner))
         #expect(try !regionHasContent(in: without, region: corner))
     }
+
+    // MARK: Floating baseline (temperature)
+
+    /// A zero-based chart would compress the spike's real 2.13 °C swing into
+    /// 4% of the canvas height. With a floating baseline it must occupy a
+    /// visible fraction of it — this asserts the band is drawn well away from
+    /// the bottom edge, which can only happen if the lower bound is non-zero.
+    @Test("a temperature chart plots against a floating baseline")
+    func temperatureChartFloatsItsBaseline() throws {
+        let series = [ChartSeries(
+            name: "Die",
+            values: [36.69, 37.5, 38.82],
+            unit: .temperature
+        )]
+        let chart = MetricChart(series: series, style: .area(stacked: false), colors: [Vitals.Palette.cpu], showsAxisMaximum: true)
+        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-floating")
+
+        // The discriminator is where the STROKE sits, not where the fill
+        // reaches: `drawAreas` fills from the curve down to the baseline in
+        // both configurations, so "is there colour in the lower half" is true
+        // either way and would assert nothing.
+        //
+        // Bounds 35–40 put the samples at 34%–76% of the height, i.e. the
+        // curve runs through the middle. Zero-based bounds (0–40) would put
+        // them at 92%–97%, i.e. hard against the top.
+        let topStrip = CGRect(x: 0, y: 0, width: 400, height: 24)
+        let middleBand = CGRect(x: 0, y: 60, width: 400, height: 80)
+        #expect(try !regionHasSaturatedColor(in: rendered, region: topStrip))
+        #expect(try regionHasSaturatedColor(in: rendered, region: middleBand))
+    }
+
+    @Test("a temperature chart labels both ends of its scale")
+    func temperatureChartLabelsBothEnds() throws {
+        let series = [ChartSeries(name: "Die", values: [36.69, 38.82], unit: .temperature)]
+        let chart = MetricChart(series: series, style: .area(stacked: false), colors: [Vitals.Palette.cpu], showsAxisMaximum: true)
+        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-labels")
+
+        #expect(try regionHasContent(in: rendered, region: CGRect(x: 2, y: 0, width: 90, height: 18)))
+        #expect(try regionHasContent(in: rendered, region: CGRect(x: 2, y: 182, width: 90, height: 18)))
+    }
 }
