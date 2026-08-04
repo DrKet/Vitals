@@ -61,6 +61,7 @@ public struct CPUPage: View {
             primaryValue: store.cpu.map { "\(Int(($0.total * 100).rounded()))%" },
             series: topology.map { Self.clusterSeries(history: store.cpuHistory, topology: $0) } ?? [],
             accent: Vitals.Palette.cpu,
+            stacked: true,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {

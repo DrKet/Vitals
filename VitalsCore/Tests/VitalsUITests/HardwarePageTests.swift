@@ -27,6 +27,7 @@ struct HardwarePageTests {
                 ChartSeries(name: "App", values: [0.45, 0.45, 0.45]),
             ],
             accent: Vitals.Palette.memory,
+            stacked: true,
             stats: stats,
             disclosureKey: "test.memory"
         ) {
@@ -34,6 +35,40 @@ struct HardwarePageTests {
         } specifications: {
             StatRow(label: "Type", value: "LPDDR5")
         }
+    }
+
+    /// Builds the same two-series temperature page at either stacking setting.
+    private func page(stacked: Bool) -> some View {
+        HardwarePage(
+            title: "Sensors", vendorName: nil, showsAppleMark: false,
+            primaryValue: "38.8 °C",
+            series: [
+                ChartSeries(name: "Die", values: [38.0, 38.0, 38.0], unit: .temperature),
+                ChartSeries(name: "Battery", values: [28.0, 28.0, 28.0], unit: .temperature),
+            ],
+            accent: Vitals.Palette.cpu,
+            stacked: stacked,
+            stats: [],
+            disclosureKey: "test.sensors"
+        ) { EmptyView() } specifications: { EmptyView() }
+    }
+
+    /// Temperatures must never sum: a die at 38 °C and a battery at 28 °C
+    /// would draw a band at 66 °C, a value no sensor reported.
+    @Test("stacking actually changes what a page draws")
+    func stackingChangesWhatIsDrawn() throws {
+        let unstacked = try renderPNG(page(stacked: false), size: CGSize(width: 800, height: 700), named: "hardware-page-unstacked")
+        let stacked = try renderPNG(page(stacked: true), size: CGSize(width: 800, height: 700), named: "hardware-page-stacked")
+
+        // Compares the two renders rather than probing an absolute position.
+        //
+        // A position assertion would assert nothing here: BOTH configurations
+        // auto-scale their own bounds, so the bands land at nearly the same
+        // RELATIVE height either way (unstacked 87%/20% of a 25–40 scale;
+        // stacked 88.6%/8.6% of a 35–70 one). The thing that actually differs
+        // is the whole picture, and a `stacked:` parameter that was accepted
+        // and then ignored would produce two identical images.
+        #expect(try renderedImagesDiffer(unstacked, stacked, in: chartCanvasProbeRegion))
     }
 
     @Test("renders a full page with a value, chart, stats and disclosure")
@@ -86,6 +121,7 @@ struct HardwarePageTests {
             primaryValue: nil,
             series: [],
             accent: Vitals.Palette.gpu,
+            stacked: true,
             stats: [],
             disclosureKey: "test.empty"
         ) {

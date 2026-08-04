@@ -66,6 +66,7 @@ public struct MemoryPage: View {
                 Self.breakdownSeries(history: store.memoryHistory, installedBytes: $0.totalBytes)
             } ?? [],
             accent: Vitals.Palette.memory,
+            stacked: true,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {
