@@ -85,7 +85,7 @@ public struct MetricChart: View {
                 let scale = ChartGeometry.bounds(for: bands, unit: chartUnit)
 
                 switch style {
-                case .area:
+                case .area(let stacked):
                     // Gridlines are drawn against the *same* inset rect as the
                     // data, not the raw canvas: they mark fractions of the
                     // value scale, and that scale now lives inside
@@ -116,7 +116,14 @@ public struct MetricChart: View {
                     // pixel-level comparison this was based on.
                     let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
                     drawGridlines(in: &context, rect: plotRect)
-                    drawAreas(bands, lowerBound: scale.lower, upperBound: scale.upper, in: &context, rect: plotRect)
+                    drawAreas(
+                        bands,
+                        fillOpacity: Self.fillOpacity(stacked: stacked, bandCount: bands.count),
+                        lowerBound: scale.lower,
+                        upperBound: scale.upper,
+                        in: &context,
+                        rect: plotRect
+                    )
                     drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: plotRect)
                     drawAxisMinimum(bands, unit: chartUnit, in: &context, rect: plotRect)
                 case .histogram:
@@ -279,15 +286,36 @@ public struct MetricChart: View {
         }
     }
 
+    /// How opaque the gradient beneath a band is.
+    ///
+    /// Stacked bands tile: each sits on the one below, so their fills abut
+    /// rather than overlap and the full-weight gradient reads exactly as spec
+    /// §6.3 describes. Unstacked bands do not — several independent readings
+    /// at different heights each fill down to the same baseline, so the
+    /// highest one's sheet lies over every line beneath it. On the Sensors
+    /// page that buried two of three series and made an unstacked chart read
+    /// as a stacked one.
+    ///
+    /// Keyed on overlap rather than on the unit, because the problem is
+    /// geometric rather than anything to do with temperature — any future
+    /// non-additive page inherits the fix. And gated on there being something
+    /// to overlap: a single band cannot cover anything, so an Overview tile
+    /// (which passes `stacked: series.count > 1`, i.e. `false` when it has one
+    /// series) keeps its full-weight fill.
+    static func fillOpacity(stacked: Bool, bandCount: Int) -> Double {
+        stacked || bandCount < 2 ? 0.45 : 0.15
+    }
+
     private func drawAreas(
         _ bands: [[Double]],
+        fillOpacity: Double,
         lowerBound: Double,
         upperBound: Double,
         in context: inout GraphicsContext,
         rect: CGRect
     ) {
         // Painted back to front (highest index first) so series 0 is painted
-        // last. Translucent fills (0.45 alpha fading to 0) are what actually
+        // last. Translucent fills (see `fillOpacity`) are what actually
         // keep every band visible regardless of paint order — this ordering
         // instead controls the opaque strokes and the live dot: series 0's
         // stroke ends up on top of every other band's, and its live dot
@@ -310,23 +338,19 @@ public struct MetricChart: View {
 
                 let line = ChartGeometry.smoothPath(through: slice)
 
-                // Some units draw a bare stroke — see `ChartUnit.fillsUnderCurve`
-                // for why an area beneath a temperature curve measures nothing.
-                if (series.first?.unit ?? .fraction).fillsUnderCurve {
-                    var fill = line
-                    fill.addLine(to: CGPoint(x: slice[slice.count - 1].x, y: rect.maxY))
-                    fill.addLine(to: CGPoint(x: slice[0].x, y: rect.maxY))
-                    fill.closeSubpath()
+                var fill = line
+                fill.addLine(to: CGPoint(x: slice[slice.count - 1].x, y: rect.maxY))
+                fill.addLine(to: CGPoint(x: slice[0].x, y: rect.maxY))
+                fill.closeSubpath()
 
-                    context.fill(
-                        fill,
-                        with: .linearGradient(
-                            Gradient(colors: [color.opacity(0.45), color.opacity(0)]),
-                            startPoint: CGPoint(x: rect.midX, y: rect.minY),
-                            endPoint: CGPoint(x: rect.midX, y: rect.maxY)
-                        )
+                context.fill(
+                    fill,
+                    with: .linearGradient(
+                        Gradient(colors: [color.opacity(fillOpacity), color.opacity(0)]),
+                        startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                        endPoint: CGPoint(x: rect.midX, y: rect.maxY)
                     )
-                }
+                )
                 context.stroke(line, with: .color(color), lineWidth: Self.strokeWidth)
             }
 

@@ -255,41 +255,50 @@ struct MetricChartTests {
         #expect(try regionHasSaturatedColor(in: rendered, region: middleBand))
     }
 
-    /// Three independent temperatures are not a decomposition, so filling
-    /// under each curve buries the cooler two beneath the hottest one's wash
-    /// and makes an unstacked chart read as stacked. This probes well below
-    /// the curve but above the baseline: with a fill that band is the series'
-    /// own accent colour, without one it is empty.
-    @Test("a temperature chart strokes its curve without filling beneath it")
-    func temperatureChartDoesNotFillUnderItsCurve() throws {
-        let series = [ChartSeries(name: "Die", values: [38.0, 38.0, 38.0], unit: .temperature)]
-        let chart = MetricChart(
-            series: series, style: .area(stacked: false),
-            colors: [Vitals.Palette.sensors], showsAxisMaximum: true
-        )
-        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-unfilled")
+    /// The rule that keeps the Sensors chart both legible and consistent with
+    /// the rest of the app.
+    ///
+    /// Coverage lives on this pure function rather than on a render probe for
+    /// a specific reason: `renderPNG` writes PNGs with UNPREMULTIPLIED colour,
+    /// so a pixel at 0.15 alpha still stores full-strength RGB. A saturation
+    /// probe therefore cannot tell a light fill from a heavy one — it sees
+    /// both. The render test below can only prove a fill was drawn at all;
+    /// this is what proves it was drawn at the right weight.
+    @Test("fill weight is chosen by overlap, not by unit")
+    func fillWeightIsKeyedOnOverlap() {
+        // Stacked bands tile rather than overlap, so they keep spec §6.3's
+        // full-weight gradient.
+        #expect(abs(MetricChart.fillOpacity(stacked: true, bandCount: 4) - 0.45) < 1e-9)
 
-        // Bounds for a flat 38 are 35–40, so the curve sits at 60% of the
-        // height and everything below it would be fill.
-        let beneathTheCurve = CGRect(x: 20, y: 130, width: 360, height: 50)
-        #expect(try !regionHasSaturatedColor(in: rendered, region: beneathTheCurve))
+        // A lone band cannot cover anything. This is the Overview tile case:
+        // `MetricTile` passes `stacked: series.count > 1`, i.e. `false` for a
+        // single-series tile, and those must not lighten.
+        #expect(abs(MetricChart.fillOpacity(stacked: false, bandCount: 1) - 0.45) < 1e-9)
+
+        // Several independent readings at different heights each fill to the
+        // same baseline, so the highest one's sheet lies over the rest.
+        #expect(MetricChart.fillOpacity(stacked: false, bandCount: 3) < 0.45)
     }
 
-    /// The converse guard: gating the fill on the unit must not quietly
-    /// disable it for the five pages that depend on it.
-    @Test("an absolute-unit chart still fills beneath its curve")
-    func absoluteChartStillFillsUnderItsCurve() throws {
-        let series = [ChartSeries(name: "Down", values: [4.0, 4.0, 4.0], unit: .absolute(suffix: "MB/s"))]
+    /// Guards against silently shipping bare strokes: an earlier revision
+    /// removed the fill from temperature charts entirely, which made Sensors
+    /// the only page in the app not drawing spec §6.3's area style.
+    @Test("an unstacked multi-series chart still fills beneath its curves")
+    func unstackedMultiSeriesChartStillFills() throws {
+        let series = [
+            ChartSeries(name: "Die", values: [38.0, 38.0, 38.0], unit: .temperature),
+            ChartSeries(name: "Battery", values: [26.0, 26.0, 26.0], unit: .temperature),
+        ]
         let chart = MetricChart(
             series: series, style: .area(stacked: false),
-            colors: [Vitals.Palette.network], showsAxisMaximum: true
+            colors: [Vitals.Palette.sensors, Vitals.Palette.cpu], showsAxisMaximum: true
         )
-        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-absolute-filled")
+        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-faint-fill")
 
-        // Bound for a flat 4.0 rounds to 5, so the curve sits at 80% and the
-        // band below it is filled.
-        let beneathTheCurve = CGRect(x: 20, y: 130, width: 360, height: 50)
-        #expect(try regionHasSaturatedColor(in: rendered, region: beneathTheCurve))
+        // Bounds for 26...38 are 25–40, so the top curve sits at ~87% and the
+        // band well beneath it is fill rather than stroke.
+        let beneathTheTopCurve = CGRect(x: 20, y: 60, width: 360, height: 40)
+        #expect(try regionHasSaturatedColor(in: rendered, region: beneathTheTopCurve))
     }
 
     @Test("a temperature chart labels both ends of its scale")
