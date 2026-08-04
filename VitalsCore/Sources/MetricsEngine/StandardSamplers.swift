@@ -16,6 +16,7 @@ public enum StandardSamplers {
         await engine.register(processSampler(), for: .processes, cadence: .slow)
         await engine.register(diskIOSampler(), for: .diskIO, cadence: .fast)
         await engine.register(sensorSampler(), for: .sensors, cadence: .slow)
+        await engine.register(batterySampler(), for: .battery, cadence: .slow)
     }
 
     private enum SamplerError: Error {
@@ -113,6 +114,17 @@ public enum StandardSamplers {
                 readings: readings,
                 thermalState: ProcessInfo.processInfo.thermalState
             )
+        }
+    }
+
+    /// Slow cadence: the gas gauge itself only refreshes every few seconds, so
+    /// a 1 Hz sampler would spend power redrawing identical values.
+    private static func batterySampler() -> AnySampler {
+        AnySampler {
+            // Throws rather than publishing a zeroed sample: a machine with no
+            // battery must read "Unavailable", not 0 W.
+            guard let sample = BatterySampler.read() else { throw SamplerError.unavailable }
+            return sample
         }
     }
 }

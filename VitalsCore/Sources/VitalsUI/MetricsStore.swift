@@ -44,6 +44,9 @@ public final class MetricsStore {
     public private(set) var sensors: SensorSample?
     public private(set) var sensorHistory: [Timestamped<SensorSample>] = []
 
+    public private(set) var battery: BatterySample?
+    public private(set) var batteryHistory: [Timestamped<BatterySample>] = []
+
     /// Latest only — volume capacity changes over minutes, not seconds, so a
     /// 600-sample ring of near-identical readings would be pure waste.
     public private(set) var volumes: [Volume]?
@@ -137,11 +140,6 @@ public final class MetricsStore {
 
         // A payload of an unexpected type is dropped rather than crashing or
         // substituted with a zero — an unreadable series shows as absent.
-        //
-        // TODO(battery page): once `SeriesKey.battery` exists, add a `.battery`
-        // arm here that stores the live `BatterySample` and calls
-        // `readBatteryHealthOnce()` — that is the "first `.battery` sample"
-        // this store's `batteryHealth` doc comment refers to.
         switch key {
         case .cpu:
             guard let sample = value.value as? CPULoadSample else { return }
@@ -181,13 +179,21 @@ public final class MetricsStore {
             sensors = sample
             append(Timestamped(timestamp: value.timestamp, sample: sample), to: &sensorHistory)
             armStalenessWatch(for: key)
+        case .battery:
+            guard let sample = value.value as? BatterySample else { return }
+            battery = sample
+            append(Timestamped(timestamp: value.timestamp, sample: sample), to: &batteryHistory)
+            armStalenessWatch(for: key)
+            // First live sample is the trigger, not `init`: see `batteryHealth`'s
+            // doc comment for why the system_profiler read is deferred to here.
+            readBatteryHealthOnce()
         }
     }
 
     /// Reads battery health once, the first time it is needed, and never
     /// again — `hasReadBatteryHealth` is what makes repeated calls free after
-    /// the first. Not yet called from `apply`: no `.battery` case exists in
-    /// `SeriesKey` yet, so this is wired in by the task that adds one.
+    /// the first. Called from the `.battery` arm of `apply`, on the first live
+    /// sample.
     private func readBatteryHealthOnce() {
         guard !hasReadBatteryHealth else { return }
         hasReadBatteryHealth = true
@@ -218,7 +224,7 @@ public final class MetricsStore {
     private func expiresWhenStale(_ key: SeriesKey) -> Bool {
         switch key {
         case .storage: false
-        case .cpu, .memory, .gpu, .network, .diskIO, .processes, .sensors: true
+        case .cpu, .memory, .gpu, .network, .diskIO, .processes, .sensors, .battery: true
         }
     }
 
@@ -277,6 +283,7 @@ public final class MetricsStore {
         case .diskIO: diskIO = nil
         case .processes: processes = nil
         case .sensors: sensors = nil
+        case .battery: battery = nil
         }
     }
 

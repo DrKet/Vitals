@@ -51,15 +51,20 @@ struct OverheadTests {
         // fixed by retrying) rather than a bug. Every other series is
         // something the product commits to reporting on any supported Mac, so
         // it keeps the full-strength proof.
-        let seriesRequiringSamples = SeriesKey.allCases.filter { $0 != .sensors }
+        //
+        // .battery is excluded for the same reason: this machine running the
+        // suite may be a desktop Mac with no `AppleSmartBattery` service at
+        // all, in which case `BatterySampler.read()` legitimately and
+        // permanently returns `nil` — surfaced as "Unavailable", not a bug.
+        let seriesRequiringSamples = SeriesKey.allCases.filter { $0 != .sensors && $0 != .battery }
         var sampledSeries: [SeriesKey] = []
         for key in seriesRequiringSamples where await engine.sampleCount(for: key) > 0 {
             sampledSeries.append(key)
         }
 
-        // .sensors only needs to prove it was registered and started ticking —
-        // `activeSeries` reflects that a sampling task exists, independent of
-        // whether the sampler itself ever succeeds.
+        // .sensors and .battery only need to prove they were registered and
+        // started ticking — `activeSeries` reflects that a sampling task
+        // exists, independent of whether the sampler itself ever succeeds.
         let active = await engine.activeSeries
 
         consumers.forEach { $0.cancel() }
@@ -69,6 +74,7 @@ struct OverheadTests {
             "Only \(sampledSeries.count) of \(seriesRequiringSamples.count) series produced samples: \(sampledSeries)"
         )
         #expect(active.contains(.sensors), ".sensors was not registered/started")
+        #expect(active.contains(.battery), ".battery was not registered/started")
 
         let utilisation = cpuUsed / wallElapsed
 

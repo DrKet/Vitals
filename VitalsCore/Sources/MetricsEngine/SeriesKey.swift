@@ -10,6 +10,7 @@ public enum SeriesKey: String, Sendable, Hashable, CaseIterable {
     case processes
     case diskIO
     case sensors
+    case battery
 }
 
 /// How often a series is refreshed. Cheap counters run fast; expensive
