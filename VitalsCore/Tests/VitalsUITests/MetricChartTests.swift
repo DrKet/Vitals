@@ -262,6 +262,29 @@ struct MetricChartTests {
         let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-labels")
 
         #expect(try regionHasContent(in: rendered, region: CGRect(x: 2, y: 0, width: 90, height: 18)))
-        #expect(try regionHasContent(in: rendered, region: CGRect(x: 2, y: 182, width: 90, height: 18)))
+
+        // `regionHasContent` cannot guard the minimum label the way it guards
+        // the maximum above: `drawAreas` fills the area from the curve down to
+        // the baseline across the full chart width, and that fill's gradient
+        // still differs from the background pixel-for-pixel almost all the way
+        // down — so this corner "has content" whether or not the label ever
+        // draws. Confirmed by disabling `drawAxisMinimum`'s call site: the
+        // assertion below stayed green (measured, not assumed).
+        //
+        // `regionHasPixelBrighterThan` discriminates instead, by brightness:
+        // the label is `.white.opacity(0.45)` text, alpha-weighted brightness
+        // ~0.45; the fill this low has faded to near-zero alpha, so even
+        // though its underlying colour is fully saturated, weighted brightness
+        // is near zero too. Measured directly in this harness with the same
+        // two-sample chart used below: with the label's draw call live, the
+        // brightest pixel in this region weighs in at ~0.467; with the call
+        // site disabled, ~0.043 (a stray antialiased fill pixel, not text).
+        // 0.2 sits with wide margin above the fill-only case and wide margin
+        // below the labelled case — about 4.6x clearance on each side.
+        #expect(try regionHasPixelBrighterThan(
+            in: rendered,
+            region: CGRect(x: 2, y: 182, width: 90, height: 18),
+            threshold: 0.2
+        ))
     }
 }

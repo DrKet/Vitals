@@ -177,6 +177,52 @@ func regionHasContent(in image: RenderedImage, region: CGRect, differingFrom bac
     return false
 }
 
+/// True when any pixel inside `region` is brighter than `threshold` (0...1).
+///
+/// The probe for "is there light text here", where `regionHasContent` cannot
+/// help: inside a chart's own area fill, every pixel already differs from the
+/// background, so difference-from-background is true whether or not anything
+/// was drawn on top. Brightness discriminates, because the fill's gradient has
+/// faded nearly to the background by the baseline while label text has not.
+///
+/// Brightness is a pixel's maximum RGB component *weighted by its own alpha*
+/// — not the raw RGB triplet alone. This is not optional here: `renderPNG`'s
+/// PNG stores colour unpremultiplied, so a fill pixel a hair above the
+/// baseline, with alpha faded to say 0.01, still stores its full-strength
+/// accent-colour RGB (measured: raw max-component brightness of 1.0 in this
+/// harness's own bottom-corner probe region, from fill pixels nowhere near
+/// visible) — reading the RGB triplet alone would make the near-invisible
+/// fill register as brighter than the label itself. Multiplying by alpha
+/// converts that back into "how bright this pixel actually looks composited
+/// over the background," which is the only sense of "brightness" that can
+/// tell a translucent fill from opaque-ish label text.
+///
+/// Built on the same bitmap loading and region clamping as `regionHasContent`
+/// — the only difference is what counts as "content".
+@MainActor
+func regionHasPixelBrighterThan(in image: RenderedImage, region: CGRect, threshold: CGFloat) throws -> Bool {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return false }
+
+    for x in minX..<maxX {
+        for y in minY..<maxY {
+            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
+            let brightness = max(color.redComponent, max(color.greenComponent, color.blueComponent)) * color.alphaComponent
+            if brightness > threshold { return true }
+        }
+    }
+    return false
+}
+
 /// Where a hardware page's primary chart actually paints, inside an
 /// `800x700` render — shared by every page's "renders a full page from a
 /// live store" test so they all probe the same, empirically-verified spot
