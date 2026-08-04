@@ -6,6 +6,50 @@ import Testing
 @Suite("Thermometer strip")
 struct ThermometerStripTests {
 
+    /// The strip is a scale, not data, and must not grow to fill whatever the
+    /// page's `secondary` slot offers. An earlier version let a
+    /// `GeometryReader` size its track, so it rendered ~108pt tall on the real
+    /// page — nearly as tall as the temperature chart above it. Rendering into
+    /// a deliberately over-generous 200pt frame is what makes that regression
+    /// visible: the track's own saturated gradient is the only saturated thing
+    /// on the strip, so its measured extent IS the track's height.
+    @Test("the track stays chrome-weight no matter how much room it is given")
+    func trackDoesNotGrowToFillItsSpace() throws {
+        let rendered = try renderPNG(
+            ThermometerStrip(celsius: 36.4).frame(width: 400),
+            size: CGSize(width: 400, height: 200),
+            named: "thermometer-height"
+        )
+        let extent = try #require(
+            try saturatedRowExtent(in: rendered, region: CGRect(x: 0, y: 0, width: 400, height: 200))
+        )
+        let drawn = extent.upperBound - extent.lowerBound
+        // Tolerance, never equality: this is a measured pixel extent divided
+        // through a scale factor.
+        #expect(abs(drawn - ThermometerStrip.trackHeight) < 3.0, "track drew \(drawn)pt")
+        #expect(drawn < 40, "track drew \(drawn)pt — it is filling its container again")
+    }
+
+    /// Without the reading on the marker the strip shows a position and no
+    /// number: the page's headline sits far above it, and the connection has
+    /// to be inferred.
+    @Test("the reading is labelled on the marker, and absent when there is none")
+    func readingIsLabelledOnTheMarker() throws {
+        #expect(ThermometerStrip.readingLabel(for: 36.44) == "36.4°")
+
+        let readingRow = CGRect(x: 0, y: 0, width: 400, height: ThermometerStrip.readingRowHeight)
+        let with = try renderPNG(
+            ThermometerStrip(celsius: 36.4).frame(width: 400),
+            size: CGSize(width: 400, height: 60), named: "thermometer-label-present"
+        )
+        let without = try renderPNG(
+            ThermometerStrip(celsius: nil).frame(width: 400),
+            size: CGSize(width: 400, height: 60), named: "thermometer-label-absent"
+        )
+        #expect(try regionHasContent(in: with, region: readingRow))
+        #expect(try !regionHasContent(in: without, region: readingRow))
+    }
+
     @Test("the marker sits proportionally within the fixed domain")
     func markerFractionIsProportional() {
         #expect(abs(ThermometerStrip.markerFraction(for: 20) - 0.0) < 1e-9)

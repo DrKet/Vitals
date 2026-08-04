@@ -59,32 +59,71 @@ public struct ThermometerStrip: View {
         return min(max((celsius - minimumCelsius) / span, 0), 1)
     }
 
+    /// The track's own thickness.
+    ///
+    /// Fixed, and deliberately chrome-weight. An earlier version let a
+    /// `GeometryReader` size the track, so it grew to fill whatever the page's
+    /// `secondary` slot offered — about 108pt, nearly as tall as the
+    /// temperature chart above it. A scale is not data and must not compete
+    /// with it. At this thickness the capsule's cap radius is 6pt rather than
+    /// 54pt, which is the other half of why the old one read as a lozenge
+    /// instead of a scale.
+    static let trackHeight: CGFloat = 12
+
+    /// Row reserved above the track for the reading's own label.
+    ///
+    /// Constant whether or not there is a reading, so the strip does not
+    /// change height when a sensor drops out and the page does not jump.
+    static let readingRowHeight: CGFloat = 16
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [Self.coolColor, Self.warmColor],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-
-                    // No marker at all for a `nil` reading — not a marker
-                    // pinned to `minimumCelsius`, which is what treating an
-                    // unmeasurable value as zero (or as the scale's floor)
-                    // would look like on this track.
-                    if let celsius {
-                        let fraction = Self.markerFraction(for: celsius)
-                        Capsule()
-                            .fill(Self.markerColor)
-                            .frame(width: 4)
-                            .offset(x: proxy.size.width * fraction - 2)
+                // No label without a reading, for the same reason there is no
+                // marker: see the marker's comment below.
+                if let celsius {
+                    // Placed through `ReadoutPlacement` rather than a raw
+                    // offset so the label cannot overhang either end of the
+                    // track. That type already solves exactly this — anchor a
+                    // single subview near an x and clamp it inside the bounds
+                    // — and it measures the subview during layout, so nothing
+                    // here has to assume how wide "36.4°" renders.
+                    ReadoutPlacement(anchorX: proxy.size.width * Self.markerFraction(for: celsius)) {
+                        Text(Self.readingLabel(for: celsius))
+                            .font(Vitals.Typography.label)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
+            .frame(height: Self.readingRowHeight)
+
+            ZStack(alignment: .leading) {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Self.coolColor, Self.warmColor],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+
+                        // No marker at all for a `nil` reading — not a marker
+                        // pinned to `minimumCelsius`, which is what treating an
+                        // unmeasurable value as zero (or as the scale's floor)
+                        // would look like on this track.
+                        if let celsius {
+                            let fraction = Self.markerFraction(for: celsius)
+                            Capsule()
+                                .fill(Self.markerColor)
+                                .frame(width: 4)
+                                .offset(x: proxy.size.width * fraction - 2)
+                        }
+                    }
+                }
+            }
+            .frame(height: Self.trackHeight)
 
             HStack {
                 Text(Self.label(for: Self.minimumCelsius))
@@ -98,5 +137,16 @@ public struct ThermometerStrip: View {
 
     private static func label(for celsius: Double) -> String {
         "\(Int(celsius))\u{00B0}"
+    }
+
+    /// The reading itself, shown on the marker.
+    ///
+    /// Without it the strip shows a position and nothing else: the page's
+    /// headline sits far above, and a reader has to infer that the mark at
+    /// roughly a fifth of the way along corresponds to it. One decimal, to
+    /// match `ChartUnit.temperature.formatted(_:)` rather than implying a
+    /// different precision from the same number elsewhere on the page.
+    static func readingLabel(for celsius: Double) -> String {
+        String(format: "%.1f\u{00B0}", celsius)
     }
 }
