@@ -440,6 +440,23 @@ struct MetricsStoreTests {
         #expect(store.processes == nil)
     }
 
+    @Test("a sensor sample lands in the store with history")
+    func storesSensorSamples() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let sample = SensorSample(
+            readings: [SensorReading(name: "PMU tdie0", kind: .temperatureCelsius, value: 36.5, sensorCount: 2)],
+            thermalState: .nominal
+        )
+        await engine.register(AnySampler { sample }, for: .sensors, cadence: .slow)
+        let store = MetricsStore(engine: engine, profile: nil)
+        let task = Task { await store.stream(.sensors) }
+        try await waitUntil { store.sensors != nil }
+        task.cancel()
+
+        #expect(store.sensors?.readings.first?.name == "PMU tdie0")
+        #expect(!store.sensorHistory.isEmpty)
+    }
+
     @Test("the staleness gate reads the engine's real interval, not one derived from the key")
     func stalenessUsesTheEnginesInterval() async {
         // The cadence for a key lives in StandardSamplers, and intervalOverride
