@@ -16,7 +16,7 @@ public struct SensorGroup: Equatable {
 public struct SensorsPage: View {
     /// Exposed so `PageConsistencyTests` can verify no two pages share a key —
     /// a shared key would make one page's disclosure expand every other's.
-    public static let disclosureKey = "sensors.fullSpecs"
+    public static let disclosureKey = "SensorsPage.showFullSpecifications"
 
     private let store: MetricsStore
 

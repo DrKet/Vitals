@@ -31,7 +31,7 @@ struct SidebarSectionTests {
         #expect(SidebarSection.gpu.isImplemented)
         #expect(SidebarSection.storage.isImplemented)
         #expect(SidebarSection.network.isImplemented)
-        #expect(SidebarSection.sensors.isImplemented == false)
+        #expect(SidebarSection.sensors.isImplemented)
     }
 
     @Test("every section has a non-empty title and symbol")
