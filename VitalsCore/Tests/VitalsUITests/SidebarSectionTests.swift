@@ -41,7 +41,7 @@ struct SidebarSectionTests {
         #expect(without.subtracting(withBattery).isEmpty)
     }
 
-    @Test("overview, processes, CPU, memory, GPU, storage, network and sensors are implemented; the rest are not yet")
+    @Test("overview, processes, CPU, memory, GPU, storage, network, sensors and battery are implemented; the rest are not yet")
     func implementedSectionsAreMarked() {
         #expect(SidebarSection.overview.isImplemented)
         #expect(SidebarSection.processes.isImplemented)
@@ -51,6 +51,7 @@ struct SidebarSectionTests {
         #expect(SidebarSection.storage.isImplemented)
         #expect(SidebarSection.network.isImplemented)
         #expect(SidebarSection.sensors.isImplemented)
+        #expect(SidebarSection.battery.isImplemented)
     }
 
     @Test("every section has a non-empty title and symbol")
