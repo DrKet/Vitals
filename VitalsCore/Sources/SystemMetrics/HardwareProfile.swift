@@ -3,6 +3,7 @@ import Foundation
 public enum HardwareProfileError: Error, Equatable {
     case installedMemoryUnavailable
     case memoryProfilerFailed(status: Int32)
+    case powerProfilerFailed(status: Int32)
 }
 
 /// Static description of the machine, built once at launch. Consumers use it to
@@ -17,6 +18,11 @@ public struct HardwareProfile: Sendable {
     public let storageDevices: [StorageDevice]
     public let sensorsAvailable: MetricAvailability
     public let frequencyAvailable: MetricAvailability
+    /// `nil` for a desktop Mac (no battery) or when `system_profiler` fails.
+    /// Unlike memory, a battery read failure does not throw the whole
+    /// profile: a missing battery is normal hardware, and a `system_profiler`
+    /// hiccup should cost only the Battery page, not the entire app.
+    public let batteryHealth: BatteryHealth?
 
     public static func detect(
         sysctl: any SysctlProviding = SystemSysctl(),
@@ -46,6 +52,12 @@ public struct HardwareProfile: Sendable {
             brand: cpu.brand
         )
 
+        // A failure here is not the caller's problem: a machine with no
+        // battery is normal, and a `system_profiler` hiccup should cost the
+        // Battery page rather than the entire app (contrast memory, above,
+        // which throws because it is not optional in the same way).
+        let batteryHealth = try? BatteryHealthParser.parse(profilerJSON: powerProfilerOutput())
+
         return HardwareProfile(
             cpu: cpu,
             memory: memory,
@@ -54,7 +66,8 @@ public struct HardwareProfile: Sendable {
             sensorsAvailable: sensors.availability,
             frequencyAvailable: cpu.frequencyAvailable
                 ? .available
-                : .unavailable(reason: "CPU frequency requires IOReport, which is not yet implemented")
+                : .unavailable(reason: "CPU frequency requires IOReport, which is not yet implemented"),
+            batteryHealth: batteryHealth
         )
     }
 
@@ -85,6 +98,35 @@ public struct HardwareProfile: Sendable {
         // it were a clean measurement.
         guard process.terminationStatus == 0 else {
             throw HardwareProfileError.memoryProfilerFailed(status: process.terminationStatus)
+        }
+
+        return data
+    }
+
+    /// Mirrors `memoryProfilerOutput()` exactly — same drain-before-wait and
+    /// same non-zero-exit throw — but its caller in `detect` swallows the
+    /// throw into `nil` rather than failing the whole profile: a battery
+    /// read is not load-bearing for the rest of the app the way memory is.
+    private static func powerProfilerOutput() throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        process.arguments = ["-json", "SPPowerDataType"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        try process.run()
+        // Read before waiting: draining the pipe as the child writes is what
+        // keeps a large payload from filling the kernel buffer and deadlocking.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        // A non-zero exit can still leave partial output on stdout. Treating
+        // that as a successful read would let degraded data through as though
+        // it were a clean measurement.
+        guard process.terminationStatus == 0 else {
+            throw HardwareProfileError.powerProfilerFailed(status: process.terminationStatus)
         }
 
         return data
