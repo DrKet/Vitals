@@ -192,14 +192,20 @@ to be a different page.
 ## Current state
 
 Complete: the metrics foundation, the UI shell, the Overview (tiles for all
-five series), the Processes table, the CPU, Memory, GPU, Storage and Network
-pages, and a distributable `.app` bundle (v0.1.0).
+five series), the Processes table, the CPU, Memory, GPU, Storage, Network and
+Sensors pages, and a distributable `.app` bundle (v0.1.0).
 
-Not built yet: the Sensors page (temperatures, fans and power all need
-`IOHIDEventSystemClient`, a private framework needing an empirical spike);
-desktop widgets and the menu-bar extra; a privileged helper for per-process
-GPU, power and SMART health; and the Startup / Services / Users / History
-pages.
+The Sensors page shows temperatures only. Fans and component power remain
+unbuilt: the spike that unlocked `IOHIDEventSystemClient` temperature reads
+(`docs/superpowers/spikes/2026-08-02-sensors-spike.md`) only exercised event
+type `15` (temperature); fan RPM and power wattage are separate IOHID event
+types the spike never probed, so there is no evidence yet that the same
+private-framework path even exposes them on this hardware. `SensorReading.Kind`
+already models `.fanRPM` and `.powerWatts` for whenever that spike happens.
+
+Not built yet: desktop widgets and the menu-bar extra; a privileged helper for
+per-process GPU, power and SMART health; and the Startup / Services / Users /
+History pages.
 
 Known gaps, if you're looking for something to pick up:
 

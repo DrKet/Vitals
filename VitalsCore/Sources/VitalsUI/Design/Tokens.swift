@@ -14,6 +14,12 @@ public enum Vitals {
         public static let network = Color(red: 0.98, green: 0.80, blue: 0.45)
         public static let warning = Color(red: 1.00, green: 0.47, blue: 0.47)
 
+        /// The Sensors page's hue. Pink/magenta, chosen to be distinct from
+        /// every other page accent AND from `warning` red — that red is kept
+        /// out of the series ramp so it always means "something is wrong",
+        /// which matters more on a thermal page than anywhere else.
+        public static let sensors = Color(red: 0.98, green: 0.55, blue: 0.78)
+
         /// A sixth ramp hue that identifies no subsystem — it exists solely
         /// to keep Memory's four-band stack (Wired / App / Compressed /
         /// Cached) legible. Without it, `seriesRamp`'s `gpu` (~24.7°) and
