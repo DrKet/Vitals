@@ -1,9 +1,9 @@
 import Foundation
 
-/// The twelve sections of the main window, in sidebar order.
+/// The thirteen sections of the main window, in sidebar order.
 public enum SidebarSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case overview, processes
-    case cpu, memory, gpu, storage, network, sensors
+    case cpu, memory, gpu, storage, network, sensors, battery
     case startup, services, users, history
 
     public var id: String { rawValue }
@@ -18,6 +18,7 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Hashable, Sendab
         case .storage: "Storage"
         case .network: "Network"
         case .sensors: "Sensors"
+        case .battery: "Battery"
         case .startup: "Startup"
         case .services: "Services"
         case .users: "Users"
@@ -36,6 +37,7 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Hashable, Sendab
         case .storage: "internaldrive"
         case .network: "network"
         case .sensors: "thermometer.medium"
+        case .battery: "battery.100"
         case .startup: "arrow.up.forward.app"
         case .services: "gearshape.2"
         case .users: "person.2"
@@ -47,7 +49,7 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Hashable, Sendab
     /// so plainly rather than showing an empty pane.
     public var isImplemented: Bool {
         switch self {
-        case .overview, .processes, .cpu, .memory, .gpu, .storage, .network, .sensors: true
+        case .overview, .processes, .cpu, .memory, .gpu, .storage, .network, .sensors, .battery: true
         default: false
         }
     }
@@ -58,10 +60,17 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Hashable, Sendab
         public var id: String { name }
     }
 
-    public static var groups: [Group] {
+    /// Sections to show, given what this machine actually has.
+    ///
+    /// Battery is omitted entirely on a machine without one rather than
+    /// rendering a permanently empty page — inapplicable hardware is absent,
+    /// not shown blank. Taking the fact as a parameter rather than reading the
+    /// hardware here keeps this type free of I/O and testable in both states.
+    public static func groups(hasBattery: Bool) -> [Group] {
         [
             Group(name: "Monitor", sections: [.overview, .processes]),
-            Group(name: "Hardware", sections: [.cpu, .memory, .gpu, .storage, .network, .sensors]),
+            Group(name: "Hardware", sections: [.cpu, .memory, .gpu, .storage, .network, .sensors]
+                + (hasBattery ? [.battery] : [])),
             Group(name: "System", sections: [.startup, .services, .users, .history]),
         ]
     }
