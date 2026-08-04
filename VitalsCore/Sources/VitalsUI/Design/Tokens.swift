@@ -43,6 +43,13 @@ public enum Vitals {
         /// to reach here fails there rather than quietly rendering two pinks a
         /// viewer cannot tell apart.
         public static let legibilityAccent = Color(red: 1.00, green: 0.58, blue: 0.82)
+
+        /// The Battery page's hue.
+        ///
+        /// Green at roughly 100 degrees — the largest genuinely free gap in the
+        /// ramp, about 50 degrees from `network` (43) and from `storage` (156).
+        /// Green-for-battery is also a convention nobody has to learn.
+        public static let battery = Color(red: 0.55, green: 0.80, blue: 0.35)
     }
 
     public enum Metrics {
