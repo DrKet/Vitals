@@ -255,6 +255,43 @@ struct MetricChartTests {
         #expect(try regionHasSaturatedColor(in: rendered, region: middleBand))
     }
 
+    /// Three independent temperatures are not a decomposition, so filling
+    /// under each curve buries the cooler two beneath the hottest one's wash
+    /// and makes an unstacked chart read as stacked. This probes well below
+    /// the curve but above the baseline: with a fill that band is the series'
+    /// own accent colour, without one it is empty.
+    @Test("a temperature chart strokes its curve without filling beneath it")
+    func temperatureChartDoesNotFillUnderItsCurve() throws {
+        let series = [ChartSeries(name: "Die", values: [38.0, 38.0, 38.0], unit: .temperature)]
+        let chart = MetricChart(
+            series: series, style: .area(stacked: false),
+            colors: [Vitals.Palette.sensors], showsAxisMaximum: true
+        )
+        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-unfilled")
+
+        // Bounds for a flat 38 are 35–40, so the curve sits at 60% of the
+        // height and everything below it would be fill.
+        let beneathTheCurve = CGRect(x: 20, y: 130, width: 360, height: 50)
+        #expect(try !regionHasSaturatedColor(in: rendered, region: beneathTheCurve))
+    }
+
+    /// The converse guard: gating the fill on the unit must not quietly
+    /// disable it for the five pages that depend on it.
+    @Test("an absolute-unit chart still fills beneath its curve")
+    func absoluteChartStillFillsUnderItsCurve() throws {
+        let series = [ChartSeries(name: "Down", values: [4.0, 4.0, 4.0], unit: .absolute(suffix: "MB/s"))]
+        let chart = MetricChart(
+            series: series, style: .area(stacked: false),
+            colors: [Vitals.Palette.network], showsAxisMaximum: true
+        )
+        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-absolute-filled")
+
+        // Bound for a flat 4.0 rounds to 5, so the curve sits at 80% and the
+        // band below it is filled.
+        let beneathTheCurve = CGRect(x: 20, y: 130, width: 360, height: 50)
+        #expect(try regionHasSaturatedColor(in: rendered, region: beneathTheCurve))
+    }
+
     @Test("a temperature chart labels both ends of its scale")
     func temperatureChartLabelsBothEnds() throws {
         let series = [ChartSeries(name: "Die", values: [36.69, 38.82], unit: .temperature)]

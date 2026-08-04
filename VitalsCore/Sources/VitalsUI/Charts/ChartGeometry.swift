@@ -17,6 +17,26 @@ public enum ChartUnit: Sendable, Equatable {
     /// this unit carries its own lower bound instead of assuming zero.
     case temperature
 
+    /// Whether a chart in this unit fills the area beneath its curve.
+    ///
+    /// The fill draws a quantity accumulating up from zero, which is exactly
+    /// what a fraction or a throughput reading is — the area under the curve
+    /// means something, and the gradient fading to nothing at the baseline
+    /// reinforces where zero is.
+    ///
+    /// A temperature has no meaningful zero, so there is nothing for the area
+    /// to measure: it would be filling down to whichever baseline the scale
+    /// happened to pick that render. It is also actively harmful on the
+    /// Sensors page, whose three series are independent rather than a
+    /// decomposition — the hottest one's fill washes over the other two and
+    /// buries them, making an unstacked chart read like a stacked one.
+    var fillsUnderCurve: Bool {
+        switch self {
+        case .fraction, .absolute: true
+        case .temperature: false
+        }
+    }
+
     public func formatted(_ value: Double) -> String {
         switch self {
         case .fraction:

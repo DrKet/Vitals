@@ -310,19 +310,23 @@ public struct MetricChart: View {
 
                 let line = ChartGeometry.smoothPath(through: slice)
 
-                var fill = line
-                fill.addLine(to: CGPoint(x: slice[slice.count - 1].x, y: rect.maxY))
-                fill.addLine(to: CGPoint(x: slice[0].x, y: rect.maxY))
-                fill.closeSubpath()
+                // Some units draw a bare stroke — see `ChartUnit.fillsUnderCurve`
+                // for why an area beneath a temperature curve measures nothing.
+                if (series.first?.unit ?? .fraction).fillsUnderCurve {
+                    var fill = line
+                    fill.addLine(to: CGPoint(x: slice[slice.count - 1].x, y: rect.maxY))
+                    fill.addLine(to: CGPoint(x: slice[0].x, y: rect.maxY))
+                    fill.closeSubpath()
 
-                context.fill(
-                    fill,
-                    with: .linearGradient(
-                        Gradient(colors: [color.opacity(0.45), color.opacity(0)]),
-                        startPoint: CGPoint(x: rect.midX, y: rect.minY),
-                        endPoint: CGPoint(x: rect.midX, y: rect.maxY)
+                    context.fill(
+                        fill,
+                        with: .linearGradient(
+                            Gradient(colors: [color.opacity(0.45), color.opacity(0)]),
+                            startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                            endPoint: CGPoint(x: rect.midX, y: rect.maxY)
+                        )
                     )
-                )
+                }
                 context.stroke(line, with: .color(color), lineWidth: Self.strokeWidth)
             }
 
