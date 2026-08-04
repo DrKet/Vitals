@@ -368,8 +368,11 @@ struct ChartGeometryTests {
         let absolute = [[0.01, 41.25]]
         let unit = ChartUnit.absolute(suffix: "MB/s")
         #expect(abs(ChartGeometry.bounds(for: absolute, unit: unit).lower) < 1e-9)
-        #expect(abs(ChartGeometry.bounds(for: absolute, unit: unit).upper
-                    - ChartGeometry.upperBound(for: absolute, unit: unit)) < 1e-9)
+        // Against a literal, not against `upperBound`: that function is now
+        // implemented AS `bounds(...).upper`, so comparing the two compares a
+        // value with itself and could not fail however badly `.absolute`
+        // regressed. 41.25 rounds up to the nice bound 50.
+        #expect(abs(ChartGeometry.bounds(for: absolute, unit: unit).upper - 50) < 1e-9)
     }
 
     @Test("a temperature formats to one decimal with a degree suffix")

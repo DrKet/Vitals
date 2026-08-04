@@ -110,6 +110,15 @@ struct RenderedImage: Sendable {
 /// parameter: pairing the file with the scale it was actually rendered at
 /// forecloses passing a scale from a different render (or a guessed
 /// constant) by mistake.
+/// **Probe placement matters.** `renderPNG` writes PNGs with UNPREMULTIPLIED
+/// colour, so a pixel at alpha ~0.01 still stores full-strength RGB. This
+/// function and `regionHasSaturatedColor` both read components without
+/// weighting by alpha, so both can "see" pixels that are invisible on screen —
+/// most notably where a chart's area gradient has faded almost to nothing near
+/// the baseline. Two assertions on this project passed against a deliberately
+/// broken implementation for exactly that reason. Probe away from a gradient's
+/// fade edge, or use `regionHasPixelBrighterThan`, which does weight by alpha.
+///
 @MainActor
 func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
     let data = try Data(contentsOf: image.url)
@@ -349,6 +358,13 @@ let chartCanvasProbeRegion = CGRect(x: 40, y: 118, width: 720, height: 85)
 /// Built on the same bounds-clamping and pixel access as `regionHasContent`
 /// rather than a parallel screenshot mechanism — the only difference is what
 /// counts as "content".
+/// **Probe placement matters** — see `regionHasContent`'s note on
+/// unpremultiplied colour. This function reads RGB spread without weighting by
+/// alpha, so a fully-faded gradient pixel still reads as saturated. It also
+/// cannot distinguish a light fill from a heavy one, which is why the fill
+/// weight in `MetricChart.fillOpacity` is covered by a pure test rather than a
+/// render probe.
+///
 @MainActor
 func regionHasSaturatedColor(
     in image: RenderedImage,

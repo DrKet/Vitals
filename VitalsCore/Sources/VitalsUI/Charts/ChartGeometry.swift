@@ -264,8 +264,15 @@ public enum ChartGeometry {
     /// The lower end of a chart's scale, or `nil` when that end is a known
     /// zero and therefore not worth the ink.
     public static func axisMinimum(for stacked: [[Double]], unit: ChartUnit) -> NiceBound? {
-        guard case .temperature = unit else { return nil }
-        return NiceBound(value: bounds(for: stacked, unit: unit).lower, decimals: 0)
+        // A full switch rather than a `guard case`, matching `axisMaximum`
+        // and `axisLabel`: a future unit then has to state its answer here
+        // instead of silently inheriting "no label".
+        switch unit {
+        case .fraction, .absolute:
+            return nil
+        case .temperature:
+            return NiceBound(value: bounds(for: stacked, unit: unit).lower, decimals: 0)
+        }
     }
 
     /// `bound` rendered with its unit suffix, or `nil` for a fractional chart.
