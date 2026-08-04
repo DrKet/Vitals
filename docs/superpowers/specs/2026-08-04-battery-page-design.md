@@ -18,12 +18,33 @@ All of this is public API — unlike the Sensors milestone, no private framework
 and no spike were needed. But four findings shape the design, and three of them
 are traps.
 
-**1. Two Apple APIs disagree about battery health.** Seconds apart on the same
-machine: `system_profiler SPPowerDataType` reports `Condition: Normal`, while
-`IOPSGetPowerSourceDescription` reports `BatteryHealth = "Check Battery"`.
-`system_profiler` is the one that agrees with Settings, so it is the source of
-truth here. **Do not switch to the IOPS key because it is easier to read** — it
-would tell a user with a healthy battery that it needs service.
+**1. Three sources disagree about battery health.** All measured within
+seconds on the same machine:
+
+| Source | Reports |
+|---|---|
+| `system_profiler SPPowerDataType` (text) | `Condition: Normal` |
+| `system_profiler -json SPPowerDataType` | `sppower_battery_health = "Good"` |
+| `IOPSGetPowerSourceDescription` | `BatteryHealth = "Check Battery"` |
+
+The IOPS key is simply wrong here and must not be used — it would tell someone
+with a healthy battery that it needs service. **Do not switch to it because it
+is easier to read.**
+
+The two `system_profiler` outputs are both "right" but use different
+vocabularies for the same state, and Settings shows the text form's word.
+Vitals reads the JSON (structured parsing beats scraping formatted text), so it
+will display **"Good"** where Settings says "Normal".
+
+That divergence is accepted and must not be papered over with a translation
+table: we have only ever observed one health state on one machine, so any
+mapping beyond `Good → Normal` would be invented. The page shows the value the
+API returned.
+
+**The status dot fails safe.** Green only for health strings known to mean
+healthy — `Good` and `Normal`, both observed — and `Palette.warning` for
+anything else, *including strings we have never seen*. An unrecognised verdict
+should draw attention rather than be silently treated as fine.
 
 **2. Maximum Capacity cannot be computed.** Apple reports **95%**. The two
 obvious formulas from the raw registry values both disagree:
