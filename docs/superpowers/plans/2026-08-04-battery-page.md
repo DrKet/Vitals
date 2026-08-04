@@ -10,6 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-04-battery-page-design.md`
 
+> **Amended during execution.** The spec put battery health on
+> `HardwareProfile`. Doing so made the **debug** test suite segfault
+> nondeterministically — verified as specific to that struct in that position
+> (`Int?` and `Bool` in the same slot are clean; release builds are clean; the
+> `system_profiler` subprocess is not involved). Health now lives on
+> `MetricsStore`, read lazily once, and `HardwareProfile` carries only
+> `hasBattery: Bool`. That also corrects a modelling error: the profile
+> documents itself as static, and cycle count and capacity are not.
+
 ## Global Constraints
 
 - **Never fabricate a number.** An unmeasurable value is `nil`, rendering as "Unavailable" or an em dash — never `0`, never blank, never a guess. A sampler that cannot read **throws**; it does not return empty or zeroed results. When you find yourself writing `?? 0`, stop.
@@ -520,6 +529,12 @@ compiler will name them. Follow the `.sensors` arm exactly. Handle each
 explicitly; **do not add a `default:`**, which would silently swallow future
 cases.
 
+**In the store's `apply` arm, also call `readBatteryHealthOnce()`.** Task 2 left
+it and `hasReadBatteryHealth` in place with a `TODO(battery page)` marker but no
+caller, because `SeriesKey.battery` did not exist yet. Health is read lazily on
+the first battery sample rather than in `init`, so the suite does not spawn
+`system_profiler` for every test that builds a store.
+
 - [ ] **Step 5: Run and watch pass**
 
 ```bash
@@ -556,7 +571,7 @@ git commit -m "feat: sample the battery on the slow cadence and keep its history
 - Test: `Tests/VitalsUITests/SidebarSectionTests.swift`
 
 **Interfaces:**
-- Consumes: `HardwareProfile.batteryHealth`.
+- Consumes: `HardwareProfile.hasBattery`.
 - Produces: `SidebarSection.groups(hasBattery: Bool) -> [Group]` and
   `SidebarSection.battery`.
 
@@ -624,7 +639,7 @@ Change `groups` from a static property to:
     }
 ```
 
-In `AppShell.swift:14`, pass `hasBattery: store.profile?.batteryHealth != nil`.
+In `AppShell.swift:14`, pass `hasBattery: store.profile?.hasBattery == true`.
 
 - [ ] **Step 4: Run and watch pass**
 
@@ -836,7 +851,7 @@ git commit -m "feat: add a battery level bar coloured by system state"
 - Test: `Tests/VitalsUITests/BatteryPageTests.swift` (new)
 
 **Interfaces:**
-- Consumes: `MetricsStore.battery` / `.batteryHistory`, `HardwareProfile.batteryHealth`,
+- Consumes: `MetricsStore.battery` / `.batteryHistory`, `MetricsStore.batteryHealth`,
   `HardwarePage(..., stacked:, ...)`, `BatteryLevelBar`, `Vitals.Palette.battery`.
 - Produces: `BatteryPage(store:)`, `BatteryPage.disclosureKey`,
   `BatteryPage.conditionIsHealthy(_:)`.
