@@ -757,10 +757,18 @@ Append inside `MetricChartTests`' suite:
         let chart = MetricChart(series: series, style: .area(stacked: false), colors: [Vitals.Palette.cpu], showsAxisMaximum: true)
         let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-floating")
 
-        // With bounds 35–40, the 36.69 sample sits at ~34% of the height and
-        // 38.82 at ~76%. A zero-based chart would put both above 90%.
-        let lowerHalf = CGRect(x: 0, y: 120, width: 400, height: 60)
-        #expect(try regionHasSaturatedColor(in: rendered, region: lowerHalf))
+        // The discriminator is where the STROKE sits, not where the fill
+        // reaches: `drawAreas` fills from the curve down to the baseline in
+        // both configurations, so "is there colour in the lower half" is true
+        // either way and would assert nothing.
+        //
+        // Bounds 35–40 put the samples at 34%–76% of the height, i.e. the
+        // curve runs through the middle. Zero-based bounds (0–40) would put
+        // them at 92%–97%, i.e. hard against the top.
+        let topStrip = CGRect(x: 0, y: 0, width: 400, height: 24)
+        let middleBand = CGRect(x: 0, y: 60, width: 400, height: 80)
+        #expect(try !regionHasSaturatedColor(in: rendered, region: topStrip))
+        #expect(try regionHasSaturatedColor(in: rendered, region: middleBand))
     }
 
     @Test("a temperature chart labels both ends of its scale")
@@ -852,11 +860,9 @@ milestone.
 - [ ] **Step 1: Write the failing test**
 
 ```swift
-    /// Temperatures must never sum. This renders two flat, well-separated
-    /// series and asserts nothing paints where a stacked total would land.
-    @Test("an unstacked page does not sum its series")
-    func unstackedPageDoesNotSumSeries() throws {
-        let view = HardwarePage(
+    /// Builds the same two-series temperature page at either stacking setting.
+    private func page(stacked: Bool) -> some View {
+        HardwarePage(
             title: "Sensors", vendorName: nil, showsAppleMark: false,
             primaryValue: "38.8 °C",
             series: [
@@ -864,16 +870,28 @@ milestone.
                 ChartSeries(name: "Battery", values: [28.0, 28.0, 28.0], unit: .temperature),
             ],
             accent: Vitals.Palette.cpu,
-            stacked: false,
+            stacked: stacked,
             stats: [],
             disclosureKey: "test.sensors"
         ) { EmptyView() } specifications: { EmptyView() }
+    }
 
-        let rendered = try renderPNG(view, size: CGSize(width: 800, height: 700), named: "hardware-page-unstacked")
-        // Bounds for 28...38 are 25–40. A stacked total of 66 would clamp to
-        // the very top of the canvas; two unstacked bands sit at 30% and 78%.
-        let topStrip = CGRect(x: 40, y: 112, width: 720, height: 12)
-        #expect(try !regionHasSaturatedColor(in: rendered, region: topStrip))
+    /// Temperatures must never sum: a die at 38 °C and a battery at 28 °C
+    /// would draw a band at 66 °C, a value no sensor reported.
+    @Test("stacking actually changes what a page draws")
+    func stackingChangesWhatIsDrawn() throws {
+        let unstacked = try renderPNG(page(stacked: false), size: CGSize(width: 800, height: 700), named: "hardware-page-unstacked")
+        let stacked = try renderPNG(page(stacked: true), size: CGSize(width: 800, height: 700), named: "hardware-page-stacked")
+
+        // Compares the two renders rather than probing an absolute position.
+        //
+        // A position assertion would assert nothing here: BOTH configurations
+        // auto-scale their own bounds, so the bands land at nearly the same
+        // RELATIVE height either way (unstacked 87%/20% of a 25–40 scale;
+        // stacked 88.6%/8.6% of a 35–70 one). The thing that actually differs
+        // is the whole picture, and a `stacked:` parameter that was accepted
+        // and then ignored would produce two identical images.
+        #expect(try renderedImagesDiffer(unstacked, stacked, in: chartCanvasProbeRegion))
     }
 ```
 
@@ -884,6 +902,28 @@ cd VitalsCore && swift test --filter HardwarePageTests 2>&1 | tail -20
 ```
 
 Expected: compile error — no `stacked:` parameter.
+
+You will need a two-render comparison helper. Add it to
+`Tests/VitalsUITests/RenderHarness.swift`, in the same style as its
+neighbours (long doc comment explaining *why* it exists — that is load-bearing
+house style here):
+
+```swift
+/// True when two renders differ anywhere inside `region`.
+///
+/// The probe for "did this parameter change anything at all". Position-based
+/// probes cannot answer that for a chart whose scale adapts to its own data:
+/// two very different decompositions can land at nearly the same relative
+/// height, so the honest comparison is against the other render rather than
+/// against a coordinate.
+@MainActor
+func renderedImagesDiffer(_ a: RenderedImage, _ b: RenderedImage, in region: CGRect) throws -> Bool
+```
+
+Implement it with the same bitmap loading and region clamping as
+`regionHasContent`, comparing `a`'s pixel to `b`'s at each coordinate. Require
+that both images share a scale, and fail loudly if they do not — comparing a
+1x render against a 2x one would silently report "differ" for every pixel.
 
 - [ ] **Step 3: Add the parameter**
 
@@ -910,9 +950,14 @@ Expected: PASS.
 
 - [ ] **Step 6: Prove it can fail**
 
-Temporarily change the new test's `stacked: false` to `stacked: true`. Confirm
-`unstackedPageDoesNotSumSeries` goes red — the summed band lands in the top
-strip. Restore. Report the output.
+Simulate the parameter being accepted and then ignored: temporarily hardcode
+`style: .area(stacked: true)` in `HardwarePage`, leaving the `stacked` property
+unread. Confirm `stackingChangesWhatIsDrawn` goes red — both renders become
+identical, so nothing differs in the probe region. Restore. Report the output.
+
+This is the regression that matters. A `stacked:` parameter threaded into the
+signature but dropped before it reaches `MetricChart` compiles, passes every
+other test, and silently sums temperatures.
 
 - [ ] **Step 7: Whole suite and commit**
 
