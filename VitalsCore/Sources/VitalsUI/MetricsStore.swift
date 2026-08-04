@@ -66,6 +66,22 @@ public final class MetricsStore {
     /// Static hardware description. `nil` only in tests; the app always has one.
     public let profile: HardwareProfile?
 
+    /// Apple's verdict on the battery, read at most once per run.
+    ///
+    /// Unlike the other live fields, this is not populated in `init` or on
+    /// every tick: `BatteryHealthReader.read()` spawns `system_profiler`,
+    /// which is slow, so every test in the suite paying that cost on
+    /// construction — whether or not it cares about the Battery page — would
+    /// be a needless tax on the whole suite. Instead it is read lazily, the
+    /// first time a `.battery` sample arrives, and never again; see
+    /// `hasReadBatteryHealth`.
+    public private(set) var batteryHealth: BatteryHealth?
+
+    /// Guards `batteryHealth` so `BatteryHealthReader.read()` — and the
+    /// `system_profiler` subprocess it spawns — runs at most once per store,
+    /// no matter how many `.battery` samples arrive afterward.
+    private var hasReadBatteryHealth = false
+
     private let engine: MetricsEngine
     private let historyLimit: Int
 
@@ -121,6 +137,11 @@ public final class MetricsStore {
 
         // A payload of an unexpected type is dropped rather than crashing or
         // substituted with a zero — an unreadable series shows as absent.
+        //
+        // TODO(battery page): once `SeriesKey.battery` exists, add a `.battery`
+        // arm here that stores the live `BatterySample` and calls
+        // `readBatteryHealthOnce()` — that is the "first `.battery` sample"
+        // this store's `batteryHealth` doc comment refers to.
         switch key {
         case .cpu:
             guard let sample = value.value as? CPULoadSample else { return }
@@ -161,6 +182,16 @@ public final class MetricsStore {
             append(Timestamped(timestamp: value.timestamp, sample: sample), to: &sensorHistory)
             armStalenessWatch(for: key)
         }
+    }
+
+    /// Reads battery health once, the first time it is needed, and never
+    /// again — `hasReadBatteryHealth` is what makes repeated calls free after
+    /// the first. Not yet called from `apply`: no `.battery` case exists in
+    /// `SeriesKey` yet, so this is wired in by the task that adds one.
+    private func readBatteryHealthOnce() {
+        guard !hasReadBatteryHealth else { return }
+        hasReadBatteryHealth = true
+        batteryHealth = BatteryHealthReader.read()
     }
 
     /// The interval a series is really sampled at, as reported by the engine

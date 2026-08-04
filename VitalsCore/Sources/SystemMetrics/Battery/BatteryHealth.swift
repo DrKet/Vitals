@@ -62,3 +62,55 @@ public enum BatteryHealthParser {
         )
     }
 }
+
+enum BatteryHealthReaderError: Error, Equatable {
+    case powerProfilerFailed(status: Int32)
+}
+
+/// Owns the `system_profiler` spawn behind `BatteryHealth`.
+///
+/// Kept separate from `HardwareProfile`, which only carries `hasBattery`: the
+/// profiler subprocess is slow, and health figures change over months rather
+/// than being fixed at launch, so `MetricsStore` reads through here once,
+/// lazily, the first time a battery sample arrives — not for every machine on
+/// every launch.
+public enum BatteryHealthReader {
+    /// `nil` for a desktop Mac (no battery) or when `system_profiler` fails.
+    /// Throwing here would make a routine absence — most Macs in a fleet are
+    /// desktops — indistinguishable from a real subprocess failure to the
+    /// caller, so both collapse to the same `nil`.
+    public static func read() -> BatteryHealth? {
+        guard let data = try? powerProfilerOutput() else { return nil }
+        return try? BatteryHealthParser.parse(profilerJSON: data)
+    }
+
+    /// Mirrors `HardwareProfile.memoryProfilerOutput()` exactly — same
+    /// drain-before-wait and same non-zero-exit throw — but its only caller,
+    /// `read()`, swallows the throw into `nil` rather than propagating it: a
+    /// battery read is not load-bearing for the rest of the app the way
+    /// memory is.
+    private static func powerProfilerOutput() throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        process.arguments = ["-json", "SPPowerDataType"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        try process.run()
+        // Read before waiting: draining the pipe as the child writes is what
+        // keeps a large payload from filling the kernel buffer and deadlocking.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        // A non-zero exit can still leave partial output on stdout. Treating
+        // that as a successful read would let degraded data through as though
+        // it were a clean measurement.
+        guard process.terminationStatus == 0 else {
+            throw BatteryHealthReaderError.powerProfilerFailed(status: process.terminationStatus)
+        }
+
+        return data
+    }
+}
