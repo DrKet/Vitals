@@ -12,6 +12,10 @@ public enum ChartUnit: Sendable, Equatable {
     case fraction
     /// An absolute quantity with a unit suffix, e.g. "MB/s".
     case absolute(suffix: String)
+    /// Degrees Celsius. Unlike `.fraction` and `.absolute`, zero is not a
+    /// meaningful floor — a die's rest temperature is nowhere near it — so
+    /// this unit carries its own lower bound instead of assuming zero.
+    case temperature
 
     public func formatted(_ value: Double) -> String {
         switch self {
@@ -19,6 +23,13 @@ public enum ChartUnit: Sendable, Equatable {
             return "\(Int((value * 100).rounded()))%"
         case .absolute(let suffix):
             return String(format: "%.2f %@", value, suffix)
+        case .temperature:
+            // One decimal, not the two `.absolute` uses: readings arrive
+            // quantised to ~0.09 °C on Apple Silicon and storage to whole
+            // degrees, so "38.82 °C" claims a precision the sensor does not
+            // have. And not zero decimals, which would hide the ~2 °C signal
+            // this page exists to show.
+            return String(format: "%.1f °C", value)
         }
     }
 }
@@ -180,6 +191,13 @@ public enum ChartGeometry {
     /// all-zero or empty series yields a valid, non-degenerate range rather
     /// than dividing by zero.
     public static func upperBound(for stacked: [[Double]], unit: ChartUnit) -> Double {
+        bounds(for: stacked, unit: unit).upper
+    }
+
+    /// The private core of `upperBound` for the zero-floored units, kept
+    /// separate from `.temperature` so a lower bound never has to be
+    /// invented for a unit that has never needed one.
+    private static func upperBoundIgnoringLower(for stacked: [[Double]], unit: ChartUnit) -> Double {
         let peak = stacked.flatMap { $0 }.max() ?? 0
         switch unit {
         case .fraction:
@@ -189,19 +207,65 @@ public enum ChartGeometry {
             // renderer plots against and the number the label prints cannot
             // disagree.
             return niceUpperBound(atLeast: max(peak, absoluteFloor)).value
+        case .temperature:
+            // Unreachable: `bounds` routes `.temperature` through its own
+            // branch, never through here. A `default:` would silently floor
+            // a future zero-based unit at zero instead of forcing a decision
+            // at the call site that adds it, so this stays an explicit,
+            // loud failure instead of a fabricated number.
+            preconditionFailure("upperBoundIgnoringLower does not support .temperature; see bounds(for:unit:)")
         }
     }
 
-    /// The labelled ceiling for an absolute-unit chart, or `nil` for a
-    /// fractional one.
+    /// Both ends of a chart's scale.
+    ///
+    /// The single source of truth: `upperBound` delegates here, so the value
+    /// the renderer plots against and the value a label prints cannot drift.
+    public static func bounds(for stacked: [[Double]], unit: ChartUnit) -> (lower: Double, upper: Double) {
+        switch unit {
+        case .fraction, .absolute:
+            return (0, upperBoundIgnoringLower(for: stacked, unit: unit))
+        case .temperature:
+            let values = stacked.flatMap { $0 }
+            // No data draws nothing, so this range only has to be
+            // non-degenerate — it is a scale, not a reading.
+            guard let low = values.min(), let high = values.max() else { return (0, 5) }
+
+            var lower = (low / 5).rounded(.down) * 5
+            var upper = (high / 5).rounded(.up) * 5
+            // Tolerance, never `==`: these are derived quantities and this
+            // project has been bitten four times by exact float comparison.
+            if abs(lower - low) < 1e-9 { lower -= 5 }
+            if abs(upper - high) < 1e-9 { upper += 5 }
+            return (lower, upper)
+        }
+    }
+
+    /// The labelled ceiling for an absolute-unit or temperature chart, or
+    /// `nil` for a fractional one.
     ///
     /// Fractional charts are bounded at 1.0 and CPU, Memory and GPU all show
     /// that as a headline percentage already — a "100%" label on the canvas
     /// would restate what the page says in 40pt type.
     public static func axisMaximum(for stacked: [[Double]], unit: ChartUnit) -> NiceBound? {
-        guard case .absolute = unit else { return nil }
-        let peak = stacked.flatMap { $0 }.max() ?? 0
-        return niceUpperBound(atLeast: max(peak, absoluteFloor))
+        switch unit {
+        case .fraction:
+            return nil
+        case .absolute:
+            let peak = stacked.flatMap { $0 }.max() ?? 0
+            return niceUpperBound(atLeast: max(peak, absoluteFloor))
+        case .temperature:
+            // Decimals are 0 because both ends of a temperature scale are
+            // multiples of 5 by construction (see `bounds`).
+            return NiceBound(value: bounds(for: stacked, unit: unit).upper, decimals: 0)
+        }
+    }
+
+    /// The lower end of a chart's scale, or `nil` when that end is a known
+    /// zero and therefore not worth the ink.
+    public static func axisMinimum(for stacked: [[Double]], unit: ChartUnit) -> NiceBound? {
+        guard case .temperature = unit else { return nil }
+        return NiceBound(value: bounds(for: stacked, unit: unit).lower, decimals: 0)
     }
 
     /// `bound` rendered with its unit suffix, or `nil` for a fractional chart.
@@ -210,8 +274,14 @@ public enum ChartGeometry {
     /// 0.001 ceiling as "0.00 MB/s" — a ceiling of zero on a chart that is
     /// visibly not flat.
     public static func axisLabel(_ bound: NiceBound, unit: ChartUnit) -> String? {
-        guard case .absolute(let suffix) = unit else { return nil }
-        return String(format: "%.\(bound.decimals)f %@", bound.value, suffix)
+        switch unit {
+        case .fraction:
+            return nil
+        case .absolute(let suffix):
+            return String(format: "%.\(bound.decimals)f %@", bound.value, suffix)
+        case .temperature:
+            return String(format: "%.\(bound.decimals)f °C", bound.value)
+        }
     }
 
     /// Where sample `index` sits along `rect`'s width under a given spacing
@@ -242,15 +312,16 @@ public enum ChartGeometry {
     public static func points(
         _ values: [Double],
         in rect: CGRect,
+        lowerBound: Double = 0,
         upperBound: Double
     ) -> [CGPoint] {
-        guard !values.isEmpty, upperBound > 0 else { return [] }
+        guard !values.isEmpty, upperBound > lowerBound else { return [] }
 
         return values.enumerated().compactMap { index, value -> CGPoint? in
             guard let x = sampleX(at: index, in: rect, count: values.count, spacing: .endpoints) else {
                 return nil
             }
-            let clamped = min(max(value / upperBound, 0), 1)
+            let clamped = min(max((value - lowerBound) / (upperBound - lowerBound), 0), 1)
             return CGPoint(x: x, y: rect.maxY - clamped * rect.height)
         }
     }

@@ -314,4 +314,66 @@ struct ChartGeometryTests {
         #expect(ChartGeometry.axisLabel(ChartGeometry.niceUpperBound(atLeast: 0.001), unit: unit) == "0.001 MB/s")
         #expect(ChartGeometry.axisLabel(ChartGeometry.niceUpperBound(atLeast: 0.5), unit: .fraction) == nil)
     }
+
+    // MARK: Temperature bounds
+
+    /// The rule: round outward to multiples of 5, and push off the axis when
+    /// the data lands exactly on one. A baseline tracking raw min/max would
+    /// move every tick and reshape the chart on steady readings — the defect
+    /// the previous milestone removed from absolute charts.
+    @Test("temperature bounds round outward to multiples of five")
+    func temperatureBoundsRoundOutward() {
+        // The spike's real capture: die, battery and storage together.
+        let bands = [[36.69, 38.82], [28.50, 28.80], [29.00, 32.00]]
+        let bounds = ChartGeometry.bounds(for: bands, unit: .temperature)
+        #expect(abs(bounds.lower - 25) < 1e-9)
+        #expect(abs(bounds.upper - 40) < 1e-9)
+    }
+
+    /// Data sitting exactly on a multiple of 5 must not be drawn on the axis
+    /// itself, and the span must never collapse to zero.
+    @Test("temperature bounds push off the axis when data lands on a multiple")
+    func temperatureBoundsAvoidTheAxis() {
+        let bounds = ChartGeometry.bounds(for: [[30.0, 30.0]], unit: .temperature)
+        #expect(abs(bounds.lower - 25) < 1e-9)
+        #expect(abs(bounds.upper - 35) < 1e-9)
+        #expect(bounds.upper - bounds.lower >= 5)
+    }
+
+    @Test("a temperature chart labels both ends")
+    func temperatureLabelsBothEnds() {
+        let bands = [[36.69, 38.82]]
+        let low = ChartGeometry.axisMinimum(for: bands, unit: .temperature)
+        let high = ChartGeometry.axisMaximum(for: bands, unit: .temperature)
+        #expect(ChartGeometry.axisLabel(low!, unit: .temperature) == "35 °C")
+        #expect(ChartGeometry.axisLabel(high!, unit: .temperature) == "40 °C")
+    }
+
+    /// Zero-based units have nothing worth labelling at the bottom — a "0"
+    /// restates what the baseline already says.
+    @Test("zero-based units have no minimum label")
+    func zeroBasedUnitsHaveNoMinimumLabel() {
+        #expect(ChartGeometry.axisMinimum(for: [[0.4]], unit: .fraction) == nil)
+        #expect(ChartGeometry.axisMinimum(for: [[41.25]], unit: .absolute(suffix: "MB/s")) == nil)
+    }
+
+    /// The load-bearing regression guard: adding a unit case must not move any
+    /// existing chart by a single point.
+    @Test("existing units are byte-identical through the new bounds function")
+    func existingUnitsAreUnchanged() {
+        let bands = [[0.2, 0.4, 0.37]]
+        #expect(abs(ChartGeometry.bounds(for: bands, unit: .fraction).lower) < 1e-9)
+        #expect(abs(ChartGeometry.bounds(for: bands, unit: .fraction).upper - 1.0) < 1e-9)
+
+        let absolute = [[0.01, 41.25]]
+        let unit = ChartUnit.absolute(suffix: "MB/s")
+        #expect(abs(ChartGeometry.bounds(for: absolute, unit: unit).lower) < 1e-9)
+        #expect(abs(ChartGeometry.bounds(for: absolute, unit: unit).upper
+                    - ChartGeometry.upperBound(for: absolute, unit: unit)) < 1e-9)
+    }
+
+    @Test("a temperature formats to one decimal with a degree suffix")
+    func temperatureFormatting() {
+        #expect(ChartUnit.temperature.formatted(38.82) == "38.8 °C")
+    }
 }
