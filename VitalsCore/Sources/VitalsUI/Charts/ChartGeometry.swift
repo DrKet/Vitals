@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import SwiftUI
 
 /// How a series' values should be read back to the user.
@@ -92,6 +93,80 @@ public enum ChartGeometry {
         }
     }
 
+    /// The smallest positive bound an absolute-unit chart is allowed, so an
+    /// all-zero or empty series still yields a non-degenerate range instead of
+    /// dividing by zero.
+    public static let absoluteFloor: Double = 0.001
+
+    /// A chart ceiling, paired with the number of decimal places needed to
+    /// print it exactly.
+    ///
+    /// The two travel together because the precision is a property of the
+    /// bound's own exponent, not a formatting choice: 0.05 needs two decimals
+    /// and 50 needs none, and deriving that twice in two places is how they
+    /// drift apart.
+    public struct NiceBound: Sendable {
+        public let value: Double
+        public let decimals: Int
+
+        public init(value: Double, decimals: Int) {
+            self.value = value
+            self.decimals = decimals
+        }
+    }
+
+    /// The smallest `m x 10^n` with `m` in `{1, 2, 5, 10}` that is at least
+    /// `peak`.
+    ///
+    /// Absolute-unit charts used to scale to the raw peak, which meant the
+    /// bound moved on every tick and the whole chart reshaped itself on steady
+    /// traffic. Rounding up to a round number holds the scale still between
+    /// samples *and* gives the reader a ceiling worth labelling — an idle link
+    /// and a saturated one no longer draw the same picture.
+    ///
+    /// A bound at `10 x 10^exponent` is needed whenever `{1, 2, 5}` all fall
+    /// short — ordinarily because `peak`'s own leading digit is 6-9, e.g.
+    /// `atLeast: 6` must round up to `10`, not stop at `5`, and `atLeast: 0.06`
+    /// must round up to `0.1`. That is the common case and needs no float
+    /// error to trigger it.
+    ///
+    /// It also covers a second, narrower case: `log10`/`pow` round-tripping
+    /// is not exact, so `log10(0.001)` can land at `-3.0000000000000004`,
+    /// whose floor is `-4` rather than `-3`. That shifts every `{1, 2, 5}`
+    /// candidate down a decade, and only the 10x step recovers the correct
+    /// bound. Returning the first candidate at or above `peak` is also what
+    /// enforces the invariant that matters — a bound *below* the peak would
+    /// clip a real measurement, which is the same class of error as inventing
+    /// one.
+    public static func niceUpperBound(atLeast peak: Double) -> NiceBound {
+        guard peak > 0, peak.isFinite else {
+            return NiceBound(value: absoluteFloor, decimals: 3)
+        }
+
+        let exponent = Int(floor(log10(peak)))
+        // Paired with the extra power of ten a 10x multiplier carries, so the
+        // decimal count never needs a float comparison against the multiplier.
+        let steps: [(multiplier: Double, exponentShift: Int)] = [(1, 0), (2, 0), (5, 0)]
+
+        for step in steps {
+            let candidate = step.multiplier * pow(10.0, Double(exponent))
+            if candidate >= peak {
+                return NiceBound(
+                    value: candidate,
+                    decimals: max(0, -(exponent + step.exponentShift))
+                )
+            }
+        }
+
+        // The 10x case: reached whenever peak's leading digit is 6-9 (no
+        // float error involved), and also whenever `log10` noise shifted
+        // `exponent` down a decade at an exact power of ten (see above). A
+        // full decade above `exponent`'s own candidate is always >= peak, so
+        // this is reachable on every call that falls through the loop above,
+        // not a defensive fallback.
+        return NiceBound(value: 10 * pow(10.0, Double(exponent)), decimals: max(0, -(exponent + 1)))
+    }
+
     /// The value the top of the chart represents.
     ///
     /// Fractional metrics (CPU busy, GPU utilisation) are bounded at 1 so a 40%
@@ -110,8 +185,33 @@ public enum ChartGeometry {
         case .fraction:
             return max(peak, 1.0)
         case .absolute:
-            return max(peak, 0.001)
+            // Through the same function `axisMaximum` uses, so the scale the
+            // renderer plots against and the number the label prints cannot
+            // disagree.
+            return niceUpperBound(atLeast: max(peak, absoluteFloor)).value
         }
+    }
+
+    /// The labelled ceiling for an absolute-unit chart, or `nil` for a
+    /// fractional one.
+    ///
+    /// Fractional charts are bounded at 1.0 and CPU, Memory and GPU all show
+    /// that as a headline percentage already — a "100%" label on the canvas
+    /// would restate what the page says in 40pt type.
+    public static func axisMaximum(for stacked: [[Double]], unit: ChartUnit) -> NiceBound? {
+        guard case .absolute = unit else { return nil }
+        let peak = stacked.flatMap { $0 }.max() ?? 0
+        return niceUpperBound(atLeast: max(peak, absoluteFloor))
+    }
+
+    /// `bound` rendered with its unit suffix, or `nil` for a fractional chart.
+    ///
+    /// Deliberately not `ChartUnit.formatted`, whose `%.2f` would print a
+    /// 0.001 ceiling as "0.00 MB/s" — a ceiling of zero on a chart that is
+    /// visibly not flat.
+    public static func axisLabel(_ bound: NiceBound, unit: ChartUnit) -> String? {
+        guard case .absolute(let suffix) = unit else { return nil }
+        return String(format: "%.\(bound.decimals)f %@", bound.value, suffix)
     }
 
     /// Where sample `index` sits along `rect`'s width under a given spacing

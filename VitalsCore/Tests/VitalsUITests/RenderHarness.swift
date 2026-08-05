@@ -133,6 +133,50 @@ func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
     return false
 }
 
+/// Offscreen, `glassSurface()` falls back to `.regularMaterial` painted as a
+/// flat, fully-opaque grey — confirmed empirically at this value in this
+/// harness (see `regionHasSaturatedColor`'s doc comment, which found the same
+/// constant from the saturation angle). Stable across every panel, so it
+/// works as a fixed comparison colour rather than one re-sampled per render.
+let glassPanelMaterialFallback = NSColor(calibratedRed: 35.0 / 255, green: 35.0 / 255, blue: 35.0 / 255, alpha: 1)
+
+/// Like `regionHasContent(in:region:)`, but compares every pixel in `region`
+/// against a caller-supplied colour instead of the image's own top-left
+/// corner.
+///
+/// Two things `regionHasContent` cannot tell apart inside a `GlassPanel`,
+/// together: its corner-based background is the *page* background, which
+/// differs from the panel's own opaque material regardless of what is drawn
+/// on top — so every pixel inside a panel already "has content" by that
+/// definition (the same problem `regionHasSaturatedColor`'s doc comment
+/// describes from the saturation angle). And `regionHasSaturatedColor` itself
+/// cannot help either, because the mark this exists to find — `MetricChart`'s
+/// axis-maximum label, `.white.opacity(0.45)` text — is neutral grey with no
+/// saturation to detect. Neither existing probe fits a low-contrast,
+/// non-saturated mark inside a material panel; this is the one that does,
+/// by taking the background as a parameter instead of assuming it.
+@MainActor
+func regionHasContent(in image: RenderedImage, region: CGRect, differingFrom background: NSColor) throws -> Bool {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return false }
+
+    for x in minX..<maxX {
+        for y in minY..<maxY {
+            if bitmap.colorAt(x: x, y: y) != background { return true }
+        }
+    }
+    return false
+}
+
 /// Where a hardware page's primary chart actually paints, inside an
 /// `800x700` render — shared by every page's "renders a full page from a
 /// live store" test so they all probe the same, empirically-verified spot
@@ -144,9 +188,10 @@ func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
 /// layout above it, so this holds regardless of which page it is. The
 /// `MetricChart` beneath it grows past its `Vitals.Metrics.chartHeight`
 /// (132pt) floor to fill leftover space, so its actual rendered height
-/// varies by page (207pt measured for CPU's, more for pages with no
-/// secondary content below the chart) — but the floor itself is a
-/// *guarantee*, so a probe rectangle that stays within `y ∈ [111, 111+132]`
+/// varies by page (207pt measured for CPU's; every hardware page's is now
+/// held at or below `Vitals.Metrics.chartMaxHeight` — 220pt — by
+/// `HardwarePage`) — but the floor itself is a *guarantee*, so a probe
+/// rectangle that stays within `y ∈ [111, 111+132]`
 /// is always entirely inside the chart's canvas no matter how much extra
 /// room it grows into, and always well short of secondary content
 /// (`CoreGrid`, `VolumeBar`) that only ever starts after the chart's actual
@@ -158,11 +203,19 @@ func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
 /// guaranteed floor rather than right at its edge.
 ///
 /// Each page's "renders a full page" test picks its sample data so its
-/// chart's topmost band sits within the top ~10% of the canvas (fraction
-/// series: a stacked total near 1.0; absolute series such as throughput
-/// auto-scale to their own peak, so any non-zero reading already touches the
-/// canvas top) — see each test's comment — which is what makes one shared,
-/// generously-sized rectangle correct for all five without per-page tuning.
+/// chart's topmost band sits high in the canvas — see each test's comment —
+/// which is what makes one shared, generously-sized rectangle correct for all
+/// five without per-page tuning.
+///
+/// For a fraction series that means a stacked total near 1.0. For an absolute
+/// series it takes deliberate choosing: throughput charts no longer hug their
+/// own peak. `ChartGeometry.upperBound` rounds an absolute chart's ceiling up
+/// to the nearest `m x 10^n` (see `niceUpperBound`), so a reading is drawn at
+/// `value / roundedBound` of the height, not at the top — a peak of 3.0
+/// against a bound of 5 sits at 60%, well below this rectangle. Pick fixture
+/// values whose total lands near a nice bound rather than assuming any
+/// non-zero reading reaches the canvas top; that assumption was true before
+/// the rounding landed and it broke three page tests when it stopped being.
 let chartCanvasProbeRegion = CGRect(x: 40, y: 118, width: 720, height: 85)
 
 /// True when any pixel inside `region` is a saturated (non-grayscale)
@@ -340,4 +393,114 @@ private func isNotBlank(_ bitmap: NSBitmapImageRep) -> Bool {
         }
     }
     return false
+}
+
+/// The vertical extent, in points, of saturated (non-grayscale) pixels inside
+/// `region` — `nil` when the region is entirely neutral.
+///
+/// `regionHasSaturatedColor` answers "did the chart paint here at all". This
+/// answers "how tall is what it painted", which is what a test of the chart's
+/// *height* needs. Every hardware page's chrome — the offscreen material fill,
+/// gridlines, `StatRow` text, the disclosure chevron — renders in neutral
+/// greys (see `regionHasSaturatedColor`'s doc comment), so inside a page's
+/// panel the saturated extent is the chart's own drawn height and nothing
+/// else.
+///
+/// Returned in points, not pixels, by dividing through `image.scale` — the
+/// same scale the bitmap itself reported, so a 1x and a 2x render give the
+/// same answer.
+@MainActor
+func saturatedRowExtent(
+    in image: RenderedImage,
+    region: CGRect,
+    minimumSpread: CGFloat = 16.0 / 255.0
+) throws -> ClosedRange<CGFloat>? {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return nil }
+
+    var top: Int?
+    var bottom: Int?
+    for y in minY..<maxY {
+        for x in minX..<maxX {
+            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
+            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
+            if max(r, g, b) - min(r, g, b) > minimumSpread {
+                if top == nil { top = y }
+                bottom = y
+                break
+            }
+        }
+    }
+
+    guard let top, let bottom else { return nil }
+    return (CGFloat(top) / image.scale)...(CGFloat(bottom) / image.scale)
+}
+
+/// The horizontal extent, in points, of saturated (non-grayscale) pixels
+/// inside `region` — `nil` when the region is entirely neutral.
+///
+/// The horizontal twin of `saturatedRowExtent` above, for tests that need to
+/// know *where along x* something painted rather than how tall it is —
+/// e.g. checking that a readout box landed at the x-position its anchor
+/// implies, not merely that it painted somewhere inside a chart. A test that
+/// only asks "is there saturated colour in this rectangle" cannot
+/// distinguish a box placed correctly from one placed at the wrong x inside
+/// the same rectangle, or from one that ignored its anchor entirely and
+/// landed at a fixed corner that happens to fall inside the probed region.
+/// This answers the stronger question — but what it reports is the *index*
+/// of the first and the last pixel column found to contain a saturated
+/// pixel, not the drawn content's true left and right edges: the last
+/// saturated column's own right-hand edge is one more pixel past
+/// `upperBound`, so the true painted width is one pixel wider than
+/// `upperBound - lowerBound`. Close enough for every caller here, all of
+/// which compare against an independently computed expected position with a
+/// multi-point tolerance, but worth knowing before reading this as an exact
+/// bounding box.
+///
+/// Returned in points, not pixels, by dividing through `image.scale` — the
+/// same scale the bitmap itself reported, so a 1x and a 2x render give the
+/// same answer.
+@MainActor
+func saturatedColumnExtent(
+    in image: RenderedImage,
+    region: CGRect,
+    minimumSpread: CGFloat = 16.0 / 255.0
+) throws -> ClosedRange<CGFloat>? {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return nil }
+
+    var left: Int?
+    var right: Int?
+    for x in minX..<maxX {
+        for y in minY..<maxY {
+            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
+            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
+            if max(r, g, b) - min(r, g, b) > minimumSpread {
+                if left == nil { left = x }
+                right = x
+                break
+            }
+        }
+    }
+
+    guard let left, let right else { return nil }
+    return (CGFloat(left) / image.scale)...(CGFloat(right) / image.scale)
 }

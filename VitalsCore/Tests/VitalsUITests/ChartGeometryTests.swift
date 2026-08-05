@@ -75,9 +75,15 @@ struct ChartGeometryTests {
         #expect(abs(bound - 0.05) < 1e-9)
     }
 
-    @Test("an absolute series exceeding 1 still grows to its peak")
+    @Test("an absolute series exceeding 1 still grows to its peak, rounded up to a nice value")
     func absoluteSeriesAboveOneUsesPeak() {
-        #expect(ChartGeometry.upperBound(for: [[0.5, 3.2]], unit: .absolute(suffix: "MB/s")) == 3.2)
+        // 3.2 is not itself "nice" (a 1/2/5x power of ten), so upperBound now
+        // rounds it up to 5 — see niceBoundRoundsUp for the general rule this
+        // exercises. Before the stable-axis change, this asserted an exact
+        // peak of 3.2; that equality is precisely what rounding intentionally
+        // supersedes, so the assertion moves to the rounded value rather than
+        // the bound reverting to raw-peak behaviour to keep it.
+        #expect(abs(ChartGeometry.upperBound(for: [[0.5, 3.2]], unit: .absolute(suffix: "MB/s")) - 5.0) < 1e-9)
     }
 
     @Test("an all-zero or empty absolute series has a small positive bound, so nothing divides by zero")
@@ -217,5 +223,95 @@ struct ChartGeometryTests {
         // which is the regression it exists to catch.
         #expect(bounds.minY >= -15)
         #expect(bounds.maxY <= 65)
+    }
+
+    // MARK: Nice bound / axis label
+
+    @Test("a nice upper bound rounds up to 1, 2 or 5 times a power of ten")
+    func niceBoundRoundsUp() {
+        #expect(abs(ChartGeometry.niceUpperBound(atLeast: 41.25).value - 50) < 1e-9)
+        #expect(abs(ChartGeometry.niceUpperBound(atLeast: 0.12).value - 0.2) < 1e-9)
+        #expect(abs(ChartGeometry.niceUpperBound(atLeast: 0.03).value - 0.05) < 1e-9)
+        #expect(abs(ChartGeometry.niceUpperBound(atLeast: 10).value - 10) < 1e-9)
+        #expect(abs(ChartGeometry.niceUpperBound(atLeast: 6).value - 10) < 1e-9)
+    }
+
+    /// The invariant that matters: a bound below the peak would clip real data,
+    /// which is the same class of error as inventing it. Swept across five
+    /// decades rather than spot-checked, because the failure mode is
+    /// floating-point and floating-point failures hide between the cases
+    /// anyone thinks to write by hand.
+    @Test("a nice upper bound is never below the peak it must contain")
+    func niceBoundNeverClips() {
+        var peak = 0.001
+        while peak < 10_000 {
+            let bound = ChartGeometry.niceUpperBound(atLeast: peak)
+            #expect(bound.value >= peak, "bound \(bound.value) is below peak \(peak)")
+            peak *= 1.07
+        }
+    }
+
+    /// `log10(0.001)` can land at -3.0000000000000004, whose floor is -4,
+    /// producing a mantissa of 10.0 that a {1, 2, 5} multiplier list cannot
+    /// cover. This is why the list has a 10 in it.
+    @Test("the float-error case at an exact power of ten is covered")
+    func niceBoundHandlesExactPowersOfTen() {
+        for exponent in -4...4 {
+            let peak = pow(10.0, Double(exponent))
+            let bound = ChartGeometry.niceUpperBound(atLeast: peak)
+            #expect(bound.value >= peak)
+            #expect(abs(bound.value - peak) < peak * 1e-9, "\(peak) should already be nice")
+        }
+    }
+
+    /// `peak.isFinite` guards `Int(floor(log10(peak)))` below it: without it,
+    /// `+infinity` reaches that conversion and `Int(Double.infinity)` is a
+    /// Swift runtime trap, not a thrown error. Every degenerate input —
+    /// zero, negative, NaN, and infinite — must be caught before that line
+    /// and turned into the same honest floor.
+    @Test("degenerate peaks fall back to the absolute floor instead of reaching the log")
+    func degeneratePeaksFallBackToFloor() {
+        for peak in [0.0, -1.0, Double.nan, Double.infinity] {
+            let bound = ChartGeometry.niceUpperBound(atLeast: peak)
+            #expect(abs(bound.value - ChartGeometry.absoluteFloor) < 1e-12)
+            #expect(bound.decimals == 3)
+        }
+    }
+
+    @Test("decimal places are derived from the bound's own exponent")
+    func niceBoundDecimals() {
+        #expect(ChartGeometry.niceUpperBound(atLeast: 41.25).decimals == 0)
+        #expect(ChartGeometry.niceUpperBound(atLeast: 0.12).decimals == 1)
+        #expect(ChartGeometry.niceUpperBound(atLeast: 0.03).decimals == 2)
+        #expect(ChartGeometry.niceUpperBound(atLeast: 0.001).decimals == 3)
+        // 0.06 rounds to 0.1 — a 10x multiplier, so one decimal, not two.
+        #expect(ChartGeometry.niceUpperBound(atLeast: 0.06).decimals == 1)
+    }
+
+    @Test("fractional charts keep their 1.0 ceiling and get no label")
+    func fractionalChartsAreUntouched() {
+        let bands = [[0.2, 0.4, 0.37]]
+        #expect(abs(ChartGeometry.upperBound(for: bands, unit: .fraction) - 1.0) < 1e-9)
+        #expect(ChartGeometry.axisMaximum(for: bands, unit: .fraction) == nil)
+    }
+
+    /// A drift guard. The scale the renderer plots against and the number the
+    /// label prints must come from the same computation, or the chart will one
+    /// day say 50 while drawing against 41.25.
+    @Test("the axis label's value is exactly the bound the chart plots against")
+    func axisMaximumAgreesWithUpperBound() {
+        let bands = [[0.01, 41.25, 3.0]]
+        let unit = ChartUnit.absolute(suffix: "MB/s")
+        let axis = ChartGeometry.axisMaximum(for: bands, unit: unit)
+        #expect(abs(axis!.value - ChartGeometry.upperBound(for: bands, unit: unit)) < 1e-9)
+    }
+
+    @Test("an axis label prints its suffix at the derived precision")
+    func axisLabelFormatting() {
+        let unit = ChartUnit.absolute(suffix: "MB/s")
+        #expect(ChartGeometry.axisLabel(ChartGeometry.niceUpperBound(atLeast: 41.25), unit: unit) == "50 MB/s")
+        #expect(ChartGeometry.axisLabel(ChartGeometry.niceUpperBound(atLeast: 0.12), unit: unit) == "0.2 MB/s")
+        #expect(ChartGeometry.axisLabel(ChartGeometry.niceUpperBound(atLeast: 0.001), unit: unit) == "0.001 MB/s")
+        #expect(ChartGeometry.axisLabel(ChartGeometry.niceUpperBound(atLeast: 0.5), unit: .fraction) == nil)
     }
 }

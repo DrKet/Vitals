@@ -161,10 +161,18 @@ struct PageRenderRegressionTests {
             cadence: .fast
         )
         await storageEngine.register(
-            // Absolute-unit throughput auto-scales to its own peak, so any
-            // non-zero reading already touches the canvas top — no tuning
-            // needed, as in `StoragePageTests`'s own render test.
-            AnySampler { ["disk0": DiskThroughput(bytesReadPerSecond: 2_097_152, bytesWrittenPerSecond: 1_048_576)] },
+            // 4.0 + 0.5 = 4.5 MB/s. Since the stable-axis change, an
+            // absolute-unit chart scales to `ChartGeometry.niceUpperBound`'s
+            // rounded ceiling (5, here), not the raw peak, so the topmost
+            // band no longer touches the canvas top for an arbitrary reading.
+            // 4.5 against 5 is 90% of the chart's height, comfortably inside
+            // `chartCanvasProbeRegion`. The previous 2.0/1.0 MB/s fixture
+            // (peak 3, bound 5, 60%) sat right at that region's edge and was
+            // the actual failure this comment now documents: `#require(try
+            // firstSaturatedColor(in: storageRendered, region:
+            // chartCanvasProbeRegion))` returned `nil` with that fixture —
+            // see `StoragePageTests`' own render test for the matching fix.
+            AnySampler { ["disk0": DiskThroughput(bytesReadPerSecond: 4_194_304, bytesWrittenPerSecond: 524_288)] },
             for: .diskIO,
             cadence: .fast
         )

@@ -36,6 +36,19 @@ public enum Vitals {
         public static let tileSpacing: CGFloat = 12
         public static let contentPadding: CGFloat = 20
         public static let chartHeight: CGFloat = 132
+        /// The ceiling `HardwarePage` holds its chart to.
+        ///
+        /// `HardwarePage` pins its content stack to the window height so a
+        /// trailing spacer has something to push against, and `MetricChart`
+        /// declares `maxHeight: .infinity` so a tall tile shows more history.
+        /// Together those made the chart the only greedy element on the page:
+        /// on the four pages whose `secondary` slot is empty it took ~49% of a
+        /// 713pt window and grew from there. The floor above is a guarantee;
+        /// this is a limit. Deliberately not a fraction of window height —
+        /// that would mean threading the container's geometry into the chart,
+        /// widening `MetricChart`'s API for a layout concern that belongs to
+        /// its caller.
+        public static let chartMaxHeight: CGFloat = 220
     }
 
     public enum Typography {

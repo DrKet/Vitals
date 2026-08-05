@@ -1,4 +1,6 @@
 import Foundation
+import MetricsEngine
+import SwiftUI
 import SystemMetrics
 import Testing
 @testable import VitalsUI
@@ -143,5 +145,83 @@ struct OverviewPageTests {
 
         #expect(series.count == 1)
         #expect(abs(series[0].values[0] - (bands[0].values[0] + bands[1].values[0])) < 1e-9)
+    }
+
+    // MARK: Render (axis-maximum suppression)
+
+    /// The whole point of this test: nothing before it ever constructed an
+    /// `OverviewPage` from a live store and rendered it — every prior test in
+    /// this file covers only pure helpers. That gap is exactly why the bug
+    /// this guards against shipped unnoticed: `MetricChart`'s axis-maximum
+    /// label (added for the hardware pages, see `ChartGeometry.axisMaximum`)
+    /// was silently inherited by `MetricTile` too, so the Storage and Network
+    /// tiles briefly showed their throughput twice — once as the tile's own
+    /// 22pt headline, once again as an 11pt ceiling directly beneath it.
+    ///
+    /// Storage and Network are the only tiles that can carry the label at
+    /// all — CPU, Memory and GPU are `.fraction`-unit series, which
+    /// `ChartGeometry.axisMaximum` always returns `nil` for regardless of
+    /// this flag (see its doc comment) — so they are not probed here.
+    @Test("the axis-maximum label never reaches the Storage or Network tile, whose headline already states it")
+    func storageAndNetworkTilesSuppressTheAxisMaximumLabel() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        await engine.register(
+            // 4.0 + 0.5 = 4.5 MB/s, deliberately not a "nice" bound itself —
+            // see `StoragePageTests.rendersFullPageFromStore`'s sampler
+            // comment. `ChartGeometry.niceUpperBound` rounds this up to a
+            // labelled 5 MB/s ceiling, which is exactly the reading that must
+            // not reach the tile.
+            AnySampler { ["disk0": DiskThroughput(bytesReadPerSecond: 4_194_304, bytesWrittenPerSecond: 524_288)] },
+            for: .diskIO,
+            cadence: .fast
+        )
+        await engine.register(
+            AnySampler { ["en0": NetworkThroughput(bytesInPerSecond: 4_194_304, bytesOutPerSecond: 524_288)] },
+            for: .network,
+            cadence: .fast
+        )
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        let diskIOTask = Task { await store.stream(.diskIO) }
+        let networkTask = Task { await store.stream(.network) }
+        try await waitUntil { store.diskIOHistory.count >= 2 && store.networkHistory.count >= 2 }
+        diskIOTask.cancel()
+        networkTask.cancel()
+
+        let rendered = try renderPNG(
+            OverviewPage(store: store),
+            size: CGSize(width: 900, height: 700),
+            named: "overview-page-with-data"
+        )
+
+        // Both rectangles are derived from this exact render, not guessed:
+        // diffing this fixture's output against a build with `MetricTile`'s
+        // `showsAxisMaximum` forced to `true` (see `MetricChart.init`'s doc
+        // comment for why that flag exists) isolated the label to
+        // x:[24.5, 60.0], y:[437.5, 447.5] pt on the Storage tile and
+        // x:[328.5, 364.0], y:[437.5, 447.5] pt on the Network tile — nowhere
+        // else in the image changed. These rectangles pad that measured
+        // bounding box on every side; the nearest real content in either
+        // direction is the tile's own headline well above y=420 and the
+        // chart's flat throughput line starting at y=457 (confirmed by
+        // scanning the same column), so there is no dimension in which
+        // widening the pad here could accidentally catch something else.
+        //
+        // `regionHasContent(in:region:)` cannot be used for this: it compares
+        // against the image's own top-left corner, which sits outside every
+        // `GlassPanel` and so differs from a panel's opaque material
+        // regardless of what is drawn inside it — see
+        // `regionHasSaturatedColor`'s doc comment for the same problem from
+        // the saturation angle, and
+        // `regionHasContent(in:region:differingFrom:)`'s doc comment for why
+        // that check cannot help either (the label is neutral grey, with
+        // nothing for a saturation probe to find). Comparing against the
+        // material's own known fallback colour is what actually isolates the
+        // label.
+        let storageLabelRegion = CGRect(x: 18, y: 433, width: 50, height: 18)
+        let networkLabelRegion = CGRect(x: 322, y: 433, width: 50, height: 18)
+
+        #expect(try !regionHasContent(in: rendered, region: storageLabelRegion, differingFrom: glassPanelMaterialFallback))
+        #expect(try !regionHasContent(in: rendered, region: networkLabelRegion, differingFrom: glassPanelMaterialFallback))
     }
 }

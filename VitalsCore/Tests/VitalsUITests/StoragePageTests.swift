@@ -224,7 +224,19 @@ struct StoragePageTests {
             cadence: .fast
         )
         await engine.register(
-            AnySampler { ["disk0": DiskThroughput(bytesReadPerSecond: 2_097_152, bytesWrittenPerSecond: 1_048_576)] },
+            // 4.0 + 0.5 = 4.5 MB/s, deliberately not itself a "nice" bound:
+            // `ChartGeometry.niceUpperBound` now rounds an absolute-unit
+            // chart's axis up to the nearest 1/2/5x power of ten (5, here)
+            // rather than sitting exactly on the peak, so the topmost band no
+            // longer touches the canvas top for an arbitrary reading — only
+            // for one landing near a rounded bound. 4.5 against a bound of 5
+            // is 90% of the chart's height, comfortably inside
+            // `chartCanvasProbeRegion` regardless of exactly how tall this
+            // page's chart grows (its floor-to-cap range is 132-220pt; see
+            // that region's own doc comment) — the earlier 2.0/1.0 MB/s
+            // fixture (peak 3, bound 5, 60%) sat right at that region's edge
+            // and was intermittently missed depending on rendered height.
+            AnySampler { ["disk0": DiskThroughput(bytesReadPerSecond: 4_194_304, bytesWrittenPerSecond: 524_288)] },
             for: .diskIO,
             cadence: .fast
         )
@@ -242,11 +254,11 @@ struct StoragePageTests {
             named: "storage-page-with-data"
         )
         // See `CPUPageTests.rendersFullPageFromStore` for why `fileExists`
-        // alone was vacuous. Throughput is an absolute-unit series, which
-        // auto-scales its axis to its own peak (`ChartGeometry.upperBound`)
-        // — a single-tick history's one reading *is* that peak, so its band
-        // always touches the canvas top regardless of the exact value, no
-        // tuning needed here.
+        // alone was vacuous. Throughput is an absolute-unit series; since the
+        // stable-axis change it scales to a *rounded* bound
+        // (`ChartGeometry.niceUpperBound`), not the raw peak, so the fixture
+        // above is chosen to land at 90% of the chart's height rather than
+        // exactly 100% — see the comment on the sampler.
         //
         // A plain `regionHasSaturatedColor` is not enough here: `VolumeBar`
         // paints in this page's own lead accent (storage teal, the chart's

@@ -24,20 +24,12 @@ public enum ChartStyle: Sendable, Equatable {
     }
 }
 
-/// Measures the readout box so its placement can be clamped to the chart's
-/// actual bounds instead of an assumed width.
-private struct ReadoutSizeKey: PreferenceKey {
-    static let defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        value = nextValue()
-    }
-}
-
 /// The one chart in Vitals. Two render modes over one geometry.
 public struct MetricChart: View {
     private let series: [ChartSeries]
     private let style: ChartStyle
     private let colors: [Color]
+    private let showsAxisMaximum: Bool
 
     /// - Parameter series: **Order is load-bearing.** In stacked area mode the
     ///   first series is the base band and every later one accumulates on top of
@@ -46,14 +38,24 @@ public struct MetricChart: View {
     ///   the one painted frontmost, so put the series a reader should track
     ///   first — Performance cores before Efficiency, download before upload.
     /// - Parameter colors: matched to `series` by index; wraps if shorter.
-    public init(series: [ChartSeries], style: ChartStyle, colors: [Color]) {
+    /// - Parameter showsAxisMaximum: Whether an absolute-unit series draws its
+    ///   ceiling (see `drawAxisMaximum`). No default on purpose: this chart is
+    ///   embedded both on hardware pages, which carry no other number for the
+    ///   reading's scale, and in `MetricTile` on the Overview, which already
+    ///   states the same quantity as its own headline — a second copy in 11pt
+    ///   grey directly beneath it restates what the tile just said. The
+    ///   ceiling label was added for the former and silently inherited by the
+    ///   latter, which is exactly the bug a defaulted parameter would let
+    ///   happen again the next time a new embedder shows up. Requiring every
+    ///   call site to choose is what stops that.
+    public init(series: [ChartSeries], style: ChartStyle, colors: [Color], showsAxisMaximum: Bool) {
         self.series = series
         self.style = style
         self.colors = colors
+        self.showsAxisMaximum = showsAxisMaximum
     }
 
     @State private var hoverX: CGFloat?
-    @State private var readoutSize: CGSize = .zero
 
     /// The stroke width `drawAreas` paints a band's boundary line with.
     /// Shared with `ChartGeometry.headroom` so the top margin it reserves is
@@ -79,7 +81,8 @@ public struct MetricChart: View {
                 }
                 // All series on one chart share a unit — see `unit(for:)` —
                 // so the first is representative of the whole chart.
-                let bound = ChartGeometry.upperBound(for: bands, unit: series.first?.unit ?? .fraction)
+                let chartUnit = series.first?.unit ?? .fraction
+                let bound = ChartGeometry.upperBound(for: bands, unit: chartUnit)
 
                 switch style {
                 case .area:
@@ -114,6 +117,7 @@ public struct MetricChart: View {
                     let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
                     drawGridlines(in: &context, rect: plotRect)
                     drawAreas(bands, bound: bound, in: &context, rect: plotRect)
+                    drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: plotRect)
                 case .histogram:
                     // Bars are filled shapes anchored to `rect.maxY`, not a
                     // centred stroke or a smoothed curve between samples —
@@ -121,6 +125,7 @@ public struct MetricChart: View {
                     // histogram mode keeps the full canvas.
                     drawGridlines(in: &context, rect: canvasRect)
                     drawHistogram(bands, bound: bound, in: &context, rect: canvasRect)
+                    drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: canvasRect)
                 }
             }
             .overlay { crosshair(in: rect) }
@@ -152,8 +157,6 @@ public struct MetricChart: View {
            let readout = ChartGeometry.readout(at: index, series: series),
            let x = ChartGeometry.sampleX(at: index, in: rect, count: sampleCount, spacing: spacing) {
 
-            let origin = ChartGeometry.readoutOrigin(atX: x, in: rect, boxSize: readoutSize)
-
             ZStack(alignment: .topLeading) {
                 Rectangle()
                     .fill(.white.opacity(0.25))
@@ -161,35 +164,29 @@ public struct MetricChart: View {
                     .position(x: x, y: rect.midY)
                     .frame(height: rect.height)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    if let timestamp = readout.timestamp {
-                        Text(ChartGeometry.relativeAge(
-                            of: timestamp,
-                            now: ProcessInfo.processInfo.systemUptime
-                        ))
-                        .font(Vitals.Typography.label)
-                        .foregroundStyle(.secondary)
-                    }
-                    ForEach(readout.values, id: \.name) { entry in
-                        Text("\(entry.name)  \(unit(for: entry.name).formatted(entry.value))")
+                // Anchored to whichever side of the crosshair has more room and
+                // clamped in both axes against the box's real size — see
+                // `ReadoutPlacement`, which measures it during layout rather
+                // than routing it back through view state.
+                ReadoutPlacement(anchorX: x) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let timestamp = readout.timestamp {
+                            Text(ChartGeometry.relativeAge(
+                                of: timestamp,
+                                now: ProcessInfo.processInfo.systemUptime
+                            ))
                             .font(Vitals.Typography.label)
+                            .foregroundStyle(.secondary)
+                        }
+                        ForEach(readout.values, id: \.name) { entry in
+                            Text("\(entry.name)  \(unit(for: entry.name).formatted(entry.value))")
+                                .font(Vitals.Typography.label)
+                        }
                     }
+                    .padding(6)
+                    .glassSurface(cornerRadius: 8)
                 }
-                .padding(6)
-                .glassSurface(cornerRadius: 8)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: ReadoutSizeKey.self, value: proxy.size)
-                    }
-                )
-                // Anchored to whichever side of the crosshair has more room
-                // and clamped in both axes against the box's actual measured
-                // size (ChartGeometry.readoutOrigin), so the readout can
-                // never be pushed outside the chart regardless of its
-                // content's width or height.
-                .offset(x: origin.x - rect.minX, y: origin.y - rect.minY)
             }
-            .onPreferenceChange(ReadoutSizeKey.self) { readoutSize = $0 }
         }
     }
 
@@ -211,6 +208,32 @@ public struct MetricChart: View {
         case .area, .histogram:
             return series.map(\.values).filter { !$0.isEmpty }
         }
+    }
+
+    /// The y-max, drawn at the plot rect's top-leading corner.
+    ///
+    /// Absolute-unit charts only: they scale to their own data and would
+    /// otherwise draw an idle link and a saturated one identically. Painted
+    /// into the `Canvas`, so the crosshair overlay — a transient hover state on
+    /// an opaque background — draws over it. That overlap is accepted; moving
+    /// a transient readout to dodge a static label is not worth the coupling.
+    ///
+    /// Gated on `showsAxisMaximum` on top of the unit check: an embedder that
+    /// already states the same reading elsewhere (`MetricTile`'s headline)
+    /// opts out here rather than the chart guessing from context.
+    private func drawAxisMaximum(
+        _ bands: [[Double]],
+        unit chartUnit: ChartUnit,
+        in context: inout GraphicsContext,
+        rect: CGRect
+    ) {
+        guard showsAxisMaximum,
+              let bound = ChartGeometry.axisMaximum(for: bands, unit: chartUnit),
+              let label = ChartGeometry.axisLabel(bound, unit: chartUnit) else { return }
+
+        var text = context.resolve(Text(label).font(Vitals.Typography.label))
+        text.shading = .color(.white.opacity(0.45))
+        context.draw(text, at: CGPoint(x: rect.minX + 4, y: rect.minY + 2), anchor: .topLeading)
     }
 
     private func drawGridlines(in context: inout GraphicsContext, rect: CGRect) {
