@@ -17,6 +17,15 @@ public struct HardwareProfile: Sendable {
     public let storageDevices: [StorageDevice]
     public let sensorsAvailable: MetricAvailability
     public let frequencyAvailable: MetricAvailability
+    /// Whether this machine has a battery at all.
+    ///
+    /// This is the one genuinely static fact about the battery — unlike
+    /// maximum capacity or cycle count, which drift over months and so do
+    /// not belong on a profile documented as "built once at launch". It
+    /// exists here, rather than health itself, because it is what the
+    /// sidebar needs to decide whether the Battery page exists; the health
+    /// figures live on `MetricsStore`, read lazily by `BatteryHealthReader`.
+    public let hasBattery: Bool
 
     public static func detect(
         sysctl: any SysctlProviding = SystemSysctl(),
@@ -46,6 +55,13 @@ public struct HardwareProfile: Sendable {
             brand: cpu.brand
         )
 
+        // Whether a battery exists at all is read from the IORegistry, not
+        // `system_profiler`: it is the same cheap, fast check `BatterySampler`
+        // already does for live readings, so detecting the battery's mere
+        // presence does not need the slow profiler subprocess that
+        // `BatteryHealthReader` pays for separately, later, and only once.
+        let hasBattery = BatterySampler.read() != nil
+
         return HardwareProfile(
             cpu: cpu,
             memory: memory,
@@ -54,7 +70,8 @@ public struct HardwareProfile: Sendable {
             sensorsAvailable: sensors.availability,
             frequencyAvailable: cpu.frequencyAvailable
                 ? .available
-                : .unavailable(reason: "CPU frequency requires IOReport, which is not yet implemented")
+                : .unavailable(reason: "CPU frequency requires IOReport, which is not yet implemented"),
+            hasBattery: hasBattery
         )
     }
 

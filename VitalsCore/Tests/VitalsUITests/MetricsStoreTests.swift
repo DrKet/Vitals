@@ -492,6 +492,25 @@ struct MetricsStoreTests {
         #expect(!store.sensorHistory.isEmpty)
     }
 
+    @Test("a battery sample lands in the store with history")
+    func storesBatterySamples() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let sample = BatterySample(
+            watts: 11.6, chargePercent: 22, isCharging: false,
+            isExternalPowerConnected: false, minutesRemaining: 79,
+            volts: 11.081, celsius: 30.14,
+            warningLevel: .none, isLowPowerMode: false
+        )
+        await engine.register(AnySampler { sample }, for: .battery, cadence: .slow)
+        let store = MetricsStore(engine: engine, profile: nil)
+        let task = Task { await store.stream(.battery) }
+        try await waitUntil { store.battery != nil }
+        task.cancel()
+
+        #expect(store.battery?.chargePercent == 22)
+        #expect(!store.batteryHistory.isEmpty)
+    }
+
     @Test("the staleness gate reads the engine's real interval, not one derived from the key")
     func stalenessUsesTheEnginesInterval() async {
         // The cadence for a key lives in StandardSamplers, and intervalOverride

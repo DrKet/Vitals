@@ -211,4 +211,17 @@ struct TokensTests {
         #expect(Vitals.formatMegabytesPerSecond(1.5) == "1.50 MB/s")
         #expect(Vitals.bytesPerMegabyte == 1_048_576.0)
     }
+
+    @Test("the battery accent is distinct from every other page accent")
+    @MainActor
+    func batteryAccentIsDistinct() {
+        let others = [Vitals.Palette.cpu, Vitals.Palette.memory, Vitals.Palette.gpu,
+                      Vitals.Palette.storage, Vitals.Palette.network, Vitals.Palette.sensors]
+        let battery = hue(of: Vitals.Palette.battery)
+        for other in others {
+            let raw = abs(battery - hue(of: other))
+            #expect(min(raw, 1 - raw) > 0.1,
+                    "battery sits too close in hue to another accent")
+        }
+    }
 }

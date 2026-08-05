@@ -44,6 +44,9 @@ public final class MetricsStore {
     public private(set) var sensors: SensorSample?
     public private(set) var sensorHistory: [Timestamped<SensorSample>] = []
 
+    public private(set) var battery: BatterySample?
+    public private(set) var batteryHistory: [Timestamped<BatterySample>] = []
+
     /// Latest only — volume capacity changes over minutes, not seconds, so a
     /// 600-sample ring of near-identical readings would be pure waste.
     public private(set) var volumes: [Volume]?
@@ -65,6 +68,22 @@ public final class MetricsStore {
 
     /// Static hardware description. `nil` only in tests; the app always has one.
     public let profile: HardwareProfile?
+
+    /// Apple's verdict on the battery, read at most once per run.
+    ///
+    /// Unlike the other live fields, this is not populated in `init` or on
+    /// every tick: `BatteryHealthReader.read()` spawns `system_profiler`,
+    /// which is slow, so every test in the suite paying that cost on
+    /// construction — whether or not it cares about the Battery page — would
+    /// be a needless tax on the whole suite. Instead it is read lazily, the
+    /// first time a `.battery` sample arrives, and never again; see
+    /// `hasReadBatteryHealth`.
+    public private(set) var batteryHealth: BatteryHealth?
+
+    /// Guards `batteryHealth` so `BatteryHealthReader.read()` — and the
+    /// `system_profiler` subprocess it spawns — runs at most once per store,
+    /// no matter how many `.battery` samples arrive afterward.
+    private var hasReadBatteryHealth = false
 
     private let engine: MetricsEngine
     private let historyLimit: Int
@@ -160,7 +179,25 @@ public final class MetricsStore {
             sensors = sample
             append(Timestamped(timestamp: value.timestamp, sample: sample), to: &sensorHistory)
             armStalenessWatch(for: key)
+        case .battery:
+            guard let sample = value.value as? BatterySample else { return }
+            battery = sample
+            append(Timestamped(timestamp: value.timestamp, sample: sample), to: &batteryHistory)
+            armStalenessWatch(for: key)
+            // First live sample is the trigger, not `init`: see `batteryHealth`'s
+            // doc comment for why the system_profiler read is deferred to here.
+            readBatteryHealthOnce()
         }
+    }
+
+    /// Reads battery health once, the first time it is needed, and never
+    /// again — `hasReadBatteryHealth` is what makes repeated calls free after
+    /// the first. Called from the `.battery` arm of `apply`, on the first live
+    /// sample.
+    private func readBatteryHealthOnce() {
+        guard !hasReadBatteryHealth else { return }
+        hasReadBatteryHealth = true
+        batteryHealth = BatteryHealthReader.read()
     }
 
     /// The interval a series is really sampled at, as reported by the engine
@@ -187,7 +224,7 @@ public final class MetricsStore {
     private func expiresWhenStale(_ key: SeriesKey) -> Bool {
         switch key {
         case .storage: false
-        case .cpu, .memory, .gpu, .network, .diskIO, .processes, .sensors: true
+        case .cpu, .memory, .gpu, .network, .diskIO, .processes, .sensors, .battery: true
         }
     }
 
@@ -246,6 +283,7 @@ public final class MetricsStore {
         case .diskIO: diskIO = nil
         case .processes: processes = nil
         case .sensors: sensors = nil
+        case .battery: battery = nil
         }
     }
 

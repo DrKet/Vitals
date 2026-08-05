@@ -15,6 +15,16 @@ struct HardwareProfileTests {
         #expect(profile.storageDevices.allSatisfy { !$0.name.isEmpty })
     }
 
+    @Test("this machine has a battery")
+    func hasBattery() throws {
+        // This suite runs on a laptop, so `BatterySampler.read()` should
+        // succeed and `hasBattery` should reflect that — not a fabricated
+        // `true`, but the same live IORegistry check `BatterySampler` itself
+        // uses, exercised here through the profile.
+        let profile = try HardwareProfile.detect()
+        #expect(profile.hasBattery == true)
+    }
+
     @Test("Apple Silicon is reported as unified memory")
     func appleSiliconIsUnified() throws {
         let profile = try HardwareProfile.detect()

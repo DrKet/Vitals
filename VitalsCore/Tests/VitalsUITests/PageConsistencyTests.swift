@@ -17,7 +17,7 @@ struct PageConsistencyTests {
         // actually *routed* in AppShell is checked visually in Task 8 Step 3;
         // a switch statement's arms are not introspectable from a test.
         let implemented = SidebarSection.allCases.filter(\.isImplemented)
-        #expect(Set(implemented) == Set([.overview, .processes, .cpu, .memory, .gpu, .storage, .network, .sensors]))
+        #expect(Set(implemented) == Set([.overview, .processes, .cpu, .memory, .gpu, .storage, .network, .sensors, .battery]))
     }
 
     @Test("each page uses a distinct disclosure key")
@@ -33,6 +33,7 @@ struct PageConsistencyTests {
             StoragePage.disclosureKey,
             NetworkPage.disclosureKey,
             SensorsPage.disclosureKey,
+            BatteryPage.disclosureKey,
         ]
         #expect(Set(keys).count == keys.count)
         #expect(keys.allSatisfy { $0.isEmpty == false })

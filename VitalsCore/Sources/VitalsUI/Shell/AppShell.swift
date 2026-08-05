@@ -11,7 +11,7 @@ public struct AppShell: View {
     public var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                ForEach(SidebarSection.groups) { group in
+                ForEach(SidebarSection.groups(hasBattery: store.profile?.hasBattery == true)) { group in
                     Section(group.name) {
                         ForEach(group.sections) { section in
                             Label(section.title, systemImage: section.symbol)
@@ -47,6 +47,8 @@ public struct AppShell: View {
             NetworkPage(store: store)
         case .sensors:
             SensorsPage(store: store)
+        case .battery:
+            BatteryPage(store: store)
         default:
             NotYetBuilt(section: selection)
         }
