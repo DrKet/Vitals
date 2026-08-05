@@ -20,7 +20,7 @@ public struct HardwareProfile: Sendable {
 
     public static func detect(
         sysctl: any SysctlProviding = SystemSysctl(),
-        sensors: any SensorProviding = UnavailableSensorProvider()
+        sensors: any SensorProviding = IOHIDSensorProvider()
     ) throws -> HardwareProfile {
         let cpu = CPUTopology.detect(using: sysctl)
         let gpus = GPUSampler.devices()

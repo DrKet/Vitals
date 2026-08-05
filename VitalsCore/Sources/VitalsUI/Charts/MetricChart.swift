@@ -82,10 +82,10 @@ public struct MetricChart: View {
                 // All series on one chart share a unit — see `unit(for:)` —
                 // so the first is representative of the whole chart.
                 let chartUnit = series.first?.unit ?? .fraction
-                let bound = ChartGeometry.upperBound(for: bands, unit: chartUnit)
+                let scale = ChartGeometry.bounds(for: bands, unit: chartUnit)
 
                 switch style {
-                case .area:
+                case .area(let stacked):
                     // Gridlines are drawn against the *same* inset rect as the
                     // data, not the raw canvas: they mark fractions of the
                     // value scale, and that scale now lives inside
@@ -116,15 +116,28 @@ public struct MetricChart: View {
                     // pixel-level comparison this was based on.
                     let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
                     drawGridlines(in: &context, rect: plotRect)
-                    drawAreas(bands, bound: bound, in: &context, rect: plotRect)
+                    drawAreas(
+                        bands,
+                        fillOpacity: Self.fillOpacity(stacked: stacked, bandCount: bands.count),
+                        lowerBound: scale.lower,
+                        upperBound: scale.upper,
+                        in: &context,
+                        rect: plotRect
+                    )
                     drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: plotRect)
+                    drawAxisMinimum(bands, unit: chartUnit, in: &context, rect: plotRect)
                 case .histogram:
                     // Bars are filled shapes anchored to `rect.maxY`, not a
                     // centred stroke or a smoothed curve between samples —
                     // neither clipping mechanism this exists for applies, so
-                    // histogram mode keeps the full canvas.
+                    // histogram mode keeps the full canvas. They also always
+                    // start from zero regardless of unit: a bar's length is
+                    // read as its magnitude, and a floating baseline would
+                    // make two bars of equal height represent different
+                    // readings. `scale.lower` is deliberately not threaded in
+                    // here — only the area path floats.
                     drawGridlines(in: &context, rect: canvasRect)
-                    drawHistogram(bands, bound: bound, in: &context, rect: canvasRect)
+                    drawHistogram(bands, bound: scale.upper, in: &context, rect: canvasRect)
                     drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: canvasRect)
                 }
             }
@@ -236,6 +249,32 @@ public struct MetricChart: View {
         context.draw(text, at: CGPoint(x: rect.minX + 4, y: rect.minY + 2), anchor: .topLeading)
     }
 
+    /// The y-min, drawn at the plot rect's bottom-leading corner — the
+    /// mirror image of `drawAxisMaximum`.
+    ///
+    /// `ChartGeometry.axisMinimum` only ever returns non-nil for a unit whose
+    /// scale floats (temperature today): a fractional or absolute chart's
+    /// floor is a known, silent zero, so labelling it would spend ink telling
+    /// the reader what the axis already implies. Gated on `showsAxisMaximum`
+    /// too, for the same reason the maximum is — an embedder that opted out
+    /// of the ceiling label because it already states the reading elsewhere
+    /// (`MetricTile`'s headline) should not get the floor label as a
+    /// consolation prize.
+    private func drawAxisMinimum(
+        _ bands: [[Double]],
+        unit chartUnit: ChartUnit,
+        in context: inout GraphicsContext,
+        rect: CGRect
+    ) {
+        guard showsAxisMaximum,
+              let bound = ChartGeometry.axisMinimum(for: bands, unit: chartUnit),
+              let label = ChartGeometry.axisLabel(bound, unit: chartUnit) else { return }
+
+        var text = context.resolve(Text(label).font(Vitals.Typography.label))
+        text.shading = .color(.white.opacity(0.45))
+        context.draw(text, at: CGPoint(x: rect.minX + 4, y: rect.maxY - 2), anchor: .bottomLeading)
+    }
+
     private func drawGridlines(in context: inout GraphicsContext, rect: CGRect) {
         // Quarter lines give the eye a scale without competing with the data.
         for fraction in [0.25, 0.5, 0.75] {
@@ -247,14 +286,36 @@ public struct MetricChart: View {
         }
     }
 
+    /// How opaque the gradient beneath a band is.
+    ///
+    /// Stacked bands tile: each sits on the one below, so their fills abut
+    /// rather than overlap and the full-weight gradient reads exactly as spec
+    /// §6.3 describes. Unstacked bands do not — several independent readings
+    /// at different heights each fill down to the same baseline, so the
+    /// highest one's sheet lies over every line beneath it. On the Sensors
+    /// page that buried two of three series and made an unstacked chart read
+    /// as a stacked one.
+    ///
+    /// Keyed on overlap rather than on the unit, because the problem is
+    /// geometric rather than anything to do with temperature — any future
+    /// non-additive page inherits the fix. And gated on there being something
+    /// to overlap: a single band cannot cover anything, so an Overview tile
+    /// (which passes `stacked: series.count > 1`, i.e. `false` when it has one
+    /// series) keeps its full-weight fill.
+    static func fillOpacity(stacked: Bool, bandCount: Int) -> Double {
+        stacked || bandCount < 2 ? 0.45 : 0.15
+    }
+
     private func drawAreas(
         _ bands: [[Double]],
-        bound: Double,
+        fillOpacity: Double,
+        lowerBound: Double,
+        upperBound: Double,
         in context: inout GraphicsContext,
         rect: CGRect
     ) {
         // Painted back to front (highest index first) so series 0 is painted
-        // last. Translucent fills (0.45 alpha fading to 0) are what actually
+        // last. Translucent fills (see `fillOpacity`) are what actually
         // keep every band visible regardless of paint order — this ordering
         // instead controls the opaque strokes and the live dot: series 0's
         // stroke ends up on top of every other band's, and its live dot
@@ -262,7 +323,7 @@ public struct MetricChart: View {
         // after it.
         for (index, values) in bands.enumerated().reversed() {
             let color = colors.isEmpty ? Vitals.Palette.cpu : colors[index % colors.count]
-            let points = ChartGeometry.points(values, in: rect, upperBound: bound)
+            let points = ChartGeometry.points(values, in: rect, lowerBound: lowerBound, upperBound: upperBound)
             guard points.count > 1 else { continue }
 
             // Sampling stops when a page is not on screen, so history can
@@ -285,7 +346,7 @@ public struct MetricChart: View {
                 context.fill(
                     fill,
                     with: .linearGradient(
-                        Gradient(colors: [color.opacity(0.45), color.opacity(0)]),
+                        Gradient(colors: [color.opacity(fillOpacity), color.opacity(0)]),
                         startPoint: CGPoint(x: rect.midX, y: rect.minY),
                         endPoint: CGPoint(x: rect.midX, y: rect.maxY)
                     )

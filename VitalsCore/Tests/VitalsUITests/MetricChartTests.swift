@@ -224,4 +224,113 @@ struct MetricChartTests {
         #expect(try regionHasContent(in: withLabel, region: corner))
         #expect(try !regionHasContent(in: without, region: corner))
     }
+
+    // MARK: Floating baseline (temperature)
+
+    /// A zero-based chart would compress the spike's real 2.13 °C swing into
+    /// 4% of the canvas height. With a floating baseline it must occupy a
+    /// visible fraction of it — this asserts the band is drawn well away from
+    /// the bottom edge, which can only happen if the lower bound is non-zero.
+    @Test("a temperature chart plots against a floating baseline")
+    func temperatureChartFloatsItsBaseline() throws {
+        let series = [ChartSeries(
+            name: "Die",
+            values: [36.69, 37.5, 38.82],
+            unit: .temperature
+        )]
+        let chart = MetricChart(series: series, style: .area(stacked: false), colors: [Vitals.Palette.cpu], showsAxisMaximum: true)
+        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-floating")
+
+        // The discriminator is where the STROKE sits, not where the fill
+        // reaches: `drawAreas` fills from the curve down to the baseline in
+        // both configurations, so "is there colour in the lower half" is true
+        // either way and would assert nothing.
+        //
+        // Bounds 35–40 put the samples at 34%–76% of the height, i.e. the
+        // curve runs through the middle. Zero-based bounds (0–40) would put
+        // them at 92%–97%, i.e. hard against the top.
+        let topStrip = CGRect(x: 0, y: 0, width: 400, height: 24)
+        let middleBand = CGRect(x: 0, y: 60, width: 400, height: 80)
+        #expect(try !regionHasSaturatedColor(in: rendered, region: topStrip))
+        #expect(try regionHasSaturatedColor(in: rendered, region: middleBand))
+    }
+
+    /// The rule that keeps the Sensors chart both legible and consistent with
+    /// the rest of the app.
+    ///
+    /// Coverage lives on this pure function rather than on a render probe for
+    /// a specific reason: `renderPNG` writes PNGs with UNPREMULTIPLIED colour,
+    /// so a pixel at 0.15 alpha still stores full-strength RGB. A saturation
+    /// probe therefore cannot tell a light fill from a heavy one — it sees
+    /// both. The render test below can only prove a fill was drawn at all;
+    /// this is what proves it was drawn at the right weight.
+    @Test("fill weight is chosen by overlap, not by unit")
+    func fillWeightIsKeyedOnOverlap() {
+        // Stacked bands tile rather than overlap, so they keep spec §6.3's
+        // full-weight gradient.
+        #expect(abs(MetricChart.fillOpacity(stacked: true, bandCount: 4) - 0.45) < 1e-9)
+
+        // A lone band cannot cover anything. This is the Overview tile case:
+        // `MetricTile` passes `stacked: series.count > 1`, i.e. `false` for a
+        // single-series tile, and those must not lighten.
+        #expect(abs(MetricChart.fillOpacity(stacked: false, bandCount: 1) - 0.45) < 1e-9)
+
+        // Several independent readings at different heights each fill to the
+        // same baseline, so the highest one's sheet lies over the rest.
+        #expect(MetricChart.fillOpacity(stacked: false, bandCount: 3) < 0.45)
+    }
+
+    /// Guards against silently shipping bare strokes: an earlier revision
+    /// removed the fill from temperature charts entirely, which made Sensors
+    /// the only page in the app not drawing spec §6.3's area style.
+    @Test("an unstacked multi-series chart still fills beneath its curves")
+    func unstackedMultiSeriesChartStillFills() throws {
+        let series = [
+            ChartSeries(name: "Die", values: [38.0, 38.0, 38.0], unit: .temperature),
+            ChartSeries(name: "Battery", values: [26.0, 26.0, 26.0], unit: .temperature),
+        ]
+        let chart = MetricChart(
+            series: series, style: .area(stacked: false),
+            colors: [Vitals.Palette.sensors, Vitals.Palette.cpu], showsAxisMaximum: true
+        )
+        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-faint-fill")
+
+        // Bounds for 26...38 are 25–40, so the top curve sits at ~87% and the
+        // band well beneath it is fill rather than stroke.
+        let beneathTheTopCurve = CGRect(x: 20, y: 60, width: 360, height: 40)
+        #expect(try regionHasSaturatedColor(in: rendered, region: beneathTheTopCurve))
+    }
+
+    @Test("a temperature chart labels both ends of its scale")
+    func temperatureChartLabelsBothEnds() throws {
+        let series = [ChartSeries(name: "Die", values: [36.69, 38.82], unit: .temperature)]
+        let chart = MetricChart(series: series, style: .area(stacked: false), colors: [Vitals.Palette.cpu], showsAxisMaximum: true)
+        let rendered = try renderPNG(chart, size: CGSize(width: 400, height: 200), named: "chart-temperature-labels")
+
+        #expect(try regionHasContent(in: rendered, region: CGRect(x: 2, y: 0, width: 90, height: 18)))
+
+        // `regionHasContent` cannot guard the minimum label the way it guards
+        // the maximum above: `drawAreas` fills the area from the curve down to
+        // the baseline across the full chart width, and that fill's gradient
+        // still differs from the background pixel-for-pixel almost all the way
+        // down — so this corner "has content" whether or not the label ever
+        // draws. Confirmed by disabling `drawAxisMinimum`'s call site: the
+        // assertion below stayed green (measured, not assumed).
+        //
+        // `regionHasPixelBrighterThan` discriminates instead, by brightness:
+        // the label is `.white.opacity(0.45)` text, alpha-weighted brightness
+        // ~0.45; the fill this low has faded to near-zero alpha, so even
+        // though its underlying colour is fully saturated, weighted brightness
+        // is near zero too. Measured directly in this harness with the same
+        // two-sample chart used below: with the label's draw call live, the
+        // brightest pixel in this region weighs in at ~0.467; with the call
+        // site disabled, ~0.043 (a stray antialiased fill pixel, not text).
+        // 0.2 sits with wide margin above the fill-only case and wide margin
+        // below the labelled case — about 4.6x clearance on each side.
+        #expect(try regionHasPixelBrighterThan(
+            in: rendered,
+            region: CGRect(x: 2, y: 182, width: 90, height: 18),
+            threshold: 0.2
+        ))
+    }
 }

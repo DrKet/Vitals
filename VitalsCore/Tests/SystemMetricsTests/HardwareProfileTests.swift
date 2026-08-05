@@ -26,9 +26,15 @@ struct HardwareProfileTests {
 
     @Test("sensors report unavailable with a stated reason, not silently absent")
     func sensorsUnavailableWithReason() throws {
-        let profile = try HardwareProfile.detect()
+        // Injects the placeholder explicitly rather than relying on
+        // `detect()`'s default: since Task 3 made `IOHIDSensorProvider` the
+        // default, this machine's real sensors are `.available`, and calling
+        // `detect()` bare would make this test assert on whatever hardware
+        // happens to be running it rather than on the unavailable path this
+        // test is named for.
+        let profile = try HardwareProfile.detect(sensors: UnavailableSensorProvider())
         guard case .unavailable(let reason) = profile.sensorsAvailable else {
-            Issue.record("Sensors should be unavailable until IOReport lands")
+            Issue.record("Sensors should be unavailable when given the placeholder provider")
             return
         }
         #expect(reason.isEmpty == false)

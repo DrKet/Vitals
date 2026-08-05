@@ -218,6 +218,7 @@ public struct GPUPage: View {
                 sampleCount: store.gpu?.count ?? 0
             ),
             accent: Vitals.Palette.gpu,
+            stacked: true,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {

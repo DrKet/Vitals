@@ -14,18 +14,34 @@ public enum Vitals {
         public static let network = Color(red: 0.98, green: 0.80, blue: 0.45)
         public static let warning = Color(red: 1.00, green: 0.47, blue: 0.47)
 
+        /// The Sensors page's hue. Pink/magenta, chosen to be distinct from
+        /// every other page accent AND from `warning` red — that red is kept
+        /// out of the series ramp so it always means "something is wrong",
+        /// which matters more on a thermal page than anywhere else.
+        public static let sensors = Color(red: 0.98, green: 0.55, blue: 0.78)
+
         /// A sixth ramp hue that identifies no subsystem — it exists solely
         /// to keep Memory's four-band stack (Wired / App / Compressed /
         /// Cached) legible. Without it, `seriesRamp`'s `gpu` (~24.7°) and
         /// `network` (~39.6°) land adjacent in that rotation only 15° apart,
         /// reading as one band. This pastel pink (~326° hue, ~0.42
-        /// saturation, full brightness) sits in the one hue range that is
-        /// simultaneously empty in the rest of the palette and far enough
-        /// from both `gpu` and `network` (>36° either way) to separate them.
+        /// saturation, full brightness) is far enough from both `gpu` and
+        /// `network` (>36° either way) to separate them.
         /// Do not repurpose this for an actual subsystem or delete it as
         /// "unused" — nothing reads it directly, but removing it reopens the
         /// 15° collision `TokensTests.memoryFourBandsStayDistinctWithoutWarning`
         /// guards against.
+        ///
+        /// It no longer sits in an otherwise-empty hue range, as this comment
+        /// used to claim: `Palette.sensors` was added ~2° away. That is safe,
+        /// but only because the two can never share a chart — `sensors` is
+        /// absent from `seriesRamp`, so `seriesColors(startingAt:)` *prepends*
+        /// it and falls back to the unrotated ramp, and the Sensors page asks
+        /// for three series, stopping well before this entry at position 5.
+        /// `TokensTests.sensorsAccentNeverMeetsTheLegibilityAccent` pins that,
+        /// so a future page leading with `sensors` and asking for enough series
+        /// to reach here fails there rather than quietly rendering two pinks a
+        /// viewer cannot tell apart.
         public static let legibilityAccent = Color(red: 1.00, green: 0.58, blue: 0.82)
     }
 

@@ -154,6 +154,7 @@ public struct NetworkPage: View {
             primaryValue: Self.primaryValue(store.network),
             series: Self.throughputSeries(history: store.networkHistory),
             accent: Vitals.Palette.network,
+            stacked: true,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {

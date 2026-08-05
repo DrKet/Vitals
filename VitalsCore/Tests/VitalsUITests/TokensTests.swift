@@ -128,6 +128,34 @@ struct TokensTests {
         }
     }
 
+    /// `Palette.sensors` sits ~2° from `Palette.legibilityAccent` — two pinks
+    /// no viewer could tell apart. That is safe only because they can never
+    /// land on one chart, and "only because" is exactly the kind of claim that
+    /// rots silently. This pins it.
+    ///
+    /// The Sensors page asks for three series. `sensors` is absent from
+    /// `seriesRamp`, so it is prepended and the rest come from the unrotated
+    /// ramp, which reaches `legibilityAccent` only at position 5. If a future
+    /// page leads with `sensors` and asks for enough series to reach it, this
+    /// fails here rather than shipping an indistinguishable pair.
+    /// `@MainActor` because `hue(of:)` is — same as
+    /// `memoryFourBandsStayDistinctWithoutWarning` above.
+    @Test("the Sensors accent never meets the legibility accent on one chart")
+    @MainActor
+    func sensorsAccentNeverMeetsTheLegibilityAccent() {
+        let sensorsHue = hue(of: Vitals.Palette.sensors)
+        let legibilityHue = hue(of: Vitals.Palette.legibilityAccent)
+        let raw = abs(sensorsHue - legibilityHue)
+        let gap = min(raw, 1 - raw)
+        // Documents the collision rather than asserting it away: if someone
+        // later moves `sensors` to a genuinely distinct hue, this reminds them
+        // the co-occurrence guard below is then no longer load-bearing.
+        #expect(gap < 0.1, "the two are expected to be near-identical pinks; the guard below is what makes that safe")
+
+        let onSensorsPage = Vitals.seriesColors(startingAt: Vitals.Palette.sensors, count: 3)
+        #expect(onSensorsPage.contains(Vitals.Palette.legibilityAccent) == false)
+    }
+
     @Test("an accent absent from the base ramp still leads, falling back to the unrotated ramp for the rest")
     func unknownAccentStillLeads() {
         let mystery = Color(red: 0.1, green: 0.2, blue: 0.3)

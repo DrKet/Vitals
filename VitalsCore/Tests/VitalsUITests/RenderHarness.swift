@@ -110,6 +110,15 @@ struct RenderedImage: Sendable {
 /// parameter: pairing the file with the scale it was actually rendered at
 /// forecloses passing a scale from a different render (or a guessed
 /// constant) by mistake.
+/// **Probe placement matters.** `renderPNG` writes PNGs with UNPREMULTIPLIED
+/// colour, so a pixel at alpha ~0.01 still stores full-strength RGB. This
+/// function and `regionHasSaturatedColor` both read components without
+/// weighting by alpha, so both can "see" pixels that are invisible on screen —
+/// most notably where a chart's area gradient has faded almost to nothing near
+/// the baseline. Two assertions on this project passed against a deliberately
+/// broken implementation for exactly that reason. Probe away from a gradient's
+/// fade edge, or use `regionHasPixelBrighterThan`, which does weight by alpha.
+///
 @MainActor
 func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
     let data = try Data(contentsOf: image.url)
@@ -139,6 +148,69 @@ func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
 /// constant from the saturation angle). Stable across every panel, so it
 /// works as a fixed comparison colour rather than one re-sampled per render.
 let glassPanelMaterialFallback = NSColor(calibratedRed: 35.0 / 255, green: 35.0 / 255, blue: 35.0 / 255, alpha: 1)
+
+/// True when two renders differ anywhere inside `region`.
+///
+/// The probe for "did this parameter change anything at all". Position-based
+/// probes cannot answer that for a chart whose scale adapts to its own data:
+/// two very different decompositions can land at nearly the same relative
+/// height, so the honest comparison is against the other render rather than
+/// against a coordinate.
+///
+/// Compares all four components, including alpha, rather than RGB alone.
+/// `renderPNG` writes unpremultiplied colour, so a pixel with alpha faded to
+/// near-zero still stores full-strength RGB underneath — comparing RGB only
+/// would call two renders identical when the sole difference between them is
+/// exactly that faded alpha, which is precisely the kind of change (a band
+/// present vs. absent at a given height) this probe exists to catch.
+///
+/// Requires both renders to share a scale: comparing a 1x bitmap against a 2x
+/// one by pixel index would walk the two bitmaps out of registration and
+/// report every pixel as differing, regardless of what either image actually
+/// shows.
+@MainActor
+func renderedImagesDiffer(_ a: RenderedImage, _ b: RenderedImage, in region: CGRect) throws -> Bool {
+    guard abs(a.scale - b.scale) < 0.001 else {
+        struct ScaleMismatch: Error, CustomStringConvertible {
+            let a: CGFloat
+            let b: CGFloat
+            var description: String { "renderedImagesDiffer requires matching scales, got \(a) and \(b)" }
+        }
+        throw ScaleMismatch(a: a.scale, b: b.scale)
+    }
+
+    let dataA = try Data(contentsOf: a.url)
+    let dataB = try Data(contentsOf: b.url)
+    guard let bitmapA = NSBitmapImageRep(data: dataA), let bitmapB = NSBitmapImageRep(data: dataB) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * a.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * a.scale).rounded(.up)), min(bitmapA.pixelsWide, bitmapB.pixelsWide))
+    let minY = max(Int((region.minY * a.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * a.scale).rounded(.up)), min(bitmapA.pixelsHigh, bitmapB.pixelsHigh))
+    guard minX < maxX, minY < maxY else { return false }
+
+    // A tolerance, not `!=`: these are 8-bit-quantized components decoded
+    // from a PNG, and this project has been bitten before by exact float
+    // comparison. Half a step below the smallest representable 8-bit
+    // difference (1/255) so two components that decode to the same byte
+    // never register as differing, while any real one-step change still does.
+    let tolerance: CGFloat = 0.5 / 255.0
+    for x in minX..<maxX {
+        for y in minY..<maxY {
+            guard let colorA = bitmapA.colorAt(x: x, y: y), let colorB = bitmapB.colorAt(x: x, y: y) else { continue }
+            if abs(colorA.redComponent - colorB.redComponent) > tolerance
+                || abs(colorA.greenComponent - colorB.greenComponent) > tolerance
+                || abs(colorA.blueComponent - colorB.blueComponent) > tolerance
+                || abs(colorA.alphaComponent - colorB.alphaComponent) > tolerance {
+                return true
+            }
+        }
+    }
+    return false
+}
 
 /// Like `regionHasContent(in:region:)`, but compares every pixel in `region`
 /// against a caller-supplied colour instead of the image's own top-left
@@ -172,6 +244,52 @@ func regionHasContent(in image: RenderedImage, region: CGRect, differingFrom bac
     for x in minX..<maxX {
         for y in minY..<maxY {
             if bitmap.colorAt(x: x, y: y) != background { return true }
+        }
+    }
+    return false
+}
+
+/// True when any pixel inside `region` is brighter than `threshold` (0...1).
+///
+/// The probe for "is there light text here", where `regionHasContent` cannot
+/// help: inside a chart's own area fill, every pixel already differs from the
+/// background, so difference-from-background is true whether or not anything
+/// was drawn on top. Brightness discriminates, because the fill's gradient has
+/// faded nearly to the background by the baseline while label text has not.
+///
+/// Brightness is a pixel's maximum RGB component *weighted by its own alpha*
+/// — not the raw RGB triplet alone. This is not optional here: `renderPNG`'s
+/// PNG stores colour unpremultiplied, so a fill pixel a hair above the
+/// baseline, with alpha faded to say 0.01, still stores its full-strength
+/// accent-colour RGB (measured: raw max-component brightness of 1.0 in this
+/// harness's own bottom-corner probe region, from fill pixels nowhere near
+/// visible) — reading the RGB triplet alone would make the near-invisible
+/// fill register as brighter than the label itself. Multiplying by alpha
+/// converts that back into "how bright this pixel actually looks composited
+/// over the background," which is the only sense of "brightness" that can
+/// tell a translucent fill from opaque-ish label text.
+///
+/// Built on the same bitmap loading and region clamping as `regionHasContent`
+/// — the only difference is what counts as "content".
+@MainActor
+func regionHasPixelBrighterThan(in image: RenderedImage, region: CGRect, threshold: CGFloat) throws -> Bool {
+    let data = try Data(contentsOf: image.url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        struct DecodeFailure: Error {}
+        throw DecodeFailure()
+    }
+
+    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
+    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
+    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
+    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
+    guard minX < maxX, minY < maxY else { return false }
+
+    for x in minX..<maxX {
+        for y in minY..<maxY {
+            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
+            let brightness = max(color.redComponent, max(color.greenComponent, color.blueComponent)) * color.alphaComponent
+            if brightness > threshold { return true }
         }
     }
     return false
@@ -240,6 +358,13 @@ let chartCanvasProbeRegion = CGRect(x: 40, y: 118, width: 720, height: 85)
 /// Built on the same bounds-clamping and pixel access as `regionHasContent`
 /// rather than a parallel screenshot mechanism — the only difference is what
 /// counts as "content".
+/// **Probe placement matters** — see `regionHasContent`'s note on
+/// unpremultiplied colour. This function reads RGB spread without weighting by
+/// alpha, so a fully-faded gradient pixel still reads as saturated. It also
+/// cannot distinguish a light fill from a heavy one, which is why the fill
+/// weight in `MetricChart.fillOpacity` is covered by a pure test rather than a
+/// render probe.
+///
 @MainActor
 func regionHasSaturatedColor(
     in image: RenderedImage,

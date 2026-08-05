@@ -192,14 +192,30 @@ to be a different page.
 ## Current state
 
 Complete: the metrics foundation, the UI shell, the Overview (tiles for all
-five series), the Processes table, the CPU, Memory, GPU, Storage and Network
-pages, and a distributable `.app` bundle (v0.1.0).
+five series), the Processes table, the CPU, Memory, GPU, Storage, Network and
+Sensors pages, and a distributable `.app` bundle (v0.1.0).
 
-Not built yet: the Sensors page (temperatures, fans and power all need
-`IOHIDEventSystemClient`, a private framework needing an empirical spike);
-desktop widgets and the menu-bar extra; a privileged helper for per-process
-GPU, power and SMART health; and the Startup / Services / Users / History
-pages.
+The Sensors page shows temperatures only, and the reason matters if you are
+thinking of adding fans.
+
+The spike (`docs/superpowers/spikes/2026-08-02-sensors-spike.md`) did **not**
+merely skip them. It swept **every** event type `0...63` across all 71 services
+on usage page `0xff00`, and only two families answered at all: usage `0x0005`
+(64 temperature sensors, event type `15`) and one service on `0x0004` stuck at
+`0.000`. The two services on usage `0x000b` — a tempting match for this
+machine's two fans — produce no event for any type in that range. So fans are
+positively **not reachable through `IOHIDEventSystemClient`**; they need a
+separate AppleSMC spike, not another pass over this API.
+
+Component power is a different matter again: spec §4.6 routes it through the
+IOReport Energy Model channel, an unrelated API the spike never touched.
+
+`SensorReading.Kind` already models `.fanRPM` and `.powerWatts` for whenever
+those land.
+
+Not built yet: desktop widgets and the menu-bar extra; a privileged helper for
+per-process GPU, power and SMART health; and the Startup / Services / Users /
+History pages.
 
 Known gaps, if you're looking for something to pick up:
 

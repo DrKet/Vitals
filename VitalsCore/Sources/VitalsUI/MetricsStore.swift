@@ -41,6 +41,9 @@ public final class MetricsStore {
     public private(set) var gpu: [GPUSample]?
     public private(set) var gpuHistory: [Timestamped<[GPUSample]>] = []
 
+    public private(set) var sensors: SensorSample?
+    public private(set) var sensorHistory: [Timestamped<SensorSample>] = []
+
     /// Latest only — volume capacity changes over minutes, not seconds, so a
     /// 600-sample ring of near-identical readings would be pure waste.
     public private(set) var volumes: [Volume]?
@@ -152,6 +155,11 @@ public final class MetricsStore {
             diskIO = throughput
             append(Timestamped(timestamp: value.timestamp, sample: throughput), to: &diskIOHistory)
             armStalenessWatch(for: key)
+        case .sensors:
+            guard let sample = value.value as? SensorSample else { return }
+            sensors = sample
+            append(Timestamped(timestamp: value.timestamp, sample: sample), to: &sensorHistory)
+            armStalenessWatch(for: key)
         }
     }
 
@@ -179,7 +187,7 @@ public final class MetricsStore {
     private func expiresWhenStale(_ key: SeriesKey) -> Bool {
         switch key {
         case .storage: false
-        case .cpu, .memory, .gpu, .network, .diskIO, .processes: true
+        case .cpu, .memory, .gpu, .network, .diskIO, .processes, .sensors: true
         }
     }
 
@@ -237,10 +245,41 @@ public final class MetricsStore {
         case .network: network = nil
         case .diskIO: diskIO = nil
         case .processes: processes = nil
+        case .sensors: sensors = nil
         }
     }
 
-    private func append<Sample>(_ sample: Sample, to history: inout [Sample]) {
+    /// Whether `timestamp` starts a new run rather than continuing the last one.
+    ///
+    /// Sampling is subscription-driven, so leaving a page stops it and history
+    /// keeps whatever was collected before. The chart already refuses to draw
+    /// a line across that hole. What it cannot fix is the geometry:
+    /// `ChartGeometry.sampleX` spaces samples by INDEX, and a gap occupies no
+    /// indices because absent readings are never appended — so ten minutes
+    /// away renders exactly one sample-step wide, indistinguishable from one
+    /// tick. The two runs end up drawn shoulder to shoulder, which asserts an
+    /// adjacency that never happened. That is the same class of error the
+    /// gap-break exists to prevent, displaced from the stroke into the axis.
+    ///
+    /// So a resumed run drops what came before it. Deliberately reuses
+    /// `ChartGeometry.gapThreshold` rather than a second rule of its own: if
+    /// the store and the renderer disagreed about where a gap is, the store
+    /// could discard a run the renderer would have kept whole, or keep one it
+    /// was about to split.
+    ///
+    /// `nil` from `gapThreshold` means fewer than two samples — not enough
+    /// information to judge, and guessing would throw away real readings.
+    static func beginsNewRun(after timestamps: [TimeInterval], at timestamp: TimeInterval) -> Bool {
+        guard let threshold = ChartGeometry.gapThreshold(for: timestamps),
+              let last = timestamps.last else { return false }
+        return timestamp - last > threshold
+    }
+
+    private func append<Value>(_ sample: Timestamped<Value>, to history: inout [Timestamped<Value>]) {
+        if Self.beginsNewRun(after: history.map(\.timestamp), at: sample.timestamp) {
+            history.removeAll()
+        }
+
         // `max(historyLimit, 1)` so a nonsensical limit trims to one sample
         // rather than trapping in `removeFirst` with a count past the end.
         let limit = max(historyLimit, 1)

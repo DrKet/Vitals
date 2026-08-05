@@ -15,6 +15,7 @@ public enum StandardSamplers {
         await engine.register(storageSampler(), for: .storage, cadence: .fast)
         await engine.register(processSampler(), for: .processes, cadence: .slow)
         await engine.register(diskIOSampler(), for: .diskIO, cadence: .fast)
+        await engine.register(sensorSampler(), for: .sensors, cadence: .slow)
     }
 
     private enum SamplerError: Error {
@@ -94,6 +95,24 @@ public enum StandardSamplers {
             let throughput = tracker.withLock { $0.update(counters, at: now) }
             guard !throughput.isEmpty else { throw SamplerError.unavailable }
             return throughput
+        }
+    }
+
+    /// Slow cadence deliberately: the spike measured a 2.13 °C move across a
+    /// full CPU load ramp, so a fast cadence would spend power redrawing
+    /// identical values.
+    private static func sensorSampler() -> AnySampler {
+        let provider = IOHIDSensorProvider()
+        return AnySampler {
+            guard provider.availability.isAvailable else { throw SamplerError.unavailable }
+            let readings = provider.readings()
+            // Throws rather than publishing an empty sample: an empty array
+            // would render as a page with no rows rather than "Unavailable".
+            guard !readings.isEmpty else { throw SamplerError.unavailable }
+            return SensorSample(
+                readings: readings,
+                thermalState: ProcessInfo.processInfo.thermalState
+            )
         }
     }
 }

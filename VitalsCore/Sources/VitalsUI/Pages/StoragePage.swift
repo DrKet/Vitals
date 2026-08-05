@@ -105,6 +105,7 @@ public struct StoragePage: View {
             primaryValue: Self.primaryValue(store.diskIO),
             series: Self.throughputSeries(history: store.diskIOHistory),
             accent: Vitals.Palette.storage,
+            stacked: true,
             stats: stats,
             disclosureKey: Self.disclosureKey
         ) {

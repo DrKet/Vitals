@@ -440,6 +440,58 @@ struct MetricsStoreTests {
         #expect(store.processes == nil)
     }
 
+    /// The chart already breaks its line across a gap. What it cannot fix is
+    /// the geometry: `ChartGeometry.sampleX` spaces samples by index, and a
+    /// gap occupies no indices, so ten minutes away renders one sample-step
+    /// wide and the stale run sits shoulder to shoulder with the new one.
+    @Test("a run resuming after a gap discards what came before it")
+    func resumedRunDropsPreGapHistory() {
+        // A steady 1s cadence, so the median interval is 1 and the threshold 3.
+        let steady: [TimeInterval] = [100, 101, 102, 103]
+        #expect(MetricsStore.beginsNewRun(after: steady, at: 164) == true)
+    }
+
+    @Test("an ordinary tick does not discard history")
+    func ordinaryTickKeepsHistory() {
+        let steady: [TimeInterval] = [100, 101, 102, 103]
+        #expect(MetricsStore.beginsNewRun(after: steady, at: 104) == false)
+        // Still inside the threshold of 3x the 1s median.
+        #expect(MetricsStore.beginsNewRun(after: steady, at: 105.5) == false)
+    }
+
+    /// Fewer than two samples cannot establish a cadence, and guessing would
+    /// throw away real readings.
+    @Test("too little history to judge a gap keeps what there is")
+    func insufficientHistoryKeepsSamples() {
+        #expect(MetricsStore.beginsNewRun(after: [], at: 100) == false)
+        #expect(MetricsStore.beginsNewRun(after: [100], at: 9999) == false)
+    }
+
+    /// The threshold is a median, not a mean, so one long absence already in
+    /// the history cannot drag it up and swallow the next real gap.
+    @Test("an earlier gap does not desensitise the next one")
+    func earlierGapDoesNotDesensitise() {
+        let withAGap: [TimeInterval] = [100, 101, 102, 500, 501, 502, 503]
+        #expect(MetricsStore.beginsNewRun(after: withAGap, at: 900) == true)
+    }
+
+    @Test("a sensor sample lands in the store with history")
+    func storesSensorSamples() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        let sample = SensorSample(
+            readings: [SensorReading(name: "PMU tdie0", kind: .temperatureCelsius, value: 36.5, sensorCount: 2)],
+            thermalState: .nominal
+        )
+        await engine.register(AnySampler { sample }, for: .sensors, cadence: .slow)
+        let store = MetricsStore(engine: engine, profile: nil)
+        let task = Task { await store.stream(.sensors) }
+        try await waitUntil { store.sensors != nil }
+        task.cancel()
+
+        #expect(store.sensors?.readings.first?.name == "PMU tdie0")
+        #expect(!store.sensorHistory.isEmpty)
+    }
+
     @Test("the staleness gate reads the engine's real interval, not one derived from the key")
     func stalenessUsesTheEnginesInterval() async {
         // The cadence for a key lives in StandardSamplers, and intervalOverride

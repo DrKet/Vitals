@@ -34,6 +34,11 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
     /// ramp, which always starts at `Palette.cpu`; that was the bug this
     /// parameter fixes.
     private let accent: Color
+    /// Whether this page's series genuinely sum. No default: a stacked die
+    /// at 38 °C and battery at 28 °C would draw a band at 66 °C, a value no
+    /// sensor reported — every call site must state its own answer rather
+    /// than inherit one that happens to be right for someone else's series.
+    private let stacked: Bool
     private let stats: [HardwareStat]
     private let secondary: Secondary
     private let specifications: Specs
@@ -50,6 +55,7 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
         primaryValue: String?,
         series: [ChartSeries],
         accent: Color,
+        stacked: Bool,
         stats: [HardwareStat],
         disclosureKey: String,
         @ViewBuilder secondary: () -> Secondary,
@@ -61,6 +67,7 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
         self.primaryValue = primaryValue
         self.series = series
         self.accent = accent
+        self.stacked = stacked
         self.stats = stats
         self.secondary = secondary()
         self.specifications = specifications()
@@ -95,7 +102,7 @@ public struct HardwarePage<Secondary: View, Specs: View>: View {
                             if !series.isEmpty {
                                 MetricChart(
                                     series: series,
-                                    style: .area(stacked: series.count > 1),
+                                    style: .area(stacked: stacked),
                                     colors: Vitals.seriesColors(startingAt: accent, count: max(series.count, 1)),
                                     // Unlike the Overview tile, this chart is
                                     // the only place a hardware page's own
