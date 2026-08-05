@@ -47,6 +47,8 @@ public struct AppShell: View {
             NetworkPage(store: store)
         case .sensors:
             SensorsPage(store: store)
+        case .battery:
+            BatteryPage(store: store)
         default:
             NotYetBuilt(section: selection)
         }

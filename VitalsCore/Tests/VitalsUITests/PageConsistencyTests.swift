@@ -33,6 +33,7 @@ struct PageConsistencyTests {
             StoragePage.disclosureKey,
             NetworkPage.disclosureKey,
             SensorsPage.disclosureKey,
+            BatteryPage.disclosureKey,
         ]
         #expect(Set(keys).count == keys.count)
         #expect(keys.allSatisfy { $0.isEmpty == false })
