@@ -188,12 +188,18 @@ to be a different page.
   **zero windows** and every "it launches" check is meaningless.
 - `AsyncStream.onTermination` does **not** fire on `break` out of a `for await`
   while the stream is still in scope. Drive teardown via task cancellation.
+- `AppleSmartBattery`'s `Amperage` is a signed value delivered unsigned:
+  `4090` while charging, `18446744073709550565` while discharging (`-1051` in
+  `UInt64` wraparound). A naive `Int64(raw)` read does not just produce a wrong
+  number — it fatal-traps on the discharging value. Reinterpret with
+  `Int64(bitPattern:)`. Only manifests on battery power, so it looks entirely
+  correct on a machine that never left AC.
 
 ## Current state
 
 Complete: the metrics foundation, the UI shell, the Overview (tiles for all
-five series), the Processes table, the CPU, Memory, GPU, Storage, Network and
-Sensors pages, and a distributable `.app` bundle (v0.1.0).
+five series), the Processes table, the CPU, Memory, GPU, Storage, Network,
+Sensors and Battery pages, and a distributable `.app` bundle (v0.1.0).
 
 The Sensors page shows temperatures only, and the reason matters if you are
 thinking of adding fans.
