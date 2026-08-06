@@ -72,6 +72,19 @@ public enum Vitals {
         /// widening `MetricChart`'s API for a layout concern that belongs to
         /// its caller.
         public static let chartMaxHeight: CGFloat = 220
+
+        /// The tallest an Overview tile row grows to before the grid stops
+        /// filling and leaves space below.
+        ///
+        /// The Overview grid divides height equally across its rows, so on an
+        /// ordinary fullscreen window the tiles fill it — the state the layout
+        /// was designed in. This ceiling engages only on an unusually tall
+        /// window (a portrait display, a tall resize), where unbounded growth
+        /// would recreate the very tallness this layout exists to cure, one row
+        /// later. Set generously so the ordinary fullscreen look is unchanged;
+        /// it is a backstop, not a visible constraint. Mirrors `chartMaxHeight`:
+        /// a layout limit owned by the container, not the leaf.
+        public static let overviewTileMaxHeight: CGFloat = 340
     }
 
     public enum Typography {

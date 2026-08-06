@@ -228,7 +228,7 @@ struct OverviewPageTests {
 
         let rendered = try renderPNG(
             OverviewPage(store: store),
-            size: CGSize(width: 900, height: 700),
+            size: CGSize(width: 1320, height: 760),
             named: "overview-page-with-data"
         )
 
@@ -236,14 +236,18 @@ struct OverviewPageTests {
         // diffing this fixture's output against a build with `MetricTile`'s
         // `showsAxisMaximum` forced to `true` (see `MetricChart.init`'s doc
         // comment for why that flag exists) isolated the label to
-        // x:[24.5, 60.0], y:[437.5, 447.5] pt on the Storage tile and
-        // x:[328.5, 364.0], y:[437.5, 447.5] pt on the Network tile — nowhere
-        // else in the image changed. These rectangles pad that measured
+        // x:[24.5, 60.0], y:[433.5, 443.5] pt on the Storage tile and
+        // x:[468.5, 504.0], y:[433.5, 443.5] pt on the Network tile — nowhere
+        // else in the image changed. (These moved from the previous x:[24.5,
+        // 60.0]/x:[328.5, 364.0] once the grid went to `minimumTileWidth: 420,
+        // maximumColumns: 3` — re-derived at this test's 1320×760 render size,
+        // which keeps the same three-column, two-row structure the rectangles
+        // below assume, only wider.) These rectangles pad that measured
         // bounding box on every side; the nearest real content in either
-        // direction is the tile's own headline well above y=420 and the
-        // chart's flat throughput line starting at y=457 (confirmed by
-        // scanning the same column), so there is no dimension in which
-        // widening the pad here could accidentally catch something else.
+        // direction is the tile's own value text, which ends by y≈412, and the
+        // chart's fill starting at y≈452 (confirmed by scanning the same
+        // column), so there is no dimension in which widening the pad here
+        // could accidentally catch something else.
         //
         // `regionHasContent(in:region:)` cannot be used for this: it compares
         // against the image's own top-left corner, which sits outside every
@@ -256,8 +260,8 @@ struct OverviewPageTests {
         // nothing for a saturation probe to find). Comparing against the
         // material's own known fallback colour is what actually isolates the
         // label.
-        let storageLabelRegion = CGRect(x: 18, y: 433, width: 50, height: 18)
-        let networkLabelRegion = CGRect(x: 322, y: 433, width: 50, height: 18)
+        let storageLabelRegion = CGRect(x: 18, y: 429, width: 50, height: 18)
+        let networkLabelRegion = CGRect(x: 462, y: 429, width: 50, height: 18)
 
         #expect(try !regionHasContent(in: rendered, region: storageLabelRegion, differingFrom: glassPanelMaterialFallback))
         #expect(try !regionHasContent(in: rendered, region: networkLabelRegion, differingFrom: glassPanelMaterialFallback))
