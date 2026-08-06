@@ -10,17 +10,21 @@ import SwiftUI
 /// height.
 public enum TileLayout {
 
-    /// How many tiles fit across `width`, never fewer than one.
+    /// How many tiles fit across `width`, never fewer than one and never more
+    /// than `maximum`. The cap only lowers the fitted count — it is what keeps
+    /// five or six tiles from collapsing into a single full-height row on a
+    /// wide window.
     ///
     /// Solves `n * minimum + (n - 1) * spacing <= width` for `n`.
     public static func columnCount(
         width: CGFloat,
         minimumTileWidth: CGFloat,
-        spacing: CGFloat
+        spacing: CGFloat,
+        maximum: Int = .max
     ) -> Int {
         guard width > 0, minimumTileWidth > 0 else { return 1 }
         let fitted = Int((width + spacing) / (minimumTileWidth + spacing))
-        return max(fitted, 1)
+        return min(max(fitted, 1), maximum)
     }
 
     /// Whether a short final row should be padded with empty cells.
