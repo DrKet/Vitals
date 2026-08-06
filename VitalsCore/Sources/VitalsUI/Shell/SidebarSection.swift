@@ -62,15 +62,21 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Hashable, Sendab
 
     /// Sections to show, given what this machine actually has.
     ///
-    /// Battery is omitted entirely on a machine without one rather than
-    /// rendering a permanently empty page — inapplicable hardware is absent,
-    /// not shown blank. Taking the fact as a parameter rather than reading the
-    /// hardware here keeps this type free of I/O and testable in both states.
-    public static func groups(hasBattery: Bool) -> [Group] {
-        [
+    /// Battery and Sensors are each omitted entirely on a machine that lacks
+    /// them, rather than rendering a permanently empty page — inapplicable
+    /// hardware is absent, not shown blank. A Mac Studio has no battery, and a
+    /// machine where `IOHIDEventSystemClient` reports nothing has no sensors
+    /// to show.
+    public static func groups(hasBattery: Bool, hasSensors: Bool) -> [Group] {
+        // Both facts are parameters rather than read here, so this type stays
+        // free of I/O and can be tested in every combination.
+        let hardware: [SidebarSection] = [.cpu, .memory, .gpu, .storage, .network]
+            + (hasSensors ? [.sensors] : [])
+            + (hasBattery ? [.battery] : [])
+
+        return [
             Group(name: "Monitor", sections: [.overview, .processes]),
-            Group(name: "Hardware", sections: [.cpu, .memory, .gpu, .storage, .network, .sensors]
-                + (hasBattery ? [.battery] : [])),
+            Group(name: "Hardware", sections: hardware),
             Group(name: "System", sections: [.startup, .services, .users, .history]),
         ]
     }

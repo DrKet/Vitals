@@ -11,7 +11,10 @@ public struct AppShell: View {
     public var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                ForEach(SidebarSection.groups(hasBattery: store.profile?.hasBattery == true)) { group in
+                ForEach(SidebarSection.groups(
+                    hasBattery: store.profile?.hasBattery == true,
+                    hasSensors: store.profile?.sensorsAvailable.isAvailable == true
+                )) { group in
                     Section(group.name) {
                         ForEach(group.sections) { section in
                             Label(section.title, systemImage: section.symbol)
