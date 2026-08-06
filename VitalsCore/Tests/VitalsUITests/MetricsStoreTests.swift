@@ -497,7 +497,7 @@ struct MetricsStoreTests {
         let engine = MetricsEngine(intervalOverride: .milliseconds(5))
         let sample = BatterySample(
             watts: 11.6, chargePercent: 22, isCharging: false,
-            isExternalPowerConnected: false, minutesRemaining: 79,
+            isExternalPowerConnected: false, isFullyCharged: false, minutesRemaining: 79,
             volts: 11.081, celsius: 30.14,
             warningLevel: .none, isLowPowerMode: false
         )

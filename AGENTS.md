@@ -238,6 +238,12 @@ to be a different page.
   The sharpest difference is in the first seconds on the adapter: IOPS
   reports `-1`, "still calculating", and `pmset` prints "(no estimate)", while
   the registry states a confident number. Any negative is unknown.
+- **Plugged in and not charging is not the same as charged.** `IsCharging` No
+  with `ExternalConnected` Yes happens at any charge level — macOS holds it
+  for long stretches under optimised battery charging and calls it "AC
+  attached; not charging". Use `FullyCharged` to tell the two apart;
+  without it the page says "73% – Charged", which is a claim the machine
+  never made.
 - `AppleSmartBattery`'s `Amperage` is a signed value delivered unsigned:
   `4090` while charging, `18446744073709550565` while discharging (`-1051` in
   `UInt64` wraparound). A naive `Int64(raw)` read does not just produce a wrong

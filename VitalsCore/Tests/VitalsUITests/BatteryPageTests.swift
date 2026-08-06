@@ -35,4 +35,32 @@ struct BatteryPageTests {
         #expect(BatteryPage.displayWatts(11.646) == "11.6 W")
         #expect(BatteryPage.displayWatts(nil) == "—")
     }
+
+    /// Four states, not three. Plugged in and NOT charging is two different
+    /// situations, and only one of them is "Charged".
+    ///
+    /// Measured on this machine the moment the adapter went in at 73%:
+    /// `ExternalConnected` Yes, `IsCharging` No, `FullyCharged` No — while
+    /// `pmset` said "AC attached; not charging". Reading that as "Charged"
+    /// would put "73% – Charged" on screen, which is a claim the machine
+    /// never made. macOS holds this state deliberately and for long periods
+    /// under optimised battery charging, so it is a normal reading, not a
+    /// transient worth ignoring.
+    @Test("plugged in but not yet full does not claim to be charged")
+    func acAttachedNotChargingIsNotCharged() {
+        #expect(BatteryPage.chargeStateDescription(
+            isCharging: false, isExternalPowerConnected: true, isFullyCharged: false
+        ) == "Not charging")
+        #expect(BatteryPage.chargeStateDescription(
+            isCharging: false, isExternalPowerConnected: true, isFullyCharged: true
+        ) == "Charged")
+        #expect(BatteryPage.chargeStateDescription(
+            isCharging: true, isExternalPowerConnected: true, isFullyCharged: false
+        ) == "Charging")
+        // On battery, fullness is irrelevant — nothing is plugged in to be
+        // charged by, so a full battery still reads "On battery".
+        #expect(BatteryPage.chargeStateDescription(
+            isCharging: false, isExternalPowerConnected: false, isFullyCharged: true
+        ) == "On battery")
+    }
 }

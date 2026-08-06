@@ -40,6 +40,7 @@ public enum BatterySampler {
               let rawAmperage = (dictionary["Amperage"] as? NSNumber)?.uint64Value,
               let isCharging = (dictionary["IsCharging"] as? NSNumber)?.boolValue,
               let isExternalPowerConnected = (dictionary["ExternalConnected"] as? NSNumber)?.boolValue,
+              let isFullyCharged = (dictionary["FullyCharged"] as? NSNumber)?.boolValue,
               let rawTemperature = (dictionary["Temperature"] as? NSNumber)?.intValue
         else { return nil }
 
@@ -51,6 +52,7 @@ public enum BatterySampler {
             chargePercent: chargePercent,
             isCharging: isCharging,
             isExternalPowerConnected: isExternalPowerConnected,
+            isFullyCharged: isFullyCharged,
             minutesRemaining: BatterySample.minutesRemaining(
                 timeToEmpty: estimates.toEmpty,
                 timeToFullCharge: estimates.toFull,

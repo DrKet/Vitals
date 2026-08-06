@@ -15,6 +15,14 @@ public struct BatterySample: Sendable, Equatable {
     public let chargePercent: Int
     public let isCharging: Bool
     public let isExternalPowerConnected: Bool
+    /// Whether the battery has actually reached full.
+    ///
+    /// Distinct from `!isCharging` while on AC: macOS holds a battery part-
+    /// charged and not charging for long stretches under optimised battery
+    /// charging, and reports "AC attached; not charging" for it. Without this
+    /// flag those two states are indistinguishable and the page calls both
+    /// "Charged".
+    public let isFullyCharged: Bool
     /// Minutes to empty, or to full while charging. `nil` when the estimate
     /// is still being calculated, and also when the machine is plugged in and
     /// already charged — nothing is counting in either direction then. See
@@ -27,7 +35,7 @@ public struct BatterySample: Sendable, Equatable {
 
     public init(
         watts: Double, chargePercent: Int, isCharging: Bool,
-        isExternalPowerConnected: Bool, minutesRemaining: Int?,
+        isExternalPowerConnected: Bool, isFullyCharged: Bool, minutesRemaining: Int?,
         volts: Double, celsius: Double,
         warningLevel: BatteryWarningLevel, isLowPowerMode: Bool
     ) {
@@ -35,6 +43,7 @@ public struct BatterySample: Sendable, Equatable {
         self.chargePercent = chargePercent
         self.isCharging = isCharging
         self.isExternalPowerConnected = isExternalPowerConnected
+        self.isFullyCharged = isFullyCharged
         self.minutesRemaining = minutesRemaining
         self.volts = volts
         self.celsius = celsius

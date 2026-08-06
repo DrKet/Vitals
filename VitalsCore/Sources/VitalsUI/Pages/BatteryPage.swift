@@ -44,15 +44,23 @@ public struct BatteryPage: View {
         return String(format: "%.1f W", watts)
     }
 
-    /// "Charging" while current is actually flowing in; "Charged" once
-    /// external power is present but current has stopped (a full battery on
-    /// AC); "On battery" otherwise. Both non-charging cases share
-    /// `isCharging == false`, so collapsing them into one label would tell
-    /// someone plugged into a wall a moment ago that they're running on
-    /// battery.
-    static func chargeStateDescription(isCharging: Bool, isExternalPowerConnected: Bool) -> String {
+    /// Four states, because plugged-in-and-not-charging is two situations.
+    ///
+    /// "Charging" while current is flowing in; "Charged" once it has stopped
+    /// AND the battery actually reached full; "Not charging" when it has
+    /// stopped short of full, which is what macOS holds under optimised
+    /// battery charging and reports as "AC attached; not charging"; "On
+    /// battery" otherwise.
+    ///
+    /// All three AC states share `isCharging == false` or differ only in
+    /// fullness, so collapsing any pair puts a claim on screen the machine
+    /// never made — "73% – Charged" was the observed one.
+    static func chargeStateDescription(
+        isCharging: Bool, isExternalPowerConnected: Bool, isFullyCharged: Bool
+    ) -> String {
+        guard isExternalPowerConnected else { return "On battery" }
         if isCharging { return "Charging" }
-        return isExternalPowerConnected ? "Charged" : "On battery"
+        return isFullyCharged ? "Charged" : "Not charging"
     }
 
     /// "Charge" stat text — percentage plus the state `chargeStateDescription`
@@ -60,7 +68,7 @@ public struct BatteryPage: View {
     /// fits on one line; Swift's plain string literals cannot span lines even
     /// inside `\(...)`.
     private static func chargeAndState(_ battery: BatterySample) -> String {
-        let state = chargeStateDescription(isCharging: battery.isCharging, isExternalPowerConnected: battery.isExternalPowerConnected)
+        let state = chargeStateDescription(isCharging: battery.isCharging, isExternalPowerConnected: battery.isExternalPowerConnected, isFullyCharged: battery.isFullyCharged)
         return "\(battery.chargePercent)% – \(state)"
     }
 
