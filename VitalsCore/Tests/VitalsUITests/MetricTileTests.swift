@@ -38,4 +38,30 @@ struct MetricTileTests {
         #expect(MetricTile.displayValue(nil) == "—")
         #expect(MetricTile.displayValue("18%") == "18%")
     }
+
+    @Test("a tile with a fraction draws a proportion bar")
+    func fractionDrawsBar() throws {
+        // Empty series so the ONLY saturated content the tile can draw is the
+        // bar's accent fill — the label and value are neutral/white. That
+        // isolates "is there a bar?" to a whole-tile saturation probe, with no
+        // pixel-precise coordinates to drift.
+        let tile = MetricTile(
+            label: "CPU", value: "50%", accent: Vitals.Palette.cpu,
+            fraction: 0.5, series: []
+        )
+        let image = try renderPNG(tile, size: CGSize(width: 260, height: 150), named: "tile-bar-present")
+        #expect(try regionHasSaturatedColor(in: image, region: CGRect(x: 0, y: 0, width: 260, height: 150)))
+    }
+
+    @Test("a tile with no fraction draws no bar")
+    func noFractionNoBar() throws {
+        // The never-fabricate rule for the bar: no whole, no bar. With an empty
+        // series and a nil fraction, nothing saturated is drawn at all.
+        let tile = MetricTile(
+            label: "Storage", value: "5.28 MB/s", accent: Vitals.Palette.storage,
+            fraction: nil, series: []
+        )
+        let image = try renderPNG(tile, size: CGSize(width: 260, height: 150), named: "tile-bar-absent")
+        #expect(try !regionHasSaturatedColor(in: image, region: CGRect(x: 0, y: 0, width: 260, height: 150)))
+    }
 }
