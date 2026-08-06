@@ -233,21 +233,24 @@ struct OverviewPageTests {
         )
 
         // Both rectangles are derived from this exact render, not guessed:
-        // diffing this fixture's output against a build with `MetricTile`'s
-        // `showsAxisMaximum` forced to `true` (see `MetricChart.init`'s doc
-        // comment for why that flag exists) isolated the label to
-        // x:[24.5, 60.0], y:[433.5, 443.5] pt on the Storage tile and
-        // x:[468.5, 504.0], y:[433.5, 443.5] pt on the Network tile — nowhere
-        // else in the image changed. (These moved from the previous x:[24.5,
-        // 60.0]/x:[328.5, 364.0] once the grid went to `minimumTileWidth: 420,
-        // maximumColumns: 3` — re-derived at this test's 1320×760 render size,
-        // which keeps the same three-column, two-row structure the rectangles
-        // below assume, only wider.) These rectangles pad that measured
-        // bounding box on every side; the nearest real content in either
-        // direction is the tile's own value text, which ends by y≈412, and the
-        // chart's fill starting at y≈452 (confirmed by scanning the same
-        // column), so there is no dimension in which widening the pad here
-        // could accidentally catch something else.
+        // with `MetricTile`'s `showsAxisMaximum` temporarily forced to `true`
+        // (see `MetricChart.init`'s doc comment for why that flag exists) the
+        // label appears at the throughput tiles' chart top-leading corner, and
+        // these padded rectangles sit on it — verified both ways: forcing the
+        // flag on makes both `#expect`s below fail (the probe genuinely finds
+        // the label), and the production `false` passes (it is absent). The
+        // label sits around y≈466 on both the Storage and Network tiles at
+        // this render.
+        //
+        // The `y` moved down from a previous 429 when `overviewTileMaxHeight`
+        // went 340 → 520: at this 1320×760 render the two rows are no longer
+        // capped (each is (760−12)/2 = 374pt, under the ceiling), so row two
+        // starts 34pt lower than it did when the 340 cap held it to 340.
+        // Columns are unchanged — `minimumTileWidth` 420 → 340 still yields
+        // three columns at 1320 wide — so the `x` values are unchanged. The
+        // rectangles pad the measured box on every side; the nearest real
+        // content is the tile's own value text above and the chart fill below,
+        // so widening the pad cannot catch something else.
         //
         // `regionHasContent(in:region:)` cannot be used for this: it compares
         // against the image's own top-left corner, which sits outside every
@@ -260,8 +263,8 @@ struct OverviewPageTests {
         // nothing for a saturation probe to find). Comparing against the
         // material's own known fallback colour is what actually isolates the
         // label.
-        let storageLabelRegion = CGRect(x: 18, y: 429, width: 50, height: 18)
-        let networkLabelRegion = CGRect(x: 462, y: 429, width: 50, height: 18)
+        let storageLabelRegion = CGRect(x: 18, y: 463, width: 50, height: 18)
+        let networkLabelRegion = CGRect(x: 462, y: 463, width: 50, height: 18)
 
         #expect(try !regionHasContent(in: rendered, region: storageLabelRegion, differingFrom: glassPanelMaterialFallback))
         #expect(try !regionHasContent(in: rendered, region: networkLabelRegion, differingFrom: glassPanelMaterialFallback))

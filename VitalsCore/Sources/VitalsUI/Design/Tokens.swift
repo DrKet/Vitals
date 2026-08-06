@@ -81,10 +81,18 @@ public enum Vitals {
         /// was designed in. This ceiling engages only on an unusually tall
         /// window (a portrait display, a tall resize), where unbounded growth
         /// would recreate the very tallness this layout exists to cure, one row
-        /// later. Set generously so the ordinary fullscreen look is unchanged;
-        /// it is a backstop, not a visible constraint. Mirrors `chartMaxHeight`:
-        /// a layout limit owned by the container, not the leaf.
-        public static let overviewTileMaxHeight: CGFloat = 340
+        /// later. Mirrors `chartMaxHeight`: a layout limit owned by the
+        /// container, not the leaf.
+        ///
+        /// Measured, not guessed: a fullscreen 1512×982 window gives the grid
+        /// roughly 950pt of height, so its two rows want about 470pt each. The
+        /// ceiling sits above that so an ordinary fullscreen fills edge to edge
+        /// — the state the layout was approved in — and only engages once a
+        /// row would exceed ~520pt, i.e. a window taller than ~1050pt of grid
+        /// (a portrait display). A lower value (an earlier draft used 340)
+        /// caps the tiles short of an ordinary fullscreen and pools an empty
+        /// band below, which is the exact look this rework exists to remove.
+        public static let overviewTileMaxHeight: CGFloat = 520
     }
 
     public enum Typography {

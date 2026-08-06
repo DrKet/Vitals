@@ -96,11 +96,14 @@ public struct OverviewPage: View {
         // their content, which strands two tiles at the top of a tall window.
         TileGrid(
             items: tiles,
-            // ~420pt gives two columns in a typical window and three at
-            // fullscreen; the cap of three keeps an ultrawide display from
-            // stranding a lopsided five-plus-one row. Together they guarantee
-            // at least two rows, so no tile can fill the whole window height.
-            minimumTileWidth: 420,
+            // ~340pt gives two columns in a typical window and three at
+            // fullscreen, measured against the real detail area — the sidebar
+            // takes ~250pt, so the grid is far narrower than the window, and a
+            // larger minimum collapses to a single tall column. The cap of
+            // three keeps an ultrawide display from stranding a lopsided
+            // five-plus-one row. Together they guarantee at least two rows, so
+            // no tile can fill the whole window height.
+            minimumTileWidth: 340,
             maximumColumns: 3,
             maximumRowHeight: Vitals.Metrics.overviewTileMaxHeight
         ) { tile in
