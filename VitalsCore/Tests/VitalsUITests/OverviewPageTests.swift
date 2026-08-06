@@ -64,6 +64,44 @@ struct OverviewPageTests {
         #expect(StoragePage.primaryValue(nil) == nil)
     }
 
+    // MARK: Tile fractions — the proportion bar's value, gated exactly like the tile
+
+    @Test("the GPU tile fraction is the attributable device utilisation, or nil")
+    func gpuTileFractionMirrorsTheValueGate() {
+        // Same gate as gpuTileValue: a single attributable GPU yields its raw
+        // device utilisation (0.42), and every ambiguous case yields nil so the
+        // bar is absent exactly when the value is.
+        #expect(OverviewPage.gpuTileFraction(sample: Self.sample, gpuCount: 1, sampleCount: 1)
+                .map { abs($0 - 0.42) < 1e-9 } == true)
+        #expect(OverviewPage.gpuTileFraction(sample: Self.sample, gpuCount: 2, sampleCount: 1) == nil)
+        #expect(OverviewPage.gpuTileFraction(sample: Self.sample, gpuCount: 1, sampleCount: 2) == nil)
+        #expect(OverviewPage.gpuTileFraction(sample: nil, gpuCount: 1, sampleCount: 1) == nil)
+    }
+
+    @Test("the memory fraction guards a missing or zero total, never dividing by zero")
+    func memoryFractionGuardsTheTotal() {
+        #expect(OverviewPage.memoryFraction(usedBytes: 8_000_000_000, totalBytes: 16_000_000_000)
+                .map { abs($0 - 0.5) < 1e-9 } == true)
+        // A total the machine could not report is not a whole to be a fraction of.
+        #expect(OverviewPage.memoryFraction(usedBytes: 8_000_000_000, totalBytes: nil) == nil)
+        #expect(OverviewPage.memoryFraction(usedBytes: 8_000_000_000, totalBytes: 0) == nil)
+        // No used reading yet is likewise nil, not a fabricated zero.
+        #expect(OverviewPage.memoryFraction(usedBytes: nil, totalBytes: 16_000_000_000) == nil)
+    }
+
+    @Test("Battery is a tile only on a machine that has one")
+    func batteryTileIsConditional() {
+        let withBattery = OverviewPage.tileOrder(hasBattery: true)
+        let without = OverviewPage.tileOrder(hasBattery: false)
+        #expect(withBattery.contains("battery"))
+        #expect(withBattery.count == 6)
+        #expect(without.contains("battery") == false)
+        #expect(without.count == 5)
+        // The five base tiles keep their established order in both cases.
+        #expect(Array(withBattery.prefix(5)) == ["cpu", "memory", "gpu", "storage", "network"])
+        #expect(without == ["cpu", "memory", "gpu", "storage", "network"])
+    }
+
     // MARK: Tile charts — one line per tile, matching its own headline number
 
     private static func gpuHistory(_ samples: [GPUSample]) -> [Timestamped<[GPUSample]>] {
@@ -190,22 +228,29 @@ struct OverviewPageTests {
 
         let rendered = try renderPNG(
             OverviewPage(store: store),
-            size: CGSize(width: 900, height: 700),
+            size: CGSize(width: 1320, height: 760),
             named: "overview-page-with-data"
         )
 
         // Both rectangles are derived from this exact render, not guessed:
-        // diffing this fixture's output against a build with `MetricTile`'s
-        // `showsAxisMaximum` forced to `true` (see `MetricChart.init`'s doc
-        // comment for why that flag exists) isolated the label to
-        // x:[24.5, 60.0], y:[437.5, 447.5] pt on the Storage tile and
-        // x:[328.5, 364.0], y:[437.5, 447.5] pt on the Network tile — nowhere
-        // else in the image changed. These rectangles pad that measured
-        // bounding box on every side; the nearest real content in either
-        // direction is the tile's own headline well above y=420 and the
-        // chart's flat throughput line starting at y=457 (confirmed by
-        // scanning the same column), so there is no dimension in which
-        // widening the pad here could accidentally catch something else.
+        // with `MetricTile`'s `showsAxisMaximum` temporarily forced to `true`
+        // (see `MetricChart.init`'s doc comment for why that flag exists) the
+        // label appears at the throughput tiles' chart top-leading corner, and
+        // these padded rectangles sit on it — verified both ways: forcing the
+        // flag on makes both `#expect`s below fail (the probe genuinely finds
+        // the label), and the production `false` passes (it is absent). The
+        // label sits around y≈466 on both the Storage and Network tiles at
+        // this render.
+        //
+        // The `y` moved down from a previous 429 when `overviewTileMaxHeight`
+        // went 340 → 520: at this 1320×760 render the two rows are no longer
+        // capped (each is (760−12)/2 = 374pt, under the ceiling), so row two
+        // starts 34pt lower than it did when the 340 cap held it to 340.
+        // Columns are unchanged — `minimumTileWidth` 420 → 340 still yields
+        // three columns at 1320 wide — so the `x` values are unchanged. The
+        // rectangles pad the measured box on every side; the nearest real
+        // content is the tile's own value text above and the chart fill below,
+        // so widening the pad cannot catch something else.
         //
         // `regionHasContent(in:region:)` cannot be used for this: it compares
         // against the image's own top-left corner, which sits outside every
@@ -218,8 +263,8 @@ struct OverviewPageTests {
         // nothing for a saturation probe to find). Comparing against the
         // material's own known fallback colour is what actually isolates the
         // label.
-        let storageLabelRegion = CGRect(x: 18, y: 433, width: 50, height: 18)
-        let networkLabelRegion = CGRect(x: 322, y: 433, width: 50, height: 18)
+        let storageLabelRegion = CGRect(x: 18, y: 463, width: 50, height: 18)
+        let networkLabelRegion = CGRect(x: 462, y: 463, width: 50, height: 18)
 
         #expect(try !regionHasContent(in: rendered, region: storageLabelRegion, differingFrom: glassPanelMaterialFallback))
         #expect(try !regionHasContent(in: rendered, region: networkLabelRegion, differingFrom: glassPanelMaterialFallback))

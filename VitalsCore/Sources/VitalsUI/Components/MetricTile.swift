@@ -5,12 +5,14 @@ public struct MetricTile: View {
     private let label: String
     private let value: String?
     private let accent: Color
+    private let fraction: Double?
     private let series: [ChartSeries]
 
-    public init(label: String, value: String?, accent: Color, series: [ChartSeries]) {
+    public init(label: String, value: String?, accent: Color, fraction: Double? = nil, series: [ChartSeries]) {
         self.label = label
         self.value = value
         self.accent = accent
+        self.fraction = fraction
         self.series = series
     }
 
@@ -41,6 +43,10 @@ public struct MetricTile: View {
                     .font(Vitals.Typography.tileValue)
                     .foregroundStyle(value == nil ? .secondary : .primary)
 
+                if let fraction {
+                    ProportionBar(fraction: fraction, accent: accent)
+                }
+
                 if series.contains(where: { !$0.values.isEmpty }) {
                     // The tile's own headline (`value` above) already states
                     // this reading — an axis-maximum label would restate it a
@@ -60,5 +66,28 @@ public struct MetricTile: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+}
+
+/// The Overview tile's proportion bar: a track with an accent fill sized to
+/// `fraction`. Shown only when the metric is a real fraction of a known whole —
+/// see `MetricTile`'s `fraction` parameter. A plain accent fill, not the
+/// Battery page's warning-aware `BatteryLevelBar`: the Overview is a glance
+/// surface and the tile's own value carries the number.
+private struct ProportionBar: View {
+    let fraction: Double
+    let accent: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.10))
+                // Clamped, never fabricated: a reading cannot exceed its whole,
+                // but clamping keeps a stray value from overflowing the track.
+                Capsule().fill(accent)
+                    .frame(width: proxy.size.width * min(max(fraction, 0), 1))
+            }
+        }
+        .frame(height: 6)
     }
 }

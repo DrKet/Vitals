@@ -10,17 +10,21 @@ import SwiftUI
 /// height.
 public enum TileLayout {
 
-    /// How many tiles fit across `width`, never fewer than one.
+    /// How many tiles fit across `width`, never fewer than one and never more
+    /// than `maximum`. The cap only lowers the fitted count — it is what keeps
+    /// five or six tiles from collapsing into a single full-height row on a
+    /// wide window.
     ///
     /// Solves `n * minimum + (n - 1) * spacing <= width` for `n`.
     public static func columnCount(
         width: CGFloat,
         minimumTileWidth: CGFloat,
-        spacing: CGFloat
+        spacing: CGFloat,
+        maximum: Int = .max
     ) -> Int {
         guard width > 0, minimumTileWidth > 0 else { return 1 }
         let fitted = Int((width + spacing) / (minimumTileWidth + spacing))
-        return max(fitted, 1)
+        return max(min(fitted, maximum), 1)
     }
 
     /// Whether a short final row should be padded with empty cells.
@@ -41,21 +45,28 @@ public enum TileLayout {
     }
 }
 
-/// A grid whose tiles reflow by width and grow into available height.
+/// A grid whose tiles reflow by width and grow into available height, up to an
+/// optional per-row ceiling, with an optional cap on how many columns it forms.
 public struct TileGrid<Item: Identifiable, Tile: View>: View {
     private let items: [Item]
     private let minimumTileWidth: CGFloat
+    private let maximumColumns: Int
+    private let maximumRowHeight: CGFloat
     private let spacing: CGFloat
     private let tile: (Item) -> Tile
 
     public init(
         items: [Item],
         minimumTileWidth: CGFloat = 240,
+        maximumColumns: Int = .max,
+        maximumRowHeight: CGFloat = .infinity,
         spacing: CGFloat = Vitals.Metrics.tileSpacing,
         @ViewBuilder tile: @escaping (Item) -> Tile
     ) {
         self.items = items
         self.minimumTileWidth = minimumTileWidth
+        self.maximumColumns = maximumColumns
+        self.maximumRowHeight = maximumRowHeight
         self.spacing = spacing
         self.tile = tile
     }
@@ -65,7 +76,8 @@ public struct TileGrid<Item: Identifiable, Tile: View>: View {
             let columns = TileLayout.columnCount(
                 width: proxy.size.width,
                 minimumTileWidth: minimumTileWidth,
-                spacing: spacing
+                spacing: spacing,
+                maximum: maximumColumns
             )
             let rows = TileLayout.rows(items, columns: columns)
 
@@ -83,8 +95,13 @@ public struct TileGrid<Item: Identifiable, Tile: View>: View {
                             }
                         }
                     }
-                    .frame(maxHeight: .infinity)
+                    .frame(maxHeight: maximumRowHeight)
                 }
+                // When rows are capped, leftover height pools below rather than
+                // stretching the tiles past the ceiling. When uncapped
+                // (maximumRowHeight == .infinity) the rows consume everything
+                // and this spacer collapses to zero — today's behaviour.
+                Spacer(minLength: 0)
             }
         }
     }

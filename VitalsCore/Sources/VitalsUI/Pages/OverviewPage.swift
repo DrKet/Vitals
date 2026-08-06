@@ -17,61 +17,101 @@ public struct OverviewPage: View {
         let label: String
         let value: String?
         let accent: Color
+        let fraction: Double?
         let series: [ChartSeries]
     }
 
     private var tiles: [Tile] {
-        [
-            Tile(
-                id: "cpu",
-                label: "CPU",
+        Self.tileOrder(hasBattery: store.profile?.hasBattery == true).compactMap(tile(for:))
+    }
+
+    private func tile(for id: String) -> Tile? {
+        switch id {
+        case "cpu":
+            return Tile(
+                id: "cpu", label: "CPU",
                 value: store.cpu.map { "\(Int(($0.total * 100).rounded()))%" },
                 accent: Vitals.Palette.cpu,
+                fraction: store.cpu?.total,
                 series: cpuSeries
-            ),
-            Tile(
-                id: "memory",
-                label: "Memory",
+            )
+        case "memory":
+            return Tile(
+                id: "memory", label: "Memory",
                 value: store.memory.map { Vitals.formatKnownByteCountInGigabytes($0.used) },
                 accent: Vitals.Palette.memory,
+                fraction: Self.memoryFraction(
+                    usedBytes: store.memory?.used,
+                    totalBytes: store.profile?.memory.totalBytes
+                ),
                 series: memorySeries
-            ),
-            Tile(
-                id: "gpu",
-                label: "GPU",
+            )
+        case "gpu":
+            return Tile(
+                id: "gpu", label: "GPU",
                 value: Self.gpuTileValue(
                     sample: store.gpu?.first,
                     gpuCount: store.profile?.gpus.count ?? 0,
                     sampleCount: store.gpu?.count ?? 0
                 ),
                 accent: Vitals.Palette.gpu,
+                fraction: Self.gpuTileFraction(
+                    sample: store.gpu?.first,
+                    gpuCount: store.profile?.gpus.count ?? 0,
+                    sampleCount: store.gpu?.count ?? 0
+                ),
                 series: gpuSeries
-            ),
-            Tile(
-                id: "storage",
-                label: "Storage",
+            )
+        case "storage":
+            return Tile(
+                id: "storage", label: "Storage",
                 value: StoragePage.primaryValue(store.diskIO),
                 accent: Vitals.Palette.storage,
+                fraction: nil,
                 series: storageSeries
-            ),
-            Tile(
-                id: "network",
-                label: "Network",
+            )
+        case "network":
+            return Tile(
+                id: "network", label: "Network",
                 value: Self.networkTileValue(store.network),
                 accent: Vitals.Palette.network,
+                fraction: nil,
                 series: networkSeries
-            ),
-        ]
+            )
+        case "battery":
+            return Tile(
+                id: "battery", label: "Battery",
+                value: store.battery.map { "\($0.chargePercent)%" },
+                accent: Vitals.Palette.battery,
+                fraction: store.battery.map { Double($0.chargePercent) / 100 },
+                series: batterySeries
+            )
+        default:
+            return nil
+        }
     }
 
     public var body: some View {
         // `TileGrid` rather than `LazyVGrid`: a lazy grid sizes its rows to
         // their content, which strands two tiles at the top of a tall window.
-        TileGrid(items: tiles) { tile in
+        TileGrid(
+            items: tiles,
+            // ~340pt gives two columns in a typical window and three at
+            // fullscreen, measured against the real detail area — the sidebar
+            // takes ~250pt, so the grid is far narrower than the window, and a
+            // larger minimum collapses to a single tall column. The cap of
+            // three keeps an ultrawide display from stranding a lopsided
+            // five-plus-one row. Together they guarantee at least two rows, so
+            // no tile can fill the whole window height.
+            minimumTileWidth: 340,
+            maximumColumns: 3,
+            maximumRowHeight: Vitals.Metrics.overviewTileMaxHeight
+        ) { tile in
             MetricTile(
                 label: tile.label,
                 value: tile.value,
                 accent: tile.accent,
+                fraction: tile.fraction,
                 series: tile.series
             )
         }
@@ -80,6 +120,13 @@ public struct OverviewPage: View {
         .task { await store.stream(.gpu) }
         .task { await store.stream(.diskIO) }
         .task { await store.stream(.network) }
+        // Battery is sampled only where it exists — a desktop never subscribes
+        // to a series it cannot show. The task runs on every machine but
+        // returns immediately when there is no battery.
+        .task {
+            guard store.profile?.hasBattery == true else { return }
+            await store.stream(.battery)
+        }
     }
 
     private var cpuSeries: [ChartSeries] {
@@ -115,6 +162,15 @@ public struct OverviewPage: View {
             .deviceUtilisation.map { "\(Int(($0 * 100).rounded()))%" }
     }
 
+    /// The Overview GPU tile's bar value: the attributable device utilisation,
+    /// or `nil`. Mirrors `gpuTileValue`'s gate exactly — the raw fraction the
+    /// value formats as a percentage — so the bar is present precisely when the
+    /// value is, and never attributes one GPU's load under a generic label on a
+    /// multi-GPU Mac.
+    static func gpuTileFraction(sample: GPUSample?, gpuCount: Int, sampleCount: Int) -> Double? {
+        GPUPage.attributableLatest(sample, gpuCount: gpuCount, sampleCount: sampleCount)?.deviceUtilisation
+    }
+
     /// Overview's GPU tile chart: whole-device utilisation, never
     /// Renderer+Tiler summed — see `GPUPage.deviceUtilisationSeries`'s doc
     /// comment for why that sum would be a fabricated quantity. Gated by the
@@ -143,6 +199,17 @@ public struct OverviewPage: View {
             gpuCount: store.profile?.gpus.count ?? 0,
             sampleCount: store.gpu?.count ?? 0
         )
+    }
+
+    // MARK: Memory
+
+    /// The Memory tile's bar value: used over total, or `nil` when there is no
+    /// total to be a fraction of. Guards `total > 0` for the same reason the
+    /// memory series does — a machine that cannot report `hw.memsize` has no
+    /// whole, and dividing by it would be a fabricated proportion.
+    static func memoryFraction(usedBytes: UInt64?, totalBytes: UInt64?) -> Double? {
+        guard let usedBytes, let totalBytes, totalBytes > 0 else { return nil }
+        return Double(usedBytes) / Double(totalBytes)
     }
 
     // MARK: Storage
@@ -181,5 +248,31 @@ public struct OverviewPage: View {
 
     private var networkSeries: [ChartSeries] {
         Self.networkTileSeries(history: store.networkHistory)
+    }
+
+    // MARK: Battery
+
+    /// The Battery tile's spark: charge over time as a fraction, matching the
+    /// tile's own percentage headline and its bar. Timestamps travel alongside
+    /// so the chart breaks over the gaps that subscription-driven sampling
+    /// leaves, exactly as every other tile series does.
+    private var batterySeries: [ChartSeries] {
+        [
+            ChartSeries(
+                name: "Charge",
+                values: store.batteryHistory.map { Double($0.sample.chargePercent) / 100 },
+                timestamps: store.batteryHistory.map(\.timestamp)
+            )
+        ]
+    }
+
+    // MARK: Tile ordering
+
+    /// The tiles the Overview shows, in order. Battery is appended only on a
+    /// machine that has one — six tiles divide into a clean grid where five
+    /// leave a gap, but a desktop Mac has no battery to show. The body builds
+    /// its tiles from exactly this list, so presence lives in one tested place.
+    static func tileOrder(hasBattery: Bool) -> [String] {
+        ["cpu", "memory", "gpu", "storage", "network"] + (hasBattery ? ["battery"] : [])
     }
 }

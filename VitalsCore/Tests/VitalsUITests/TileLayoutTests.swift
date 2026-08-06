@@ -41,6 +41,36 @@ struct TileLayoutTests {
         #expect(TileLayout.columnCount(width: 500, minimumTileWidth: 0, spacing: 12) == 1)
     }
 
+    @Test("the column count is capped when a maximum is given")
+    func maximumCapsTheColumnCount() {
+        // Width 1248 fits exactly five 240pt tiles with 12pt gaps
+        // (5*240 + 4*12 = 1248), so the uncapped count is five.
+        #expect(TileLayout.columnCount(width: 1248, minimumTileWidth: 240, spacing: 12) == 5)
+        // The cap forces that down to three — the rule that keeps five or six
+        // tiles from ever forming a single full-height row.
+        #expect(TileLayout.columnCount(width: 1248, minimumTileWidth: 240, spacing: 12, maximum: 3) == 3)
+    }
+
+    @Test("the maximum only ever lowers, never raises, the fitted count")
+    func maximumNeverRaises() {
+        // Width 492 fits only two tiles; a maximum of three must not invent a
+        // third column where the width cannot hold one.
+        #expect(TileLayout.columnCount(width: 492, minimumTileWidth: 240, spacing: 12, maximum: 3) == 2)
+    }
+
+    @Test("a maximum still respects the one-column floor")
+    func maximumKeepsTheOneColumnFloor() {
+        // A degenerate width floors at one column; the cap cannot push it below.
+        #expect(TileLayout.columnCount(width: 0, minimumTileWidth: 240, spacing: 12, maximum: 3) == 1)
+    }
+
+    @Test("the one-column floor holds even when the maximum is below one")
+    func maximumBelowOneStillFloorsAtOne() {
+        // columnCount is a pure helper with a total contract: it never returns
+        // fewer than one column for any input, so the cap cannot push it to zero.
+        #expect(TileLayout.columnCount(width: 500, minimumTileWidth: 240, spacing: 12, maximum: 0) == 1)
+    }
+
     // MARK: Row chunking
 
     @Test("items are chunked into rows in order")
