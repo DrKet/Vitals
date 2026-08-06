@@ -27,8 +27,10 @@ public struct BatteryPage: View {
     }
 
     /// h:mm, matching how Apple's own battery UI writes a time estimate.
-    /// `nil` — the gas gauge has not settled — renders as an em dash, never
-    /// as "0:00", which would read as "no time left" rather than "unknown".
+    /// `nil` — IOPS is still calculating, or the machine is plugged in and
+    /// charged so nothing is counting — renders as an em dash, never as
+    /// "0:00", which would read as "no time left" rather than "unknown".
+    /// `pmset` prints "(no estimate)" for the same condition.
     public static func displayMinutes(_ minutes: Int?) -> String {
         guard let minutes else { return "—" }
         return "\(minutes / 60):\(String(format: "%02d", minutes % 60))"

@@ -15,7 +15,10 @@ public struct BatterySample: Sendable, Equatable {
     public let chargePercent: Int
     public let isCharging: Bool
     public let isExternalPowerConnected: Bool
-    /// `nil` when the gas gauge has not settled — see `minutesRemaining(from:)`.
+    /// Minutes to empty, or to full while charging. `nil` when the estimate
+    /// is still being calculated, and also when the machine is plugged in and
+    /// already charged — nothing is counting in either direction then. See
+    /// `minutesRemaining(timeToEmpty:timeToFullCharge:isCharging:isExternalPowerConnected:)`.
     public let minutesRemaining: Int?
     public let volts: Double
     public let celsius: Double
@@ -50,14 +53,44 @@ public struct BatterySample: Sendable, Equatable {
         Int64(bitPattern: raw)
     }
 
-    /// The gas gauge reports `65535` for "not yet known". Passing that through
-    /// would claim about 45 days of runtime.
+    /// Minutes left in whichever direction the battery is actually moving,
+    /// from the IOPS power-source dictionary.
     ///
-    /// Zero is deliberately NOT treated as a sentinel: an empty or fully
-    /// charged battery genuinely has zero minutes left in its current
-    /// direction.
-    public static func minutesRemaining(fromRegistryValue raw: Int) -> Int? {
-        raw == 65535 ? nil : raw
+    /// IOPS rather than the IORegistry's `TimeRemaining` deliberately. Both
+    /// are honest readings, but they are different estimators and they
+    /// disagree substantially and in both directions — measured on this
+    /// machine within one session: registry 271 against IOPS 505, then later
+    /// registry 294 against IOPS 164. IOPS is what `pmset`, the menu bar and
+    /// Settings all read (IOPS 164 and `pmset` "2:44" were the same reading
+    /// at the same moment), so it is the one that does not contradict the
+    /// rest of the system on the user's own screen.
+    ///
+    /// Takes both flags rather than `isCharging` alone because there are
+    /// three states, not two. Plugged in and full is neither counting down
+    /// nor counting up, and both keys are always present regardless — while
+    /// discharging, `Time to Full Charge` still reads `0` rather than being
+    /// absent — so choosing on `isCharging` alone would surface a confident
+    /// wrong number rather than an obvious nil.
+    public static func minutesRemaining(
+        timeToEmpty: Int?, timeToFullCharge: Int?,
+        isCharging: Bool, isExternalPowerConnected: Bool
+    ) -> Int? {
+        let raw: Int?
+        if !isExternalPowerConnected {
+            raw = timeToEmpty
+        } else if isCharging {
+            raw = timeToFullCharge
+        } else {
+            // Charged on AC: neither key describes anything happening.
+            return nil
+        }
+
+        // IOPS documents -1 for "still calculating". Every negative reads as
+        // unknown, which needs no assumption about -1 being the only
+        // sentinel. Zero stays a real reading: a battery minutes from empty
+        // genuinely has zero minutes left.
+        guard let raw, raw >= 0 else { return nil }
+        return raw
     }
 
     /// Power as a magnitude. Millivolts and milliamps in, watts out.

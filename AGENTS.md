@@ -227,6 +227,17 @@ to be a different page.
   **zero windows** and every "it launches" check is meaningless.
 - `AsyncStream.onTermination` does **not** fire on `break` out of a `for await`
   while the stream is still in scope. Drive teardown via task cancellation.
+- **There are two battery time estimates and they disagree.** The IORegistry's
+  `TimeRemaining` (= `AvgTimeToEmpty`) is the raw gas gauge; IOPS's
+  `kIOPSTimeToEmptyKey` / `kIOPSTimeToFullChargeKey` is what `pmset`, the menu
+  bar and Settings read. Measured within one session on this machine: registry
+  271 vs IOPS 505, and later registry 294 vs IOPS 164 — so they cross over,
+  and neither is consistently the larger. They also sometimes agree exactly,
+  which makes a single spot-check useless for telling which one you are
+  reading. Vitals reads IOPS, so it cannot contradict the menu bar.
+  The sharpest difference is in the first seconds on the adapter: IOPS
+  reports `-1`, "still calculating", and `pmset` prints "(no estimate)", while
+  the registry states a confident number. Any negative is unknown.
 - `AppleSmartBattery`'s `Amperage` is a signed value delivered unsigned:
   `4090` while charging, `18446744073709550565` while discharging (`-1051` in
   `UInt64` wraparound). A naive `Int64(raw)` read does not just produce a wrong
