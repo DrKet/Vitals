@@ -15,14 +15,71 @@ struct BatterySampleTests {
         #expect(BatterySample.milliamps(fromRegistryValue: 18_446_744_073_709_550_565) == -1051)
     }
 
-    /// 65535 is the gas gauge's "I don't know yet" sentinel. Rendering it
-    /// would claim 45 days of runtime.
-    @Test("an unsettled time estimate is nil, never 65535")
-    func unsettledTimeEstimateIsNil() {
-        #expect(BatterySample.minutesRemaining(fromRegistryValue: 65535) == nil)
-        #expect(BatterySample.minutesRemaining(fromRegistryValue: 82) == 82)
-        // Zero is a real reading when a battery is empty or full, not a sentinel.
-        #expect(BatterySample.minutesRemaining(fromRegistryValue: 0) == 0)
+    /// On battery, the countdown is time to empty. Measured together on this
+    /// machine: IOPS said 164 minutes and `pmset` said "2:44 remaining" at the
+    /// same moment, which is the same number — IOPS is the source every other
+    /// macOS surface reads.
+    @Test("on battery, the estimate is time to empty")
+    func onBatteryReadsTimeToEmpty() {
+        #expect(BatterySample.minutesRemaining(
+            timeToEmpty: 164, timeToFullCharge: 0,
+            isCharging: false, isExternalPowerConnected: false
+        ) == 164)
+    }
+
+    /// Charging counts up to full instead, and the two keys are both present
+    /// at once — measured while discharging, `Time to Full Charge` still read
+    /// 0 rather than being absent. Reading the wrong one would therefore not
+    /// produce an obvious nil; it would produce a confident, wrong number.
+    @Test("charging, the estimate is time to full — not the stale time-to-empty")
+    func chargingReadsTimeToFull() {
+        #expect(BatterySample.minutesRemaining(
+            timeToEmpty: 999, timeToFullCharge: 42,
+            isCharging: true, isExternalPowerConnected: true
+        ) == 42)
+    }
+
+    /// Plugged in and already full: nothing is counting in either direction,
+    /// so neither key means anything. An em dash is the honest answer, and it
+    /// is the reason this takes both flags rather than `isCharging` alone.
+    @Test("charged on AC has no time estimate at all, in either key")
+    func chargedOnACHasNoEstimate() {
+        #expect(BatterySample.minutesRemaining(
+            timeToEmpty: 600, timeToFullCharge: 0,
+            isCharging: false, isExternalPowerConnected: true
+        ) == nil)
+    }
+
+    /// -1 is IOPS's "still calculating", and it is measured, not assumed: in
+    /// the first seconds after the adapter went in, `Time to Full Charge`
+    /// read -1 while `pmset` said "(no estimate)" — and the IORegistry's
+    /// `TimeRemaining` claimed a confident 74 minutes at that same moment.
+    /// Rendering the registry's number there would state an estimate macOS
+    /// itself declines to make.
+    @Test("a negative estimate is unknown, never rendered as a duration")
+    func negativeEstimateIsNil() {
+        #expect(BatterySample.minutesRemaining(
+            timeToEmpty: 0, timeToFullCharge: -1,
+            isCharging: true, isExternalPowerConnected: true
+        ) == nil)
+        #expect(BatterySample.minutesRemaining(
+            timeToEmpty: -1, timeToFullCharge: 0,
+            isCharging: false, isExternalPowerConnected: false
+        ) == nil)
+    }
+
+    /// An absent key is unknown too — distinct from a present zero.
+    @Test("an absent key is unknown, and is not confused with zero")
+    func absentKeyIsNil() {
+        #expect(BatterySample.minutesRemaining(
+            timeToEmpty: nil, timeToFullCharge: nil,
+            isCharging: false, isExternalPowerConnected: false
+        ) == nil)
+        // Zero is a real reading on a battery about to die, not a sentinel.
+        #expect(BatterySample.minutesRemaining(
+            timeToEmpty: 0, timeToFullCharge: nil,
+            isCharging: false, isExternalPowerConnected: false
+        ) == 0)
     }
 
     /// Magnitude, never signed: the chart plots how much power is moving and

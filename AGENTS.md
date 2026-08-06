@@ -80,7 +80,7 @@ zero windows (see Platform notes below).
 
 Swift 6 language mode, strict concurrency, macOS 26.0 floor.
 
-### Three commands that lie to you
+### Four commands that lie to you
 
 **1. Warning checks need a clean build.**
 
@@ -102,6 +102,45 @@ passed vacuously.
 **3. Float equality.** This project has been bitten four separate times by
 assertions like `0.2 + 0.1 == 0.3` that can never hold. Always compare with a
 tolerance.
+
+**4. An incremental build after adding a stored property produces a binary
+that SIGSEGVs.** This is the explanation for the "HardwareProfile segfault"
+that two milestones worked around without understanding.
+
+Add a stored property to a public struct in `SystemMetrics`, run
+`swift build --build-tests`, and it prints `Build complete!` in about three
+seconds — far too fast to have rebuilt the test targets, which it hasn't. The
+test binary keeps objects compiled against the old layout, and `swift test`
+then dies with `exited with unexpected signal code 11`, in a **different test
+each run**. `rm -rf .build` and the identical source passes.
+
+Measured on Swift 6.3.3 / Xcode 26.6, from a clean baseline each time:
+
+| Field added incrementally | Result          |
+| ------------------------- | --------------- |
+| `Bool`                    | clean, 6/6      |
+| `String`                  | SIGSEGV, 5/5    |
+| `BatteryHealth?`          | SIGSEGV, 6/6    |
+| `BatteryHealth?`, but `rm -rf .build` first | clean, 5/5 |
+
+The type dependence is what made this look like a defect specific to one
+struct — it isn't. What matters is whether the new field is **refcounted**.
+A `Bool` or `Int?` adds no reference, so the stale copy/destroy code still
+retains and releases exactly the right set and stays accidentally correct
+(it happens even though the struct's size and stride both change — 224/224
+to 225/232 — so size is not the trigger). A `String`, or any struct
+containing one, adds a reference the stale code does not know about, and the
+crash is `EXC_BAD_ACCESS`, `KERN_INVALID_ADDRESS at 0x0`.
+
+So: **after changing a public struct's stored properties, `rm -rf .build`
+before you trust a test run.** A nondeterministic signal 11 across unrelated
+tests is this, not a bug in whatever test happened to be running.
+
+Two things this is *not*, both of which were suspected at the time: it is not
+the `system_profiler` subprocess, and it is not machine load. Load produces a
+different and unmistakable signature — `waitUntil` timeouts recorded at
+`MetricsStoreTests.swift:563`, with the suite still reporting a normal
+pass/fail summary. Signal 11 kills the run with no summary line at all.
 
 ## Testing the UI — read this before writing a render test
 
@@ -188,6 +227,23 @@ to be a different page.
   **zero windows** and every "it launches" check is meaningless.
 - `AsyncStream.onTermination` does **not** fire on `break` out of a `for await`
   while the stream is still in scope. Drive teardown via task cancellation.
+- **There are two battery time estimates and they disagree.** The IORegistry's
+  `TimeRemaining` (= `AvgTimeToEmpty`) is the raw gas gauge; IOPS's
+  `kIOPSTimeToEmptyKey` / `kIOPSTimeToFullChargeKey` is what `pmset`, the menu
+  bar and Settings read. Measured within one session on this machine: registry
+  271 vs IOPS 505, and later registry 294 vs IOPS 164 — so they cross over,
+  and neither is consistently the larger. They also sometimes agree exactly,
+  which makes a single spot-check useless for telling which one you are
+  reading. Vitals reads IOPS, so it cannot contradict the menu bar.
+  The sharpest difference is in the first seconds on the adapter: IOPS
+  reports `-1`, "still calculating", and `pmset` prints "(no estimate)", while
+  the registry states a confident number. Any negative is unknown.
+- **Plugged in and not charging is not the same as charged.** `IsCharging` No
+  with `ExternalConnected` Yes happens at any charge level — macOS holds it
+  for long stretches under optimised battery charging and calls it "AC
+  attached; not charging". Use `FullyCharged` to tell the two apart;
+  without it the page says "73% – Charged", which is a claim the machine
+  never made.
 - `AppleSmartBattery`'s `Amperage` is a signed value delivered unsigned:
   `4090` while charging, `18446744073709550565` while discharging (`-1051` in
   `UInt64` wraparound). A naive `Int64(raw)` read does not just produce a wrong

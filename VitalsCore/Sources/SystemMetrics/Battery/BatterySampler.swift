@@ -38,25 +38,59 @@ public enum BatterySampler {
         guard let chargePercent = (dictionary["CurrentCapacity"] as? NSNumber)?.intValue,
               let millivolts = (dictionary["Voltage"] as? NSNumber)?.intValue,
               let rawAmperage = (dictionary["Amperage"] as? NSNumber)?.uint64Value,
-              let rawTimeRemaining = (dictionary["TimeRemaining"] as? NSNumber)?.intValue,
               let isCharging = (dictionary["IsCharging"] as? NSNumber)?.boolValue,
               let isExternalPowerConnected = (dictionary["ExternalConnected"] as? NSNumber)?.boolValue,
+              let isFullyCharged = (dictionary["FullyCharged"] as? NSNumber)?.boolValue,
               let rawTemperature = (dictionary["Temperature"] as? NSNumber)?.intValue
         else { return nil }
 
         let milliamps = BatterySample.milliamps(fromRegistryValue: rawAmperage)
+        let estimates = timeEstimates()
 
         return BatterySample(
             watts: BatterySample.watts(millivolts: millivolts, milliamps: milliamps),
             chargePercent: chargePercent,
             isCharging: isCharging,
             isExternalPowerConnected: isExternalPowerConnected,
-            minutesRemaining: BatterySample.minutesRemaining(fromRegistryValue: rawTimeRemaining),
+            isFullyCharged: isFullyCharged,
+            minutesRemaining: BatterySample.minutesRemaining(
+                timeToEmpty: estimates.toEmpty,
+                timeToFullCharge: estimates.toFull,
+                isCharging: isCharging,
+                isExternalPowerConnected: isExternalPowerConnected
+            ),
             volts: Double(millivolts) / 1000,
             celsius: BatterySample.celsius(fromRegistryValue: rawTemperature),
             warningLevel: warningLevel(),
             isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
         )
+    }
+
+    /// The two time estimates from the IOPS power-source dictionary — the
+    /// same source `pmset` and the menu bar read. Either is `nil` when the
+    /// key is absent; `BatterySample.minutesRemaining` decides which one
+    /// applies and what a negative means.
+    ///
+    /// Read from IOPS rather than from the `AppleSmartBattery` dictionary
+    /// this function's caller already holds: see that method's doc comment
+    /// for the measurements behind choosing the smoothed estimate over the
+    /// raw gas gauge.
+    private static func timeEstimates() -> (toEmpty: Int?, toFull: Int?) {
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let sources = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef]
+        else { return (nil, nil) }
+
+        // The internal battery is the only source with these keys on a Mac;
+        // taking the first that describes one avoids inventing a rule for
+        // multi-source machines that has never been observed.
+        for source in sources {
+            guard let description = IOPSGetPowerSourceDescription(blob, source)?
+                .takeUnretainedValue() as? [String: Any] else { continue }
+            let toEmpty = (description[kIOPSTimeToEmptyKey] as? NSNumber)?.intValue
+            let toFull = (description[kIOPSTimeToFullChargeKey] as? NSNumber)?.intValue
+            if toEmpty != nil || toFull != nil { return (toEmpty, toFull) }
+        }
+        return (nil, nil)
     }
 
     private static func warningLevel() -> BatteryWarningLevel {
