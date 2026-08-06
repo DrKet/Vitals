@@ -64,6 +64,13 @@ struct TileLayoutTests {
         #expect(TileLayout.columnCount(width: 0, minimumTileWidth: 240, spacing: 12, maximum: 3) == 1)
     }
 
+    @Test("the one-column floor holds even when the maximum is below one")
+    func maximumBelowOneStillFloorsAtOne() {
+        // columnCount is a pure helper with a total contract: it never returns
+        // fewer than one column for any input, so the cap cannot push it to zero.
+        #expect(TileLayout.columnCount(width: 500, minimumTileWidth: 240, spacing: 12, maximum: 0) == 1)
+    }
+
     // MARK: Row chunking
 
     @Test("items are chunked into rows in order")

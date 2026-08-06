@@ -24,7 +24,7 @@ public enum TileLayout {
     ) -> Int {
         guard width > 0, minimumTileWidth > 0 else { return 1 }
         let fitted = Int((width + spacing) / (minimumTileWidth + spacing))
-        return min(max(fitted, 1), maximum)
+        return max(min(fitted, maximum), 1)
     }
 
     /// Whether a short final row should be padded with empty cells.
