@@ -64,6 +64,44 @@ struct OverviewPageTests {
         #expect(StoragePage.primaryValue(nil) == nil)
     }
 
+    // MARK: Tile fractions — the proportion bar's value, gated exactly like the tile
+
+    @Test("the GPU tile fraction is the attributable device utilisation, or nil")
+    func gpuTileFractionMirrorsTheValueGate() {
+        // Same gate as gpuTileValue: a single attributable GPU yields its raw
+        // device utilisation (0.42), and every ambiguous case yields nil so the
+        // bar is absent exactly when the value is.
+        #expect(OverviewPage.gpuTileFraction(sample: Self.sample, gpuCount: 1, sampleCount: 1)
+                .map { abs($0 - 0.42) < 1e-9 } == true)
+        #expect(OverviewPage.gpuTileFraction(sample: Self.sample, gpuCount: 2, sampleCount: 1) == nil)
+        #expect(OverviewPage.gpuTileFraction(sample: Self.sample, gpuCount: 1, sampleCount: 2) == nil)
+        #expect(OverviewPage.gpuTileFraction(sample: nil, gpuCount: 1, sampleCount: 1) == nil)
+    }
+
+    @Test("the memory fraction guards a missing or zero total, never dividing by zero")
+    func memoryFractionGuardsTheTotal() {
+        #expect(OverviewPage.memoryFraction(usedBytes: 8_000_000_000, totalBytes: 16_000_000_000)
+                .map { abs($0 - 0.5) < 1e-9 } == true)
+        // A total the machine could not report is not a whole to be a fraction of.
+        #expect(OverviewPage.memoryFraction(usedBytes: 8_000_000_000, totalBytes: nil) == nil)
+        #expect(OverviewPage.memoryFraction(usedBytes: 8_000_000_000, totalBytes: 0) == nil)
+        // No used reading yet is likewise nil, not a fabricated zero.
+        #expect(OverviewPage.memoryFraction(usedBytes: nil, totalBytes: 16_000_000_000) == nil)
+    }
+
+    @Test("Battery is a tile only on a machine that has one")
+    func batteryTileIsConditional() {
+        let withBattery = OverviewPage.tileOrder(hasBattery: true)
+        let without = OverviewPage.tileOrder(hasBattery: false)
+        #expect(withBattery.contains("battery"))
+        #expect(withBattery.count == 6)
+        #expect(without.contains("battery") == false)
+        #expect(without.count == 5)
+        // The five base tiles keep their established order in both cases.
+        #expect(Array(withBattery.prefix(5)) == ["cpu", "memory", "gpu", "storage", "network"])
+        #expect(without == ["cpu", "memory", "gpu", "storage", "network"])
+    }
+
     // MARK: Tile charts — one line per tile, matching its own headline number
 
     private static func gpuHistory(_ samples: [GPUSample]) -> [Timestamped<[GPUSample]>] {

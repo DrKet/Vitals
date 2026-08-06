@@ -115,6 +115,15 @@ public struct OverviewPage: View {
             .deviceUtilisation.map { "\(Int(($0 * 100).rounded()))%" }
     }
 
+    /// The Overview GPU tile's bar value: the attributable device utilisation,
+    /// or `nil`. Mirrors `gpuTileValue`'s gate exactly — the raw fraction the
+    /// value formats as a percentage — so the bar is present precisely when the
+    /// value is, and never attributes one GPU's load under a generic label on a
+    /// multi-GPU Mac.
+    static func gpuTileFraction(sample: GPUSample?, gpuCount: Int, sampleCount: Int) -> Double? {
+        GPUPage.attributableLatest(sample, gpuCount: gpuCount, sampleCount: sampleCount)?.deviceUtilisation
+    }
+
     /// Overview's GPU tile chart: whole-device utilisation, never
     /// Renderer+Tiler summed — see `GPUPage.deviceUtilisationSeries`'s doc
     /// comment for why that sum would be a fabricated quantity. Gated by the
@@ -143,6 +152,17 @@ public struct OverviewPage: View {
             gpuCount: store.profile?.gpus.count ?? 0,
             sampleCount: store.gpu?.count ?? 0
         )
+    }
+
+    // MARK: Memory
+
+    /// The Memory tile's bar value: used over total, or `nil` when there is no
+    /// total to be a fraction of. Guards `total > 0` for the same reason the
+    /// memory series does — a machine that cannot report `hw.memsize` has no
+    /// whole, and dividing by it would be a fabricated proportion.
+    static func memoryFraction(usedBytes: UInt64?, totalBytes: UInt64?) -> Double? {
+        guard let usedBytes, let totalBytes, totalBytes > 0 else { return nil }
+        return Double(usedBytes) / Double(totalBytes)
     }
 
     // MARK: Storage
@@ -181,5 +201,15 @@ public struct OverviewPage: View {
 
     private var networkSeries: [ChartSeries] {
         Self.networkTileSeries(history: store.networkHistory)
+    }
+
+    // MARK: Tile ordering
+
+    /// The tiles the Overview shows, in order. Battery is appended only on a
+    /// machine that has one — six tiles divide into a clean grid where five
+    /// leave a gap, but a desktop Mac has no battery to show. The body builds
+    /// its tiles from exactly this list, so presence lives in one tested place.
+    static func tileOrder(hasBattery: Bool) -> [String] {
+        ["cpu", "memory", "gpu", "storage", "network"] + (hasBattery ? ["battery"] : [])
     }
 }
