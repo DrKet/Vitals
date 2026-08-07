@@ -21,7 +21,8 @@ struct ProcessSortTests {
         ProcessRow(
             pid: pid, name: name, userName: user, cpuFraction: cpu,
             memoryBytes: memory, threadCount: threads, cpuTimeSeconds: cpuTime,
-            diskReadBytes: diskRead, diskWrittenBytes: diskWrite, architecture: architecture
+            diskReadBytes: diskRead, diskWrittenBytes: diskWrite, architecture: architecture,
+            startTimeSeconds: 1_700_000_000
         )
     }
 

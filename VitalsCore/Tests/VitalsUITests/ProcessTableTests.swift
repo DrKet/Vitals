@@ -12,7 +12,15 @@ struct ProcessTableTests {
         ProcessRow(
             pid: pid, name: name, userName: "u", cpuFraction: cpu, memoryBytes: memory,
             threadCount: nil, cpuTimeSeconds: nil, diskReadBytes: nil,
-            diskWrittenBytes: nil, architecture: .native
+            diskWrittenBytes: nil, architecture: .native, startTimeSeconds: 1_700_000_000
+        )
+    }
+
+    private func row(_ pid: pid_t, startTime: Double, name: String = "p") -> ProcessRow {
+        ProcessRow(
+            pid: pid, name: name, userName: "u", cpuFraction: 0, memoryBytes: 0,
+            threadCount: nil, cpuTimeSeconds: nil, diskReadBytes: nil,
+            diskWrittenBytes: nil, architecture: .native, startTimeSeconds: startTime
         )
     }
 
@@ -146,5 +154,37 @@ struct ProcessTableTests {
         let rows = [row(1, cpu: 0.02)]
         let maximum = ProcessTable.maximum(of: \.cpuFraction, in: rows)
         #expect(abs((ProcessTable.heatFraction(0.02, maximum: maximum) ?? 0) - 1.0) < 1e-9)
+    }
+
+    // MARK: validSelection
+
+    @Test("a selection whose row is still present is preserved")
+    func presentSelectionIsPreserved() {
+        let rows = [row(100, startTime: 1_700_000_000), row(200, startTime: 1_700_000_500)]
+        let selection = ProcessIdentity(pid: 100, startTimeSeconds: 1_700_000_000)
+        #expect(ProcessTable.validSelection(selection, in: rows) == selection)
+    }
+
+    @Test("a recycled pid — same pid, different start time — is NOT preserved")
+    func recycledPidIsNotPreserved() {
+        // The weight-bearing case. pid 100 is still in the list, but it is a
+        // DIFFERENT process (a later start time), so the old selection must
+        // not silently transfer to it.
+        let rows = [row(100, startTime: 1_700_009_999)]
+        let selection = ProcessIdentity(pid: 100, startTimeSeconds: 1_700_000_000)
+        #expect(ProcessTable.validSelection(selection, in: rows) == nil)
+    }
+
+    @Test("a selection whose pid is gone entirely becomes nil")
+    func absentPidBecomesNil() {
+        let rows = [row(200, startTime: 1_700_000_500)]
+        let selection = ProcessIdentity(pid: 100, startTimeSeconds: 1_700_000_000)
+        #expect(ProcessTable.validSelection(selection, in: rows) == nil)
+    }
+
+    @Test("a nil selection stays nil")
+    func nilSelectionStaysNil() {
+        let rows = [row(100, startTime: 1_700_000_000)]
+        #expect(ProcessTable.validSelection(nil, in: rows) == nil)
     }
 }
