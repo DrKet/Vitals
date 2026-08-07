@@ -108,6 +108,34 @@ public final class MetricsStore {
         self.historyLimit = historyLimit
     }
 
+    /// The series kept sampling for the whole session, regardless of which
+    /// page is visible, so switching to their charts is instant instead of
+    /// refilling. Only the cheap 1 Hz chart series belong here.
+    ///
+    /// Excludes `.processes` (walks the whole process table — the expensive
+    /// series subscription-driven sampling exists to keep off an idle
+    /// machine), `.sensors` and `.battery` (5-second cadence, little to gain),
+    /// and `.storage` (no chart, and its live field never expires).
+    public static let keepWarmSeries: Set<SeriesKey> = [.cpu, .memory, .gpu, .network, .diskIO]
+
+    /// Subscribes to every series in `keepWarmSeries` and keeps them sampling
+    /// until cancelled. Call once from the app's root view; the subscriptions
+    /// then live for the whole session.
+    ///
+    /// Each child runs `stream(_:)`, which loops until its subscription ends,
+    /// so this never returns on its own — cancelling the caller cancels the
+    /// group, which tears every warm subscription down. Running alongside a
+    /// page's own `stream(_:)` for the same series is harmless: `apply` is
+    /// idempotent on the sample timestamp, so a tick fanned out to both
+    /// subscribers is stored once.
+    public func keepWarm() async {
+        await withTaskGroup(of: Void.self) { group in
+            for key in Self.keepWarmSeries {
+                group.addTask { await self.stream(key) }
+            }
+        }
+    }
+
     /// Subscribes to a series and republishes it as typed state until cancelled.
     ///
     /// Call from `.task {}`. Returns when the task is cancelled or the stream
