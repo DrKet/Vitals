@@ -110,6 +110,12 @@ public struct ProcessesPage: View {
     /// sorting by" are not the same tick.
     @State private var establishedDefaultOrder = false
 
+    /// The selected process, held by identity (pid + start time) so a recycled
+    /// pid never transfers the selection — see `ProcessTable.validSelection`.
+    /// The `Table` below is driven by a computed `Binding<pid_t?>`, not this
+    /// directly, so the guard is applied on every read.
+    @State private var selected: ProcessIdentity?
+
     public init(store: MetricsStore) {
         self.init(store: store, initialFilter: "")
     }
@@ -146,6 +152,19 @@ public struct ProcessesPage: View {
             of: { $0.memoryBytes.map(Double.init) }, in: rows
         )
 
+        // Reported selection is guarded on every read: the getter returns a
+        // pid only when a current row matches the stored identity, and the
+        // setter records the full identity of the clicked row. Built over
+        // `all` (unfiltered) so a selection the filter hides survives and
+        // reappears when the filter clears; `Table` renders `rows`, and a pid
+        // absent from the visible set simply shows no selection meanwhile.
+        let selection = Binding<pid_t?>(
+            get: { ProcessTable.validSelection(selected, in: all)?.pid },
+            set: { newValue in
+                selected = newValue.flatMap { pid in all.first { $0.pid == pid }?.identity }
+            }
+        )
+
         return VStack(alignment: .leading, spacing: Vitals.Metrics.tileSpacing) {
             header
             if Self.showsMeasuringNotice(for: store.processes) {
@@ -153,7 +172,7 @@ public struct ProcessesPage: View {
                     .font(Vitals.Typography.label)
                     .foregroundStyle(.secondary)
             }
-            content(rows: rows, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum)
+            content(rows: rows, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum, selection: selection)
         }
         .padding(Vitals.Metrics.contentPadding)
         .task { await store.stream(.processes) }
@@ -232,7 +251,8 @@ public struct ProcessesPage: View {
 
     @ViewBuilder
     private func content(
-        rows: [ProcessRow], cpuMaximum: Double?, memoryMaximum: Double?
+        rows: [ProcessRow], cpuMaximum: Double?, memoryMaximum: Double?,
+        selection: Binding<pid_t?>
     ) -> some View {
         if store.processes == nil {
             message("No process listing available.")
@@ -244,7 +264,7 @@ public struct ProcessesPage: View {
             // that blames a filter which was never applied.
             message("No process matches \u{201C}\(filter)\u{201D}.")
         } else {
-            table(rows: rows, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum)
+            table(rows: rows, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum, selection: selection)
         }
     }
 
@@ -258,9 +278,10 @@ public struct ProcessesPage: View {
     }
 
     private func table(
-        rows: [ProcessRow], cpuMaximum: Double?, memoryMaximum: Double?
+        rows: [ProcessRow], cpuMaximum: Double?, memoryMaximum: Double?,
+        selection: Binding<pid_t?>
     ) -> some View {
-        Table(rows, sortOrder: $sortOrder, columnCustomization: $columns) {
+        Table(rows, selection: selection, sortOrder: $sortOrder, columnCustomization: $columns) {
             TableColumn("Process", value: \.name) { row in
                 Text(row.name).lineLimit(1)
             }
