@@ -3,7 +3,7 @@
 A macOS system monitor. Live CPU, memory, GPU, storage and network readings, with
 per-subsystem detail pages. Native SwiftUI, no third-party dependencies.
 
-![The Vitals overview, showing live CPU, memory, GPU, storage and network tiles](docs/images/overview.png)
+![The Vitals overview: live tiles for CPU, memory, GPU, storage, network and battery, each with a value, a proportion bar and a sparkline](docs/images/overview.png)
 
 ## Download
 
@@ -83,25 +83,51 @@ swift test
 
 | Page | State |
 |---|---|
-| Overview | Live tiles for all five subsystems |
-| Processes | Sortable live table — CPU, memory, threads, user, PID, with heat shading |
+| Overview | Live tiles for every subsystem — value, proportion bar and sparkline |
+| Processes | Sortable live table — CPU, memory, threads, user, PID, with heat shading and row selection |
 | CPU | Per-cluster load, core grid, topology, cache, uptime |
 | Memory | Wired / App / Compressed / Cached breakdown, swap, pressure |
 | GPU | Renderer / Tiler utilisation, memory topology |
 | Storage | Read / write throughput, volume capacity, device name |
 | Network | Down / up throughput, active interfaces |
+| Sensors | Per-sensor temperatures, hottest sensor, fixed-scale thermometer |
+| Battery | Live power draw, charge state, health, cycle count, time remaining |
 
 Every hardware page has a live chart with a scrubbing crosshair that reads values
 back with their age, and a sticky *Full specifications* section.
 
-**Not built yet:** the Sensors page (temperatures, fans and power need a private
-framework and an empirical spike), desktop widgets, the menu-bar extra, a
-privileged helper for per-process GPU and SMART health, and the Startup /
-Services / Users / History pages. Those sidebar entries are visible but show a
-placeholder.
+## A closer look
 
-The Processes table is read-only for now — no context menu, no process tree, no
-inspector.
+Each hardware page leads with a live chart in its own colour — a stacked area, a
+throughput trace, a floating-scale thermometer, or a power curve — over a headline
+reading and a *Full specifications* drawer.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/cpu.png" alt="CPU page: per-cluster load as a two-band area chart with a core grid"><br><sub><b>CPU</b> — performance and efficiency clusters as stacked areas, with a per-core grid.</sub></td>
+    <td width="50%"><img src="docs/images/memory.png" alt="Memory page: Wired, App, Compressed and Cached as a four-band stacked area"><br><sub><b>Memory</b> — Wired / App / Compressed / Cached as a four-band stack.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/gpu.png" alt="GPU page: renderer and tiler utilisation as a two-band area chart"><br><sub><b>GPU</b> — renderer and tiler utilisation, with unified-memory topology.</sub></td>
+    <td><img src="docs/images/sensors.png" alt="Sensors page: die temperatures on a floating scale with a fixed-scale thermometer strip"><br><sub><b>Sensors</b> — die temperatures on a floating scale, plus a fixed-scale thermometer.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/storage.png" alt="Storage page: read and write throughput with a volume capacity bar"><br><sub><b>Storage</b> — read / write throughput and per-volume capacity.</sub></td>
+    <td><img src="docs/images/network.png" alt="Network page: down and up throughput with active interface details"><br><sub><b>Network</b> — down / up throughput across active interfaces.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/battery.png" alt="Battery page: power draw as an area chart with a charge level bar and health stats"><br><sub><b>Battery</b> — live power draw, a charge-coloured level bar, health and cycle count.</sub></td>
+    <td></td>
+  </tr>
+</table>
+
+**Not built yet:** fan speeds and per-component power (which need a separate
+AppleSMC / IOReport spike), desktop widgets, the menu-bar extra, a privileged
+helper for per-process GPU and SMART health, and the Startup / Services / Users /
+History pages. Those sidebar entries are visible but show a placeholder.
+
+The Processes table's row selection is in place, but its actions are not — no
+context menu, no process tree, no inspector yet.
 
 ## The rule the whole thing is built around
 
