@@ -15,7 +15,7 @@ struct ProcessesPageTests {
             pid: pid, parentPID: 1, name: name, userID: 501,
             memoryFootprintBytes: UInt64(pid) * 1_000_000, cpuTimeSeconds: cpuTime,
             threadCount: 3, diskBytesRead: 512, diskBytesWritten: 256,
-            architecture: .native
+            architecture: .native, startTimeSeconds: 1_700_000_000
         )
     }
 

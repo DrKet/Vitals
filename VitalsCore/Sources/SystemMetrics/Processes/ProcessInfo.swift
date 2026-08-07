@@ -33,11 +33,18 @@ public struct ProcessSnapshot: Sendable, Equatable {
     public let diskBytesWritten: UInt64?
     public let architecture: ProcessArchitecture
 
+    /// When the process started, in seconds since the Unix epoch
+    /// (`p_starttime`). Part of the process's identity: a pid is recycled, so
+    /// (pid, startTimeSeconds) is what tells one process from a later one that
+    /// inherited its pid. Never displayed — see `ProcessIdentity`.
+    public let startTimeSeconds: Double
+
     public init(
         pid: pid_t, parentPID: pid_t, name: String, userID: uid_t,
         memoryFootprintBytes: UInt64?, cpuTimeSeconds: Double?, threadCount: Int?,
         diskBytesRead: UInt64?, diskBytesWritten: UInt64?,
-        architecture: ProcessArchitecture
+        architecture: ProcessArchitecture,
+        startTimeSeconds: Double
     ) {
         self.pid = pid
         self.parentPID = parentPID
@@ -49,6 +56,7 @@ public struct ProcessSnapshot: Sendable, Equatable {
         self.diskBytesRead = diskBytesRead
         self.diskBytesWritten = diskBytesWritten
         self.architecture = architecture
+        self.startTimeSeconds = startTimeSeconds
     }
 }
 

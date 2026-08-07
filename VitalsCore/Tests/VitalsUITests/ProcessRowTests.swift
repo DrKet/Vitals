@@ -79,7 +79,8 @@ struct ProcessRowTests {
         let snapshot = ProcessSnapshot(
             pid: 501, parentPID: 1, name: "Xcode", userID: 501,
             memoryFootprintBytes: 2_000_000_000, cpuTimeSeconds: 42.0, threadCount: 30,
-            diskBytesRead: 4096, diskBytesWritten: 8192, architecture: .native
+            diskBytesRead: 4096, diskBytesWritten: 8192, architecture: .native,
+            startTimeSeconds: 1_700_000_000
         )
         let row = ProcessRow(snapshot: snapshot, cpuFraction: 1.5, userName: "george")
 
@@ -96,7 +97,8 @@ struct ProcessRowTests {
         let snapshot = ProcessSnapshot(
             pid: 7, parentPID: 1, name: "kernel_task", userID: 0,
             memoryFootprintBytes: nil, cpuTimeSeconds: nil, threadCount: nil,
-            diskBytesRead: nil, diskBytesWritten: nil, architecture: .native
+            diskBytesRead: nil, diskBytesWritten: nil, architecture: .native,
+            startTimeSeconds: 1_700_000_000
         )
         let row = ProcessRow(snapshot: snapshot, cpuFraction: nil, userName: "root")
         #expect(row.cpuFraction == nil)

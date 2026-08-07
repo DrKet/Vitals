@@ -80,4 +80,23 @@ public enum ProcessTable {
         guard let value, let maximum, maximum > 0 else { return nil }
         return min(max(value / maximum, 0), 1)
     }
+
+    /// The selection to report, given a stored identity and the current rows.
+    ///
+    /// Returns the stored `selection` only when a current row has the same
+    /// identity — same pid AND same start time. A recycled pid (same pid, new
+    /// start time) does not match, so the selection is dropped rather than
+    /// transferred to the new process; a pid that has left the sample entirely
+    /// likewise drops. Compared through `ProcessIdentity`'s synthesized
+    /// equality, never a hand-written float comparison.
+    ///
+    /// Callers pass the UNFILTERED rows: a selection hidden by the filter is
+    /// still present in the sample and must survive, reappearing when the
+    /// filter clears.
+    public static func validSelection(
+        _ selection: ProcessIdentity?, in rows: [ProcessRow]
+    ) -> ProcessIdentity? {
+        guard let selection else { return nil }
+        return rows.contains { $0.identity == selection } ? selection : nil
+    }
 }

@@ -25,6 +25,9 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
     public let diskReadBytes: UInt64?
     public let diskWrittenBytes: UInt64?
     public let architecture: ProcessArchitecture
+    /// The row's process start time, carried from `ProcessSnapshot` so the
+    /// selection can build a `ProcessIdentity` (see that type).
+    public let startTimeSeconds: Double
 
     public init(
         pid: pid_t,
@@ -36,7 +39,8 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
         cpuTimeSeconds: Double?,
         diskReadBytes: UInt64?,
         diskWrittenBytes: UInt64?,
-        architecture: ProcessArchitecture
+        architecture: ProcessArchitecture,
+        startTimeSeconds: Double
     ) {
         self.pid = pid
         self.name = name
@@ -48,6 +52,7 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
         self.diskReadBytes = diskReadBytes
         self.diskWrittenBytes = diskWrittenBytes
         self.architecture = architecture
+        self.startTimeSeconds = startTimeSeconds
     }
 
     public init(snapshot: ProcessSnapshot, cpuFraction: Double?, userName: String) {
@@ -61,8 +66,14 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
             cpuTimeSeconds: snapshot.cpuTimeSeconds,
             diskReadBytes: snapshot.diskBytesRead,
             diskWrittenBytes: snapshot.diskBytesWritten,
-            architecture: snapshot.architecture
+            architecture: snapshot.architecture,
+            startTimeSeconds: snapshot.startTimeSeconds
         )
+    }
+
+    /// This row's process identity, for the selection binding.
+    public var identity: ProcessIdentity {
+        ProcessIdentity(pid: pid, startTimeSeconds: startTimeSeconds)
     }
 
     // MARK: Display

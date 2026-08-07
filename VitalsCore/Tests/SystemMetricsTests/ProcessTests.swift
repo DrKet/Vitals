@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import Testing
 @testable import SystemMetrics
 
@@ -9,7 +10,8 @@ struct ProcessTests {
         ProcessSnapshot(
             pid: pid, parentPID: 1, name: "test", userID: 501,
             memoryFootprintBytes: nil, cpuTimeSeconds: cpuTime, threadCount: nil,
-            diskBytesRead: nil, diskBytesWritten: nil, architecture: .native
+            diskBytesRead: nil, diskBytesWritten: nil, architecture: .native,
+            startTimeSeconds: 1_700_000_000
         )
     }
 
@@ -130,5 +132,17 @@ struct ProcessTests {
         let processes = ProcessSampler.snapshot()
         #expect(processes.count > 50)
         #expect(processes.contains { $0.userID == 0 })
+    }
+
+    @Test("the sampler reads a real start time for the running process")
+    func startTimeIsPopulatedForTheCurrentProcess() throws {
+        // getpid() — the test runner itself — is always present in KERN_PROC_ALL
+        // and readable (we own it), so its snapshot is a deterministic anchor.
+        let mine = ProcessSampler.snapshot().first { $0.pid == getpid() }
+        let startTime = try #require(mine).startTimeSeconds
+        // A real Unix start time is on the order of 1.7e9; a stubbed or zeroed
+        // field fails this, and it must not be in the future.
+        #expect(startTime > 1_000_000_000)
+        #expect(startTime <= Date().timeIntervalSince1970 + 1)
     }
 }
