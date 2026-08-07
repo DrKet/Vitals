@@ -371,7 +371,8 @@ struct MetricsStoreTests {
         let snapshot = ProcessSnapshot(
             pid: 42, parentPID: 1, name: "loginwindow", userID: 501,
             memoryFootprintBytes: 12_000_000, cpuTimeSeconds: 3.5, threadCount: 4,
-            diskBytesRead: 1024, diskBytesWritten: 2048, architecture: .native
+            diskBytesRead: 1024, diskBytesWritten: 2048, architecture: .native,
+            startTimeSeconds: 1_700_000_000
         )
         let sample = ProcessSeriesSample(processes: [snapshot], cpuUsage: [42: 0.25])
         await engine.register(AnySampler { sample }, for: .processes, cadence: .slow)
@@ -410,7 +411,8 @@ struct MetricsStoreTests {
         let snapshot = ProcessSnapshot(
             pid: 42, parentPID: 1, name: "loginwindow", userID: 501,
             memoryFootprintBytes: 12_000_000, cpuTimeSeconds: 3.5, threadCount: 4,
-            diskBytesRead: 1024, diskBytesWritten: 2048, architecture: .native
+            diskBytesRead: 1024, diskBytesWritten: 2048, architecture: .native,
+            startTimeSeconds: 1_700_000_000
         )
         let sample = ProcessSeriesSample(processes: [snapshot], cpuUsage: [42: 0.25])
         await engine.register(AnySampler { sample }, for: .processes, cadence: .slow)

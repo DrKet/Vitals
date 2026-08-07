@@ -85,7 +85,11 @@ public enum ProcessSampler {
             threadCount: taskResult > 0 ? Int(taskInfo.pti_threadnum) : nil,
             diskBytesRead: usageResult == 0 ? usage.ri_diskio_bytesread : nil,
             diskBytesWritten: usageResult == 0 ? usage.ri_diskio_byteswritten : nil,
-            architecture: architecture(of: process)
+            architecture: architecture(of: process),
+            // p_starttime is a timeval (integer seconds + microseconds); this
+            // is the process's identity anchor, not a displayed value.
+            startTimeSeconds: Double(process.kp_proc.p_starttime.tv_sec)
+                + Double(process.kp_proc.p_starttime.tv_usec) / 1_000_000
         )
     }
 

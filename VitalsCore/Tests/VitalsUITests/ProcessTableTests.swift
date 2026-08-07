@@ -23,7 +23,8 @@ struct ProcessTableTests {
         let snapshot = ProcessSnapshot(
             pid: 9, parentPID: 1, name: "syslogd", userID: 0,
             memoryFootprintBytes: 1000, cpuTimeSeconds: nil, threadCount: 2,
-            diskBytesRead: nil, diskBytesWritten: nil, architecture: .native
+            diskBytesRead: nil, diskBytesWritten: nil, architecture: .native,
+            startTimeSeconds: 1_700_000_000
         )
         let sample = ProcessSeriesSample(processes: [snapshot], cpuUsage: [:])
         let rows = ProcessTable.rows(from: sample, resolver: UserNameResolver())
