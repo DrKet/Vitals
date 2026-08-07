@@ -513,6 +513,40 @@ struct MetricsStoreTests {
         #expect(!store.batteryHistory.isEmpty)
     }
 
+    @Test("the keep-warm set holds the cheap fast series and excludes the costly ones")
+    func keepWarmSetExcludesCostlySeries() {
+        let warm = MetricsStore.keepWarmSeries
+        #expect(warm == [.cpu, .memory, .gpu, .network, .diskIO])
+        // The load-bearing exclusions — the whole point is to never warm these:
+        // .processes walks the process table (the expensive series the
+        // subscription-driven design keeps off an idle machine), .sensors and
+        // .battery are the 5s slow cadence, and .storage has no chart to fill.
+        #expect(!warm.contains(.processes))
+        #expect(!warm.contains(.sensors))
+        #expect(!warm.contains(.battery))
+        #expect(!warm.contains(.storage))
+    }
+
+    @Test("keepWarm keeps the whole warm set sampling with no page subscribed")
+    func keepWarmSustainsSamplingWithNoPage() async throws {
+        let engine = MetricsEngine(intervalOverride: .milliseconds(5))
+        // Register a sampler for each warm series so a subscription starts real
+        // sampling. The payload type is irrelevant here — this test asserts the
+        // engine is actively sampling (activeSeries), not what the store parses.
+        for key in MetricsStore.keepWarmSeries {
+            await engine.register(AnySampler { 0 }, for: key, cadence: .fast)
+        }
+        let store = MetricsStore(engine: engine, profile: nil)
+
+        // No page is subscribed; keepWarm alone must drive the engine.
+        let task = Task { await store.keepWarm() }
+        try await waitUntilAsync {
+            await engine.activeSeries.isSuperset(of: MetricsStore.keepWarmSeries)
+        }
+        #expect(await engine.activeSeries.isSuperset(of: MetricsStore.keepWarmSeries))
+        task.cancel()
+    }
+
     @Test("the staleness gate reads the engine's real interval, not one derived from the key")
     func stalenessUsesTheEnginesInterval() async {
         // The cadence for a key lives in StandardSamplers, and intervalOverride

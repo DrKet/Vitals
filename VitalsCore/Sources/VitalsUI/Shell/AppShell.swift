@@ -29,6 +29,12 @@ public struct AppShell: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(Vitals.Metrics.contentPadding)
         }
+        // Keep the cheap fast chart series sampling for the whole session so
+        // switching to a hardware page shows a full graph immediately. The
+        // root view lives as long as the window, so this subscription does
+        // too; a page's own `.task { stream(_:) }` running alongside it is
+        // deduplicated by `MetricsStore.apply`. See `keepWarm()`.
+        .task { await store.keepWarm() }
     }
 
     @ViewBuilder
