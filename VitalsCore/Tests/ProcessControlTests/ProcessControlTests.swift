@@ -66,7 +66,10 @@ struct ProcessControlTests {
         #expect(throws: ProcessControlError.exited) {
             try ProcessControl.perform(.forceQuit, on: stale)
         }
-        #expect(child.isRunning)
+        // Not `child.isRunning`: Foundation.Process's isRunning updates
+        // asynchronously and can still read true (or go stale) right after
+        // the call returns. Ask the kernel directly instead.
+        #expect(ProcessSampler.identity(of: real.pid) == real)
     }
 
     @Test("a process that has already exited reports exited")
@@ -87,6 +90,14 @@ struct ProcessControlTests {
 
         #expect(throws: ProcessControlError.notPermitted) {
             try ProcessControl.perform(.quit, on: launchd)
+        }
+    }
+
+    @Test("pid 0 is refused before anything is signalled")
+    func pidZeroIsRefused() throws {
+        let kernelTask = try #require(ProcessSampler.identity(of: 0))
+        #expect(throws: ProcessControlError.notSignallable) {
+            try ProcessControl.perform(.forceQuit, on: kernelTask)
         }
     }
 }
