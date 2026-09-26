@@ -57,7 +57,12 @@ public struct MetricTile: View {
                         series: series,
                         style: .area(stacked: series.count > 1),
                         colors: [accent],
-                        showsAxisMaximum: false
+                        showsAxisMaximum: false,
+                        // On, like the hardware pages: the load-reactive bloom
+                        // carries across the Overview too. (The axis *label*
+                        // still opts out above — that restates the tile's own
+                        // headline; the glow does not.)
+                        glow: Vitals.Chart.glow
                     )
                     .frame(maxHeight: .infinity)
                 } else {

@@ -95,6 +95,51 @@ public enum Vitals {
         public static let overviewTileMaxHeight: CGFloat = 520
     }
 
+    public enum Chart {
+        /// The load-reactive bloom drawn behind a chart's stroke.
+        ///
+        /// A blurred, additively-blended copy of the line sits *behind* the
+        /// crisp 2pt stroke — so the reading stays sharp — with its weight tied
+        /// to how high the line sits on the scale: an idle trace hugging the
+        /// baseline stays flat, and the busy stretches bloom on their own. The
+        /// glow is purely decorative: every value the reader takes off the
+        /// chart comes from the crisp stroke and the fill, never from the
+        /// halo, so it is always safe to dial to zero.
+        ///
+        /// A struct rather than the loose statics `Metrics` uses, so a test can
+        /// build a variant (a disabled config, an exaggerated one) and pin the
+        /// ramp — see `MetricChart.glowLevel(atHeight:config:)`, tested the same
+        /// way `fillOpacity` is, because render probes cannot read the glow's
+        /// weight off an unpremultiplied PNG.
+        public struct Glow: Sendable {
+            /// Master switch. `false` restores the exact pre-glow render — no
+            /// extra layer is drawn at all, not merely one at zero opacity.
+            public let isEnabled: Bool
+            /// Blur radius (pt) the glow reaches at the top of the scale. The
+            /// idle end of the ramp collapses toward the stroke's own width, so
+            /// a low line reads as a faint sheen rather than a halo.
+            public let maxRadius: CGFloat
+            /// The extra opacity the glow's stroke carries at the top of the
+            /// scale, added over the opaque crisp stroke beneath it.
+            public let maxOpacity: Double
+            /// Normalised height (0…1) below which no glow draws at all, so the
+            /// idle baseline is genuinely flat and not faintly lit. Mirrors the
+            /// glow study's idle floor.
+            public let floor: Double
+
+            public init(isEnabled: Bool, maxRadius: CGFloat, maxOpacity: Double, floor: Double) {
+                self.isEnabled = isEnabled
+                self.maxRadius = maxRadius
+                self.maxOpacity = maxOpacity
+                self.floor = floor
+            }
+        }
+
+        /// The house pick from the glow study: the "strong" bloom, reactive to
+        /// load. One edit here restyles every chart in the app.
+        public static let glow = Glow(isEnabled: true, maxRadius: 12, maxOpacity: 0.60, floor: 0.12)
+    }
+
     public enum Typography {
         /// Large numeric readouts. Monospaced digits so a changing value does not
         /// jitter its own layout — the single most important typographic choice
