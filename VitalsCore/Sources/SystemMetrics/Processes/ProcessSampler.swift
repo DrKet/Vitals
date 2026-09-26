@@ -86,11 +86,57 @@ public enum ProcessSampler {
             diskBytesRead: usageResult == 0 ? usage.ri_diskio_bytesread : nil,
             diskBytesWritten: usageResult == 0 ? usage.ri_diskio_byteswritten : nil,
             architecture: architecture(of: process),
-            // p_starttime is a timeval (integer seconds + microseconds); this
-            // is the process's identity anchor, not a displayed value.
-            startTimeSeconds: Double(process.kp_proc.p_starttime.tv_sec)
-                + Double(process.kp_proc.p_starttime.tv_usec) / 1_000_000
+            startTimeSeconds: startTimeSeconds(of: process)
         )
+    }
+
+    /// The identity of one process, read afresh from the kernel — `nil` when
+    /// no process has that pid.
+    ///
+    /// This is what `ProcessControl` checks immediately before signalling, so
+    /// it must produce exactly what `snapshot()` produced for the same
+    /// process. Both go through `startTimeSeconds(of:)`; never convert
+    /// `p_starttime` anywhere else.
+    public static func identity(of pid: pid_t) -> ProcessIdentity? {
+        guard let process = kernelProcess(pid: pid) else { return nil }
+        return ProcessIdentity(pid: pid, startTimeSeconds: startTimeSeconds(of: process))
+    }
+
+    /// The executable's path (`proc_pidpath`), or `nil` when it cannot be
+    /// read — the process exited, or it belongs to another user and the
+    /// kernel declines to say.
+    public static func executablePath(of pid: pid_t) -> String? {
+        // `PROC_PIDPATHINFO_MAXSIZE` (from `sys/proc_info.h`) is unavailable in
+        // this SDK ("structure not supported"), so its own definition —
+        // `4 * MAXPATHLEN` — is inlined here instead.
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    /// One process via `KERN_PROC_PID`. For a pid with no process the call
+    /// still succeeds but reports a zero length, which is what the length
+    /// check catches.
+    private static func kernelProcess(pid: pid_t) -> kinfo_proc? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var process = kinfo_proc()
+        var length = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, u_int(mib.count), &process, &length, nil, 0) == 0,
+              length == MemoryLayout<kinfo_proc>.stride else { return nil }
+        return process
+    }
+
+    /// `p_starttime` (a timeval: integer seconds + microseconds) as seconds
+    /// since the epoch. The process's identity anchor, not a displayed value.
+    ///
+    /// The ONE place this conversion is written. `ProcessIdentity` compares
+    /// the result exactly, so a second hand-written copy that rounded even
+    /// slightly differently could make a live process fail its own identity
+    /// check.
+    static func startTimeSeconds(of process: kinfo_proc) -> Double {
+        Double(process.kp_proc.p_starttime.tv_sec)
+            + Double(process.kp_proc.p_starttime.tv_usec) / 1_000_000
     }
 
     /// `P_TRANSLATED` (from `sys/proc.h`) marks a process running under Rosetta.

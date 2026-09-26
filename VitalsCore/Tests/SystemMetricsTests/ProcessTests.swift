@@ -134,6 +134,55 @@ struct ProcessTests {
         #expect(processes.contains { $0.userID == 0 })
     }
 
+    // MARK: Single-process reads
+
+    /// A throwaway child this test owns outright. Every test that needs a live
+    /// process spawns its own — nothing here ever touches a process it did
+    /// not start.
+    private static func spawnSleep() throws -> Foundation.Process {
+        let child = Foundation.Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["60"]
+        try child.run()
+        return child
+    }
+
+    private static func reap(_ child: Foundation.Process) {
+        if child.isRunning { child.terminate() }
+        child.waitUntilExit()
+    }
+
+    /// The test that catches the two start-time conversions drifting apart.
+    /// `ProcessIdentity` compares start times exactly, which is only sound if
+    /// the sampler and the single-pid re-read run identical arithmetic.
+    @Test("a single-pid identity read equals the identity the full sampler reports")
+    func singlePidIdentityMatchesSampler() throws {
+        let child = try Self.spawnSleep()
+        defer { Self.reap(child) }
+
+        let sampled = try #require(
+            ProcessSampler.snapshot().first { $0.pid == child.processIdentifier }
+        )
+        #expect(ProcessSampler.identity(of: child.processIdentifier) == sampled.identity)
+    }
+
+    @Test("there is no identity for a process that has exited")
+    func noIdentityAfterExit() throws {
+        let child = try Self.spawnSleep()
+        let pid = child.processIdentifier
+        Self.reap(child)
+
+        #expect(ProcessSampler.identity(of: pid) == nil)
+    }
+
+    @Test("the executable path of a spawned sleep is /bin/sleep")
+    func executablePathOfChild() throws {
+        let child = try Self.spawnSleep()
+        defer { Self.reap(child) }
+
+        #expect(ProcessSampler.executablePath(of: child.processIdentifier) == "/bin/sleep")
+    }
+
     @Test("the sampler reads a real start time for the running process")
     func startTimeIsPopulatedForTheCurrentProcess() throws {
         // getpid() — the test runner itself — is always present in KERN_PROC_ALL

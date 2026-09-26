@@ -1,5 +1,6 @@
 import MetricsEngine
 import SwiftUI
+import SystemMetrics
 
 /// Adapts an optional numeric field into something `Comparable`, purely so
 /// `TableColumn(_:value:content:)` — which requires `V: Comparable` to

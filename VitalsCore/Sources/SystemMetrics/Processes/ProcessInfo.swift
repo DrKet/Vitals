@@ -60,6 +60,13 @@ public struct ProcessSnapshot: Sendable, Equatable {
     }
 }
 
+extension ProcessSnapshot {
+    /// This process's identity — see `ProcessIdentity`.
+    public var identity: ProcessIdentity {
+        ProcessIdentity(pid: pid, startTimeSeconds: startTimeSeconds)
+    }
+}
+
 /// Converts cumulative per-process CPU time into a utilisation fraction.
 /// `1.0` means one core fully saturated; a process on four cores reports `4.0`.
 public struct ProcessCPUTracker: Sendable {
