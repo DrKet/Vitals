@@ -408,30 +408,73 @@ public enum ChartGeometry {
     public static func smoothPath(through points: [CGPoint]) -> Path {
         guard points.count > 1 else { return Path() }
 
-        let tension: CGFloat = 0.25
         var path = Path()
         path.move(to: points[0])
-
         for index in 0..<(points.count - 1) {
-            let p0 = points[max(index - 1, 0)]
-            let p1 = points[index]
-            let p2 = points[index + 1]
-            let p3 = points[min(index + 2, points.count - 1)]
-
-            let segmentMinY = min(p1.y, p2.y)
-            let segmentMaxY = max(p1.y, p2.y)
-
-            let control1 = CGPoint(
-                x: p1.x + (p2.x - p0.x) * tension,
-                y: min(max(p1.y + (p2.y - p0.y) * tension, segmentMinY), segmentMaxY)
-            )
-            let control2 = CGPoint(
-                x: p2.x - (p3.x - p1.x) * tension,
-                y: min(max(p2.y - (p3.y - p1.y) * tension, segmentMinY), segmentMaxY)
-            )
-            path.addCurve(to: p2, control1: control1, control2: control2)
+            let controls = smoothingControls(through: points, at: index)
+            path.addCurve(to: points[index + 1], control1: controls.control1, control2: controls.control2)
         }
         return path
+    }
+
+    /// The tension `smoothPath` and `smoothSegments` share. Below the classic
+    /// 0.5 so the curve stays close to its data — see `smoothPath`.
+    private static let smoothingTension: CGFloat = 0.25
+
+    /// The two clamped control points for the Bézier from `points[index]` to
+    /// `points[index + 1]`.
+    ///
+    /// The one place the curve's shape is defined, so the continuous
+    /// `smoothPath` and the per-segment `smoothSegments` can never draw
+    /// different curves through the same samples. The clamp keeping the curve
+    /// inside its segment's y-range is described in full on `smoothPath`.
+    private static func smoothingControls(
+        through points: [CGPoint],
+        at index: Int
+    ) -> (control1: CGPoint, control2: CGPoint) {
+        let p0 = points[max(index - 1, 0)]
+        let p1 = points[index]
+        let p2 = points[index + 1]
+        let p3 = points[min(index + 2, points.count - 1)]
+
+        let segmentMinY = min(p1.y, p2.y)
+        let segmentMaxY = max(p1.y, p2.y)
+
+        let control1 = CGPoint(
+            x: p1.x + (p2.x - p0.x) * smoothingTension,
+            y: min(max(p1.y + (p2.y - p0.y) * smoothingTension, segmentMinY), segmentMaxY)
+        )
+        let control2 = CGPoint(
+            x: p2.x - (p3.x - p1.x) * smoothingTension,
+            y: min(max(p2.y - (p3.y - p1.y) * smoothingTension, segmentMinY), segmentMaxY)
+        )
+        return (control1, control2)
+    }
+
+    /// The same curve `smoothPath` draws, split into one path per adjacent
+    /// sample pair and each tagged with the two points it spans.
+    ///
+    /// `smoothPath` is exactly these concatenated — they share
+    /// `smoothingControls`, so the segments trace the crisp stroke pixel for
+    /// pixel. Kept separate only so a caller can stroke each with its own
+    /// styling without re-deriving the geometry: today that is the
+    /// load-reactive glow (`MetricChart.drawGlow`), which needs a per-segment
+    /// height to know how hard to bloom. A single continuous `smoothPath`
+    /// cannot carry a different weight along its length; a set of segments can.
+    public static func smoothSegments(
+        through points: [CGPoint]
+    ) -> [(path: Path, from: CGPoint, to: CGPoint)] {
+        guard points.count > 1 else { return [] }
+
+        return (0..<(points.count - 1)).map { index in
+            let from = points[index]
+            let to = points[index + 1]
+            let controls = smoothingControls(through: points, at: index)
+            var path = Path()
+            path.move(to: from)
+            path.addCurve(to: to, control1: controls.control1, control2: controls.control2)
+            return (path, from, to)
+        }
     }
 }
 

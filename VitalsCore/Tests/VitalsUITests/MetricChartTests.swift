@@ -301,6 +301,60 @@ struct MetricChartTests {
         #expect(try regionHasSaturatedColor(in: rendered, region: beneathTheTopCurve))
     }
 
+    // MARK: Load-reactive glow
+
+    /// The glow ramp is tested directly, not through a render, for the same
+    /// reason `fillOpacity` is: `renderPNG` writes unpremultiplied PNGs, so a
+    /// probe cannot distinguish a faint bloom from a heavy one. This pins the
+    /// weight the render can only prove was drawn at all.
+    @Test("glow weight rises with the line's height and is off below the floor")
+    func glowRampFollowsHeight() {
+        let config = Vitals.Chart.Glow(isEnabled: true, maxRadius: 10, maxOpacity: 0.55, floor: 0.12)
+
+        // At and below the floor the glow is genuinely off, so an idle
+        // baseline reads as a flat line rather than a faintly lit one.
+        #expect(MetricChart.glowLevel(atHeight: 0.0, config: config).opacity == 0)
+        #expect(MetricChart.glowLevel(atHeight: config.floor, config: config).opacity == 0)
+
+        // The top of the scale reaches the configured peak on both axes.
+        let peak = MetricChart.glowLevel(atHeight: 1.0, config: config)
+        #expect(abs(peak.opacity - config.maxOpacity) < 1e-9)
+        #expect(abs(peak.radius - config.maxRadius) < 1e-9)
+
+        // And it is monotonic in between — a higher line never glows less.
+        let low = MetricChart.glowLevel(atHeight: 0.4, config: config)
+        let high = MetricChart.glowLevel(atHeight: 0.8, config: config)
+        #expect(low.opacity > 0)
+        #expect(high.opacity > low.opacity)
+        #expect(high.radius > low.radius)
+    }
+
+    /// The master switch means *no layer*, not a layer at zero opacity — a
+    /// disabled config must restore the exact pre-glow render.
+    @Test("a disabled glow config produces no bloom at any height")
+    func disabledGlowIsInert() {
+        let off = Vitals.Chart.Glow(isEnabled: false, maxRadius: 10, maxOpacity: 0.55, floor: 0.12)
+        #expect(MetricChart.glowLevel(atHeight: 1.0, config: off).opacity == 0)
+        #expect(MetricChart.glowLevel(atHeight: 0.5, config: off).opacity == 0)
+    }
+
+    /// A render smoke test: the glow path draws without crashing and still
+    /// produces a chart. It cannot assert the glow's *weight* (see the ramp
+    /// test above), only that enabling it did not blank or break the render.
+    @Test("a chart renders with the reactive glow drawn behind its stroke")
+    func chartRendersWithGlow() throws {
+        let chart = MetricChart(
+            series: [ChartSeries(name: "CPU", values: Self.wave(60, phase: 0, scale: 0.9))],
+            style: .area(stacked: false),
+            colors: [Vitals.Palette.cpu],
+            showsAxisMaximum: true
+        )
+        let rendered = try renderPNG(chart, size: CGSize(width: 600, height: 132), named: "chart-glow")
+        // A tall wave (scale 0.9) keeps its crest in the upper third, where the
+        // glow is brightest — so this upper strip must carry content.
+        #expect(try regionHasContent(in: rendered, region: CGRect(x: 0, y: 0, width: 600, height: 44)))
+    }
+
     @Test("a temperature chart labels both ends of its scale")
     func temperatureChartLabelsBothEnds() throws {
         let series = [ChartSeries(name: "Die", values: [36.69, 38.82], unit: .temperature)]

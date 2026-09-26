@@ -227,7 +227,14 @@ struct OverviewPageTests {
         networkTask.cancel()
 
         let rendered = try renderPNG(
-            OverviewPage(store: store),
+            // Glow off for this render only: the tiles' load-reactive bloom
+            // paints saturated colour into the same chart-top-leading corner
+            // this test probes for the axis-max *label*, which would confound
+            // the label-absence check. Disabling it here isolates the label —
+            // the thing this test is actually about — the same way the harness
+            // disables glass. Production keeps the glow on (see `MetricTile`).
+            OverviewPage(store: store)
+                .environment(\.vitalsGlowEnabled, false),
             size: CGSize(width: 1320, height: 760),
             named: "overview-page-with-data"
         )

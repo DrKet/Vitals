@@ -1,6 +1,27 @@
 import Foundation
 import SwiftUI
 
+private struct VitalsGlowEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// A global override for the chart glow, sitting on top of each chart's own
+    /// `Vitals.Chart.Glow` config.
+    ///
+    /// True everywhere in the running app. It exists for the offscreen render
+    /// harness, which sets it false when a test needs to probe a chart's stroke
+    /// or a label in isolation — the glow's additive bloom paints saturated
+    /// colour into a chart's top-leading corner exactly where the Overview
+    /// tiles' axis-label-absence test looks, and this lets that one render opt
+    /// the bloom out without disabling it in production. Mirrors
+    /// `vitalsGlassEnabled`, which exists for the same reason.
+    public var vitalsGlowEnabled: Bool {
+        get { self[VitalsGlowEnabledKey.self] }
+        set { self[VitalsGlowEnabledKey.self] = newValue }
+    }
+}
+
 public enum ChartStyle: Sendable, Equatable {
     /// Smoothed gradient bands. The house style.
     case area(stacked: Bool)
@@ -30,6 +51,7 @@ public struct MetricChart: View {
     private let style: ChartStyle
     private let colors: [Color]
     private let showsAxisMaximum: Bool
+    private let glow: Vitals.Chart.Glow
 
     /// - Parameter series: **Order is load-bearing.** In stacked area mode the
     ///   first series is the base band and every later one accumulates on top of
@@ -48,14 +70,28 @@ public struct MetricChart: View {
     ///   latter, which is exactly the bug a defaulted parameter would let
     ///   happen again the next time a new embedder shows up. Requiring every
     ///   call site to choose is what stops that.
-    public init(series: [ChartSeries], style: ChartStyle, colors: [Color], showsAxisMaximum: Bool) {
+    /// - Parameter glow: the load-reactive bloom behind the stroke. Unlike
+    ///   `showsAxisMaximum`, this *does* carry a default — the glow is purely
+    ///   decorative (see `Vitals.Chart.Glow`), so a new embedder that inherits
+    ///   it gets a harmless flourish, not the silent correctness bug a
+    ///   defaulted `showsAxisMaximum` would reintroduce. Every chart in the app,
+    ///   Overview tiles included, draws the house `Vitals.Chart.glow`.
+    public init(
+        series: [ChartSeries],
+        style: ChartStyle,
+        colors: [Color],
+        showsAxisMaximum: Bool,
+        glow: Vitals.Chart.Glow = Vitals.Chart.glow
+    ) {
         self.series = series
         self.style = style
         self.colors = colors
         self.showsAxisMaximum = showsAxisMaximum
+        self.glow = glow
     }
 
     @State private var hoverX: CGFloat?
+    @Environment(\.vitalsGlowEnabled) private var glowEnabled
 
     /// The stroke width `drawAreas` paints a band's boundary line with.
     /// Shared with `ChartGeometry.headroom` so the top margin it reserves is
@@ -306,6 +342,28 @@ public struct MetricChart: View {
         stacked || bandCount < 2 ? 0.45 : 0.15
     }
 
+    /// The blur radius and stroke opacity the glow draws with for a stretch of
+    /// line sitting at normalised `height` (0 at the baseline, 1 at the top of
+    /// the scale). The load-reactive ramp: idle traces stay flat, busy ones
+    /// bloom.
+    ///
+    /// A pure function, and tested as one — `renderPNG` writes unpremultiplied
+    /// PNGs, so a probe cannot tell a faint glow from a heavy one (the same
+    /// reason `fillOpacity` is tested directly rather than through a render).
+    /// An opacity of `0` is the caller's signal to skip the layer entirely.
+    ///
+    /// Below `config.floor` the glow is off, not merely dim: an idle baseline
+    /// should read as a flat line, not a faintly lit one. Above it, opacity
+    /// eases in as height² while the radius grows linearly from the stroke's
+    /// own width — so the bloom spreads a little before it brightens, which
+    /// reads as a glow rather than a step.
+    static func glowLevel(atHeight height: Double, config: Vitals.Chart.Glow) -> (radius: CGFloat, opacity: Double) {
+        guard config.isEnabled, config.floor < 1, height > config.floor else { return (0, 0) }
+        let t = min(max((height - config.floor) / (1 - config.floor), 0), 1)
+        let radius = strokeWidth + (config.maxRadius - strokeWidth) * CGFloat(t)
+        return (radius, config.maxOpacity * t * t)
+    }
+
     private func drawAreas(
         _ bands: [[Double]],
         fillOpacity: Double,
@@ -351,6 +409,7 @@ public struct MetricChart: View {
                         endPoint: CGPoint(x: rect.midX, y: rect.maxY)
                     )
                 )
+                drawGlow(through: slice, color: color, in: &context, rect: rect)
                 context.stroke(line, with: .color(color), lineWidth: Self.strokeWidth)
             }
 
@@ -371,6 +430,46 @@ public struct MetricChart: View {
                         width: Self.liveDotRadius * 2, height: Self.liveDotRadius * 2
                     )),
                     with: .color(color)
+                )
+            }
+        }
+    }
+
+    /// The load-reactive bloom, drawn behind a run's crisp stroke.
+    ///
+    /// Each smoothed segment of the run is stroked into its own blurred,
+    /// additively-blended layer, with a weight that follows how high the
+    /// segment sits (`glowLevel`) — so the glow brightens along the busy
+    /// stretches and fades to nothing where the line hugs the baseline. The
+    /// segments share `smoothSegments`' geometry with the crisp `line` painted
+    /// on top, so the halo traces the stroke exactly.
+    ///
+    /// `plusLighter` so overlapping haloes and the fill beneath add toward
+    /// light rather than compositing muddily, matching the study. Segments
+    /// below the glow floor return zero opacity and are skipped outright, which
+    /// is what keeps an idle chart (most segments near the baseline) cheap.
+    private func drawGlow(
+        through slice: [CGPoint],
+        color: Color,
+        in context: inout GraphicsContext,
+        rect: CGRect
+    ) {
+        let config = glow
+        guard glowEnabled, config.isEnabled, rect.height > 0 else { return }
+
+        for segment in ChartGeometry.smoothSegments(through: slice) {
+            let midY = (segment.from.y + segment.to.y) / 2
+            let height = Double((rect.maxY - midY) / rect.height)
+            let level = Self.glowLevel(atHeight: height, config: config)
+            guard level.opacity > 0 else { continue }
+
+            context.drawLayer { layer in
+                layer.addFilter(.blur(radius: level.radius))
+                layer.blendMode = .plusLighter
+                layer.stroke(
+                    segment.path,
+                    with: .color(color.opacity(level.opacity)),
+                    style: StrokeStyle(lineWidth: Self.strokeWidth, lineCap: .round)
                 )
             }
         }
