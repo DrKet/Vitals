@@ -29,6 +29,10 @@ public enum ProcessSampler {
         let pid = process.kp_proc.p_pid
         guard pid > 0 else { return nil }
 
+        // Exited, awaiting reap: skipped as gone, like ESRCH below. Its
+        // rusage would read back a zeroed footprint and CPU time.
+        guard !isZombie(process) else { return nil }
+
         errno = 0
         var usage = rusage_info_v4()
         let usageResult = withUnsafeMutablePointer(to: &usage) { pointer in
@@ -96,9 +100,10 @@ public enum ProcessSampler {
     /// This is what `ProcessControl` checks immediately before signalling, so
     /// it must produce exactly what `snapshot()` produced for the same
     /// process. Both go through `startTimeSeconds(of:)`; never convert
-    /// `p_starttime` anywhere else.
+    /// `p_starttime` anywhere else. A zombie has exited, so it has no
+    /// identity either.
     public static func identity(of pid: pid_t) -> ProcessIdentity? {
-        guard let process = kernelProcess(pid: pid) else { return nil }
+        guard let process = kernelProcess(pid: pid), !isZombie(process) else { return nil }
         return ProcessIdentity(pid: pid, startTimeSeconds: startTimeSeconds(of: process))
     }
 
@@ -118,13 +123,23 @@ public enum ProcessSampler {
     /// One process via `KERN_PROC_PID`. For a pid with no process the call
     /// still succeeds but reports a zero length, which is what the length
     /// check catches.
-    private static func kernelProcess(pid: pid_t) -> kinfo_proc? {
+    ///
+    /// Internal (not private) so tests can observe a zombie's state.
+    static func kernelProcess(pid: pid_t) -> kinfo_proc? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var process = kinfo_proc()
         var length = MemoryLayout<kinfo_proc>.stride
         guard sysctl(&mib, u_int(mib.count), &process, &length, nil, 0) == 0,
               length == MemoryLayout<kinfo_proc>.stride else { return nil }
         return process
+    }
+
+    /// A process that has exited but not yet been reaped by its parent.
+    /// It still appears in `KERN_PROC_ALL`, and `proc_pid_rusage` on it
+    /// succeeds with every counter zeroed — including a 0-byte footprint the
+    /// process never had. It has exited: treat it exactly as gone.
+    static func isZombie(_ process: kinfo_proc) -> Bool {
+        Int32(process.kp_proc.p_stat) == SZOMB
     }
 
     /// `p_starttime` (a timeval: integer seconds + microseconds) as seconds

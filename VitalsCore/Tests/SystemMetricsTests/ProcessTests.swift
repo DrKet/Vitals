@@ -194,4 +194,54 @@ struct ProcessTests {
         #expect(startTime > 1_000_000_000)
         #expect(startTime <= Date().timeIntervalSince1970 + 1)
     }
+
+    // MARK: Zombies
+
+    /// A deterministic zombie: spawned with `posix_spawn` (not
+    /// `Foundation.Process`, whose background reaper would collect it at an
+    /// unpredictable moment), killed, and deliberately NOT reaped until the
+    /// test ends. Returns once the kernel reports it as `SZOMB`.
+    private static func makeZombie() throws -> pid_t {
+        var pid: pid_t = 0
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("60"), nil]
+        defer { argv.forEach { free($0) } }
+        try #require(posix_spawn(&pid, "/bin/sleep", nil, nil, argv, nil) == 0)
+        kill(pid, SIGKILL)
+
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if let process = ProcessSampler.kernelProcess(pid: pid), ProcessSampler.isZombie(process) {
+                return pid
+            }
+            usleep(10_000)
+        }
+        Issue.record("child \(pid) never became a zombie")
+        return pid
+    }
+
+    private static func reapZombie(_ pid: pid_t) {
+        var status: Int32 = 0
+        waitpid(pid, &status, 0)
+    }
+
+    /// The cause of the old intermittent `footprintIsNeverZero` failure: a
+    /// zombie's rusage reads back a zero footprint, which would be listed as
+    /// "uses 0 bytes" — a value nobody measured.
+    @Test("a zombie is not listed: it has exited, and its zeroed rusage is not a reading")
+    func zombieIsNotListed() throws {
+        let pid = try Self.makeZombie()
+        defer { Self.reapZombie(pid) }
+
+        #expect(!ProcessSampler.snapshot().contains { $0.pid == pid })
+    }
+
+    /// A zombie has no identity, so `ProcessControl`'s pre-signal re-check
+    /// reports it as exited rather than "successfully" signalling a corpse.
+    @Test("a zombie has no identity")
+    func zombieHasNoIdentity() throws {
+        let pid = try Self.makeZombie()
+        defer { Self.reapZombie(pid) }
+
+        #expect(ProcessSampler.identity(of: pid) == nil)
+    }
 }

@@ -14,9 +14,11 @@ public enum ProcessControlError: Error, Equatable, Sendable {
     case exited
     /// `EPERM` — the process is not ours to signal.
     case notPermitted
-    /// pid 0 (`kernel_task`) cannot be addressed by `kill(2)`: to `kill`, pid 0
-    /// means "every process in the caller's own process group" — signalling it
-    /// would hit Vitals itself. Refused before any identity check or signal.
+    /// A pid `kill(2)` would not read as one process: 0 means "every process
+    /// in the caller's own process group" (so signalling `kernel_task` would
+    /// hit Vitals itself), and a negative pid means a whole process group —
+    /// `-1` is every process the user owns. Refused before any identity check
+    /// or signal.
     case notSignallable
     /// `NSRunningApplication.terminate()` returned false: the quit request
     /// could not be sent. Its own case rather than `.failed(errno: 0)`, since

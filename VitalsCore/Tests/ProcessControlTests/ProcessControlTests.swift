@@ -66,9 +66,9 @@ struct ProcessControlTests {
         #expect(throws: ProcessControlError.exited) {
             try ProcessControl.perform(.forceQuit, on: stale)
         }
-        // Not `child.isRunning`: Foundation.Process's isRunning updates
-        // asynchronously and can still read true (or go stale) right after
-        // the call returns. Ask the kernel directly instead.
+        // Not `child.isRunning`: Foundation.Process updates it asynchronously.
+        // The kernel re-read is sound because `identity(of:)` returns nil for
+        // a zombie — a wrongly-killed, not-yet-reaped child fails this check.
         #expect(ProcessSampler.identity(of: real.pid) == real)
     }
 
