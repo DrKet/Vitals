@@ -27,8 +27,11 @@ Out — each raises its own design question and gets its own slice:
 ## Decisions
 
 **Always confirm, Activity Monitor style.** Both Quit… and Force Quit… open
-the same alert — *Are you sure you want to quit "Safari"?* — with Force Quit,
-Cancel and Quit buttons. The item the user chose is the default button, so
+the same alert — titled *Are you sure you want to quit this process?*, with
+the process's name and pid in the message — and Force Quit, Cancel and Quit
+buttons. (The title is fixed, as Activity Monitor's is; a SwiftUI alert's
+title cannot depend on the pending action without inventing a fallback
+string for when there is none.) The item the user chose is the default button, so
 Return confirms what they asked for. One misclick on a neighbouring row must
 not kill a process.
 
