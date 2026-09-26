@@ -543,6 +543,172 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+### Task 2b: Zombies are exited processes — stop listing them with a fabricated 0-byte footprint
+
+**Added during execution** (Task 2 review round 2). A zombie — a process that
+has exited but not yet been reaped by its parent — still appears in
+`KERN_PROC_ALL`, and `proc_pid_rusage` on it succeeds with
+`ri_phys_footprint == 0`. `ProcessSampler.detail(for:)` passes that through,
+so the Processes table shows the zombie using **0 bytes**: a value the machine
+never measured. This is the real cause of the intermittent
+`ProcessTests.swift:85` (`footprintIsNeverZero`) failure, previously written
+off as load. `ProcessControlTests` creates zombies on purpose (killed children
+awaiting Foundation's reaper), which raises its hit rate.
+
+A zombie has exited. It is treated exactly like a process that vanished
+between enumeration and inspection (`ESRCH`): not listed, and no identity.
+That second half also makes `ProcessControl`'s re-check refuse a zombie with
+`.exited`, and makes `ProcessControlTests.staleIdentityIsRefused`'s survival
+check sound (the reviewer showed a wrongly-killed but unreaped child still
+passed `identity(of:) == real`).
+
+**Files:**
+- Modify: `Sources/SystemMetrics/Processes/ProcessSampler.swift`
+- Modify: `Sources/ProcessControl/ProcessControl.swift` (doc comments only)
+- Modify: `Tests/ProcessControlTests/ProcessControlTests.swift` (comment only)
+- Test: `Tests/SystemMetricsTests/ProcessTests.swift`
+
+**Interfaces:**
+- Consumes: `ProcessSampler.kernelProcess(pid:)`, `identity(of:)`, `detail(for:)` (Task 1).
+- Produces: `ProcessSampler.snapshot()` never lists a zombie; `ProcessSampler.identity(of:)` returns `nil` for a zombie. `kernelProcess(pid:)` becomes `internal` (was `private`) so the test can observe the zombie state. New `static func isZombie(_ process: kinfo_proc) -> Bool` (internal).
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `Tests/SystemMetricsTests/ProcessTests.swift`, inside `struct ProcessTests`, after the single-process-read tests:
+
+```swift
+    // MARK: Zombies
+
+    /// A deterministic zombie: spawned with `posix_spawn` (not
+    /// `Foundation.Process`, whose background reaper would collect it at an
+    /// unpredictable moment), killed, and deliberately NOT reaped until the
+    /// test ends. Returns once the kernel reports it as `SZOMB`.
+    private static func makeZombie() throws -> pid_t {
+        var pid: pid_t = 0
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("60"), nil]
+        defer { argv.forEach { free($0) } }
+        try #require(posix_spawn(&pid, "/bin/sleep", nil, nil, argv, nil) == 0)
+        kill(pid, SIGKILL)
+
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if let process = ProcessSampler.kernelProcess(pid: pid), ProcessSampler.isZombie(process) {
+                return pid
+            }
+            usleep(10_000)
+        }
+        Issue.record("child \(pid) never became a zombie")
+        return pid
+    }
+
+    private static func reapZombie(_ pid: pid_t) {
+        var status: Int32 = 0
+        waitpid(pid, &status, 0)
+    }
+
+    /// The cause of the old intermittent `footprintIsNeverZero` failure: a
+    /// zombie's rusage reads back a zero footprint, which would be listed as
+    /// "uses 0 bytes" — a value nobody measured.
+    @Test("a zombie is not listed: it has exited, and its zeroed rusage is not a reading")
+    func zombieIsNotListed() throws {
+        let pid = try Self.makeZombie()
+        defer { Self.reapZombie(pid) }
+
+        #expect(!ProcessSampler.snapshot().contains { $0.pid == pid })
+    }
+
+    /// A zombie has no identity, so `ProcessControl`'s pre-signal re-check
+    /// reports it as exited rather than "successfully" signalling a corpse.
+    @Test("a zombie has no identity")
+    func zombieHasNoIdentity() throws {
+        let pid = try Self.makeZombie()
+        defer { Self.reapZombie(pid) }
+
+        #expect(ProcessSampler.identity(of: pid) == nil)
+    }
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `swift test --filter ProcessTests`
+Expected: build FAILS first (`kernelProcess` is private, `isZombie` does not exist). Make ONLY these two changes to get it compiling — change `private static func kernelProcess` to `static func kernelProcess`, and add:
+
+```swift
+    /// A process that has exited but not yet been reaped by its parent.
+    /// It still appears in `KERN_PROC_ALL`, and `proc_pid_rusage` on it
+    /// succeeds with every counter zeroed — including a 0-byte footprint the
+    /// process never had. It has exited: treat it exactly as gone.
+    static func isZombie(_ process: kinfo_proc) -> Bool {
+        Int32(process.kp_proc.p_stat) == SZOMB
+    }
+```
+
+Rerun. Expected: compiles; `zombieIsNotListed` and `zombieHasNoIdentity` both FAIL.
+
+- [ ] **Step 3: Implement**
+
+In `detail(for:)`, directly after `guard pid > 0 else { return nil }`:
+
+```swift
+        // Exited, awaiting reap: skipped as gone, like ESRCH below. Its
+        // rusage would read back a zeroed footprint and CPU time.
+        guard !isZombie(process) else { return nil }
+```
+
+In `identity(of:)`, change the guard to:
+
+```swift
+        guard let process = kernelProcess(pid: pid), !isZombie(process) else { return nil }
+```
+
+and add to its doc comment: `A zombie has exited, so it has no identity either.`
+
+Update `kernelProcess(pid:)`'s doc comment to add: `Internal (not private) so tests can observe a zombie's state.`
+
+- [ ] **Step 4: Tidy the two `ProcessControl` comments the review flagged**
+
+In `Sources/ProcessControl/ProcessControl.swift`, replace the `notSignallable` doc comment with:
+
+```swift
+    /// A pid `kill(2)` would not read as one process: 0 means "every process
+    /// in the caller's own process group" (so signalling `kernel_task` would
+    /// hit Vitals itself), and a negative pid means a whole process group —
+    /// `-1` is every process the user owns. Refused before any identity check
+    /// or signal.
+```
+
+In `Tests/ProcessControlTests/ProcessControlTests.swift` (`staleIdentityIsRefused`), replace the three-line comment above `#expect(ProcessSampler.identity(of: real.pid) == real)` with:
+
+```swift
+        // Not `child.isRunning`: Foundation.Process updates it asynchronously.
+        // The kernel re-read is sound because `identity(of:)` returns nil for
+        // a zombie — a wrongly-killed, not-yet-reaped child fails this check.
+```
+
+- [ ] **Step 5: Run to verify they pass**
+
+Run: `swift test --filter ProcessTests` — expected PASS including both zombie tests. Run: `swift test --filter ProcessControlTests` — expected 6 PASS.
+
+- [ ] **Step 6: Prove the survival check can now go red**
+
+Temporarily comment out the identity guard in `ProcessControl.perform` (the `guard ProcessSampler.identity(of: identity.pid) == identity` line — NOT the `pid > 0` guard). Run `swift test --filter ProcessControlTests`: `staleIdentityIsRefused` must fail on BOTH expectations (no error thrown, AND the identity re-read is nil). Restore; rerun; PASS.
+
+- [ ] **Step 7: Clean build, full suite ×3, commit**
+
+```bash
+cd VitalsCore && rm -rf .build && swift build --build-tests 2>&1 | grep -ci warning
+```
+Expected `0`. Run `swift test` three times, saving each log; record the name of any failing test. `ProcessTests.swift:85` should no longer fail.
+
+```bash
+git add -A VitalsCore
+git commit -m "fix: zombies are exited processes, not 0-byte ones
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 3: `ProcessRow.userID` and the pure `ProcessMenu` model
 
 **Files:**
@@ -1082,6 +1248,15 @@ Under "Known gaps", replace the bullet beginning "The Processes table has no `se
 ```
 
 In "Four commands that lie to you" item 4's final paragraph, change `MetricsStoreTests.swift:563` to `MetricsStoreTests.swift:618`.
+
+In "Platform notes worth knowing", add a bullet:
+```
+- **Zombies read back as zeroes.** A process that has exited but not been
+  reaped still appears in `KERN_PROC_ALL`, and `proc_pid_rusage` on it
+  succeeds with a 0-byte footprint and zero CPU time. `ProcessSampler` skips
+  `SZOMB` processes and gives them no identity. The intermittent
+  `ProcessTests` "footprint … never zero" failure was this, not load.
+```
 
 - [ ] **Step 4: Commit**
 
