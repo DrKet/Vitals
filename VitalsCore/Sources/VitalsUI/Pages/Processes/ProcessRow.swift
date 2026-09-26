@@ -13,6 +13,11 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
     public let name: String
     public let userName: String
 
+    /// The owning user's uid. `userName` is for display; this is what decides
+    /// whether the process is yours to quit — two users can share a display
+    /// name, never a uid.
+    public let userID: uid_t
+
     /// `1.0` means one core fully saturated, so a process spread across four
     /// cores reads `4.0`. `nil` when this process' CPU time is unreadable —
     /// which is true of roughly a third of live processes, typically other
@@ -33,6 +38,7 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
         pid: pid_t,
         name: String,
         userName: String,
+        userID: uid_t,
         cpuFraction: Double?,
         memoryBytes: UInt64?,
         threadCount: Int?,
@@ -45,6 +51,7 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
         self.pid = pid
         self.name = name
         self.userName = userName
+        self.userID = userID
         self.cpuFraction = cpuFraction
         self.memoryBytes = memoryBytes
         self.threadCount = threadCount
@@ -60,6 +67,7 @@ public struct ProcessRow: Identifiable, Sendable, Equatable {
             pid: snapshot.pid,
             name: snapshot.name,
             userName: userName,
+            userID: snapshot.userID,
             cpuFraction: cpuFraction,
             memoryBytes: snapshot.memoryFootprintBytes,
             threadCount: snapshot.threadCount,
