@@ -293,7 +293,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: `ProcessIdentity`, `ProcessSampler.identity(of:)` (Task 1).
 - Produces (module `ProcessControl`):
   - `public enum ProcessAction: Sendable, Equatable { case quit, forceQuit }`
-  - `public enum ProcessControlError: Error, Equatable, Sendable { case exited, notPermitted, quitRequestNotSent, failed(errno: Int32) }`
+  - `public enum ProcessControlError: Error, Equatable, Sendable { case exited, notPermitted, notSignallable, quitRequestNotSent, failed(errno: Int32) }` — `notSignallable` (added in review) is pid 0, which `kill(2)` would read as "the caller's own process group"; `perform` refuses it before anything else.
   - `@MainActor public enum ProcessControl { static func perform(_ action: ProcessAction, on identity: ProcessIdentity) throws(ProcessControlError) }`
 
 - [ ] **Step 1: Register the target and test target**
@@ -657,6 +657,8 @@ struct ProcessMenuTests {
                 == "“sleep” couldn’t be quit because it has already exited.")
         #expect(ProcessMenu.failureMessage(.notPermitted, name: "sleep")
                 == "“sleep” couldn’t be quit because you don’t have permission.")
+        #expect(ProcessMenu.failureMessage(.notSignallable, name: "kernel_task")
+                == "“kernel_task” is a system process and can’t be quit.")
         #expect(ProcessMenu.failureMessage(.quitRequestNotSent, name: "Safari")
                 == "“Safari” couldn’t be asked to quit. Try Force Quit.")
         #expect(ProcessMenu.failureMessage(.failed(errno: EINVAL), name: "sleep")
@@ -791,6 +793,8 @@ public enum ProcessMenu {
             "“\(name)” couldn’t be quit because it has already exited."
         case .notPermitted:
             "“\(name)” couldn’t be quit because you don’t have permission."
+        case .notSignallable:
+            "“\(name)” is a system process and can’t be quit."
         case .quitRequestNotSent:
             "“\(name)” couldn’t be asked to quit. Try Force Quit."
         case .failed(let code):
