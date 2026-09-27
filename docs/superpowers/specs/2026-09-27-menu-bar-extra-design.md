@@ -145,3 +145,30 @@ uses type identifiers; a render assertion inside a panel uses
    The main window still opens at launch, and an explicit quit still quits with
    `applicationShouldTerminateAfterLastWindowClosed` false; confirmed by running
    it.
+
+## Addendum (during implementation)
+
+A few points below diverged from, or sharpened, the design above once it met
+the SDK and a live app:
+
+- **`Window`, not `WindowGroup`.** A single `Window("Vitals", id:
+  MainWindow.id)` scene, so `openWindow(id:)` always raises the one main
+  window rather than risking a second instance.
+- **`.defaultLaunchBehavior(.presented)`** is set on that `Window` scene, to
+  hold it open on every launch. Without it, SwiftUI's state restoration could
+  relaunch straight into "window closed" — the state Vitals can now be quit
+  from or left running in the menu bar in — leaving `.onAppear` never firing
+  and the bundle's default `.regular` activation policy stuck with a Dock
+  icon and nothing to show for it.
+- **The engine starts from `App.init`**, the one call SwiftUI runs exactly
+  once per process, with idempotent `.task { await model.startIfNeeded() }`
+  calls on both the menu-bar label and the main window as backups — not the
+  trigger this depends on. See `AppModel.startIfNeeded()`.
+- **`MetricChart(minimumHeight:)` and `reservesTrailingLiveDotRoom`** exist
+  for the dropdown's compact sparkline: a 28pt floor instead of the usual
+  132pt, and a plot rect inset by the live dot's own halo radius so the dot
+  never clips against `Canvas`'s raster bounds.
+- **Menu-bar values are padded with leading figure spaces** (U+2007) to a
+  fixed three digits, so the item's width holds steady as a reading moves
+  between one, two and three digits — `.monospacedDigit()` alone equalises
+  digit widths, not digit count.

@@ -217,6 +217,12 @@ to be a different page.
 - **Subscription-driven sampling.** Nothing is sampled unless a view subscribes,
   via `.task { await store.stream(_:) }`. SwiftUI's cancellation tears the
   subscription down; no manual bookkeeping.
+  One deliberate exception: `MetricsStore.keepWarmSeries` (CPU, memory, GPU,
+  network, disk I/O) samples at 1 Hz for the whole process lifetime, window or
+  not, so the menu-bar readout and dropdown always have data and switching to
+  their charts is instant. `AppModel.startIfNeeded` starts it once, not any
+  view's subscription. Throttling that sampling while the dropdown is closed
+  is a deferred slice, not yet built.
 - **`HardwarePage` owns the page chrome** — header, glass panels, stats block,
   sticky disclosure, tall-window fill, and chart style selection. A page supplies
   data and the two view-builder slots, nothing else. Reimplementing any of it is
@@ -255,13 +261,13 @@ to be a different page.
 - Use `phys_footprint`, not RSS, for process memory.
 - A SwiftPM executable has no bundle, so AppKit launches it background-only —
   `swift run VitalsApp` and the raw `.build/` binary both still do this. A
-  bundled `.app` gets AppKit's default `.regular` activation policy for
-  free; `AppDelegate` no longer sets it (that line came out once the bundle
-  existed to provide it — see `VitalsApp.swift`). The app now sets that
-  policy itself at runtime, as the main window opens and closes
-  (`AppLifecycle`). Outside a bundle the app runs with **zero windows** and
-  every "it launches" check is meaningless. Closing the window no longer
-  quits a bundled Vitals — it keeps running in the menu bar (see
+  bundled `.app` gets AppKit's default `.regular` activation policy at
+  launch for free, with no line in `AppDelegate` needed to request it; from
+  then on `AppLifecycle` drives that same policy at runtime, switching it to
+  `.accessory` and back to `.regular` as the main window closes and reopens
+  (see `VitalsApp.swift`). Outside a bundle the app runs with **zero
+  windows** and every "it launches" check is meaningless. Closing the window
+  no longer quits a bundled Vitals — it keeps running in the menu bar (see
   `AppDelegate`). A windowless *bundled* Vitals is expected; one with no
   menu-bar item either is the unbundled trap above.
 - `AsyncStream.onTermination` does **not** fire on `break` out of a `for await`
