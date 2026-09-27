@@ -69,7 +69,15 @@ struct ProcessControlTests {
         // Not `child.isRunning`: Foundation.Process updates it asynchronously.
         // The kernel re-read is sound because `identity(of:)` returns nil for
         // a zombie — a wrongly-killed, not-yet-reaped child fails this check.
-        #expect(ProcessSampler.identity(of: real.pid) == real)
+        //
+        // kill(2) returns before the target has exited, so one read straight
+        // after `perform` could still see a wrongly-killed child alive. Watch
+        // it for a while: SIGKILL takes effect well within this window, and a
+        // killed child stops matching (a zombie has no identity).
+        for _ in 0..<25 {
+            #expect(ProcessSampler.identity(of: real.pid) == real)
+            usleep(10_000)
+        }
     }
 
     @Test("a process that has already exited reports exited")

@@ -26,7 +26,7 @@ extension ProcessesPage {
 
             Button("Copy PID") { copyToPasteboard("\(row.pid)") }
             Button("Copy Name") { copyToPasteboard(row.name) }
-            Button("Reveal in Finder") { reveal(pid: row.pid, executablePath: path) }
+            Button("Reveal in Finder") { path.map { reveal(pid: row.pid, executablePath: $0) } }
                 .disabled(!state.canReveal)
 
             Divider()
@@ -55,10 +55,9 @@ extension ProcessesPage {
     }
 
     /// Selects the app bundle for a GUI app (`Safari.app`, not the binary
-    /// inside it), otherwise the executable. Only reachable when `path` is
-    /// non-nil — the menu disables the item otherwise.
-    func reveal(pid: pid_t, executablePath path: String?) {
-        guard let path else { return }
+    /// inside it), otherwise the executable. Only reachable when a path is
+    /// known — the menu disables the item otherwise.
+    func reveal(pid: pid_t, executablePath path: String) {
         let url = NSRunningApplication(processIdentifier: pid)?.bundleURL
             ?? URL(fileURLWithPath: path)
         NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -68,7 +67,12 @@ extension ProcessesPage {
         do {
             try ProcessControl.perform(action, on: pending.identity)
         } catch {
-            failureMessage = ProcessMenu.failureMessage(error, name: pending.name)
+            let message = ProcessMenu.failureMessage(error, name: pending.name)
+            // Presented a turn later: this runs inside the confirmation
+            // alert's button action, and SwiftUI can drop an alert presented
+            // while another is still dismissing — which would make the
+            // failure silent.
+            Task { @MainActor in failureMessage = message }
         }
         // No optimistic removal: the next sample shows the row gone — or
         // still running, if the app stopped to ask about saving.

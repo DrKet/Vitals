@@ -170,9 +170,12 @@ struct ProcessTests {
     func noIdentityAfterExit() throws {
         let child = try Self.spawnSleep()
         let pid = child.processIdentifier
+        let original = try #require(ProcessSampler.identity(of: pid))
         Self.reap(child)
 
-        #expect(ProcessSampler.identity(of: pid) == nil)
+        // Not `== nil`: a reused pid would give the exited process a fresh,
+        // different identity rather than none, and `== nil` would flake.
+        #expect(ProcessSampler.identity(of: pid) != original)
     }
 
     @Test("the executable path of a spawned sleep is /bin/sleep")

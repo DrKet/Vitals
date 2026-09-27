@@ -8,8 +8,10 @@ import Darwin
 /// `startTimeSeconds` (from `p_starttime`) distinguishes them.
 ///
 /// Lives in `SystemMetrics` so both the UI's selection and `ProcessControl`'s
-/// pre-signal re-check can use it; every value of it is produced by
-/// `ProcessSampler.startTimeSeconds(of:)`, so the two sides always agree.
+/// pre-signal re-check can use it; every identity the app *compares* is
+/// produced by `ProcessSampler.startTimeSeconds(of:)`, so the two sides
+/// always agree. (Tests construct arbitrary ones deliberately, since the
+/// public initializer allows any value.)
 ///
 /// `Hashable` is synthesized. Its equality compares `startTimeSeconds`
 /// exactly, which is correct and deliberate: the value is a kernel constant

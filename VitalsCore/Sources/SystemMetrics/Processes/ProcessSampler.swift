@@ -4,7 +4,28 @@ import Foundation
 public enum ProcessSampler {
 
     public static func snapshot() -> [ProcessSnapshot] {
-        kernelProcesses().compactMap(detail(for:))
+        let enumerated = kernelProcesses()
+        let read = enumerated.compactMap { process in detail(for: process).map { (process, $0) } }
+
+        // Re-checked AFTER every rusage/taskinfo read, in one sysctl: a process
+        // can exit mid-scan, and a zombie's rusage reads back zeroed. Zombie
+        // state is one-way, so a process still alive and still the same
+        // process now was alive when its counters were read. (One
+        // KERN_PROC_ALL instead of a KERN_PROC_PID per process: ~0.1 ms vs
+        // ~7 ms per tick.) If this re-read itself fails, there is nothing
+        // trustworthy to return — not the unfiltered reads, which would
+        // reintroduce zeroed zombies.
+        var after: [pid_t: kinfo_proc] = [:]
+        for process in kernelProcesses() { after[process.kp_proc.p_pid] = process }
+
+        return read.compactMap { enumeratedProcess, snapshot in
+            guard let current = after[snapshot.pid],
+                  !isZombie(current),
+                  current.kp_proc.p_starttime.tv_sec == enumeratedProcess.kp_proc.p_starttime.tv_sec,
+                  current.kp_proc.p_starttime.tv_usec == enumeratedProcess.kp_proc.p_starttime.tv_usec
+            else { return nil }
+            return snapshot
+        }
     }
 
     /// Every process on the system, via `KERN_PROC_ALL`.
@@ -29,9 +50,10 @@ public enum ProcessSampler {
         let pid = process.kp_proc.p_pid
         guard pid > 0 else { return nil }
 
-        // Cheap fast path: already a zombie at enumeration time. The
-        // post-read re-check below is the one that closes the race for a
-        // process that becomes a zombie between enumeration and here.
+        // Cheap fast path: already a zombie at enumeration time. `snapshot()`'s
+        // single post-read re-check (one KERN_PROC_ALL, after every detail
+        // read) is what closes the race for a process that becomes a zombie
+        // between enumeration and here.
         guard !isZombie(process) else { return nil }
 
         errno = 0
@@ -60,17 +82,6 @@ public enum ProcessSampler {
         // dropped entirely.
         let bothFailed = usageResult != 0 && taskResult <= 0
         guard !bothFailed || (usageErrno != ESRCH && taskErrno != ESRCH) else { return nil }
-
-        // Re-checked AFTER the rusage/taskinfo reads, not before: a process can
-        // exit between enumeration and here, and a zombie's rusage reads back
-        // zeroed. Zombie state is one-way, so if the process is still alive and
-        // still the same process now, it was alive when its counters were read —
-        // they are real. Anything else is skipped as gone, like ESRCH above.
-        guard let current = kernelProcess(pid: pid),
-              !isZombie(current),
-              current.kp_proc.p_starttime.tv_sec == process.kp_proc.p_starttime.tv_sec,
-              current.kp_proc.p_starttime.tv_usec == process.kp_proc.p_starttime.tv_usec
-        else { return nil }
 
         let name = withUnsafePointer(to: process.kp_proc.p_comm) { pointer in
             pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXCOMLEN) + 1) { charPointer in
