@@ -40,12 +40,15 @@ final class AppModel {
     /// same one — can't start a second engine on top of the first.
     private var didStart = false
 
-    /// Starts the engine exactly once. Called from the menu-bar label's
-    /// `.task` rather than from `init`: the label is the one thing on
-    /// screen for the app's entire life, with or without the main window,
-    /// so it's the one call site guaranteed to run at launch regardless of
-    /// window state — unlike a `.task` on the window's own content, which
-    /// wouldn't run at all if the window starts closed.
+    /// Starts the engine exactly once, however many times this is called.
+    /// `VitalsApp.init` is the primary trigger — SwiftUI calls it exactly
+    /// once per process, so it can't fail to run the way a view's `.task`
+    /// might: it's undocumented whether SwiftUI runs lifecycle modifiers on
+    /// a status-item label at all, or whether it runs if the item is
+    /// disallowed or hidden. The menu-bar label's and the main window's own
+    /// `.task { await model.startIfNeeded() }` are idempotent backups, not
+    /// the trigger this depends on — `didStart` below is what makes any
+    /// number of callers, in any order, safe.
     func startIfNeeded() async {
         guard !didStart else { return }
         didStart = true
@@ -54,8 +57,14 @@ final class AppModel {
             // `system_profiler` (`waitUntilExit`); running that on the main
             // actor would block the app's very first frame. Detached keeps
             // launch responsive; the result is only ever touched back on
-            // the main actor below.
-            let profile = try await Task.detached { try HardwareProfile.detect() }.value
+            // the main actor below. `.userInitiated`: a detached task does
+            // not inherit the caller's priority, and this holds one pool
+            // thread for `system_profiler`'s whole run — acceptable once,
+            // at launch, but not worth risking at a background priority
+            // that could get starved behind other work.
+            let profile = try await Task.detached(priority: .userInitiated) {
+                try HardwareProfile.detect()
+            }.value
             let engine = MetricsEngine()
             await StandardSamplers.registerAll(on: engine)
             let store = MetricsStore(engine: engine, profile: profile)
@@ -79,7 +88,17 @@ enum MainWindow {
 @main
 struct VitalsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = AppModel()
+    @State private var model: AppModel
+
+    /// SwiftUI calls an `App`'s `init` exactly once per process — the one
+    /// truly guaranteed-once entry point, unlike any view's `.task` (see
+    /// `AppModel.startIfNeeded()`). `AppModel.init` itself stays
+    /// side-effect free; starting the engine is this call, explicitly.
+    init() {
+        let model = AppModel()
+        _model = State(initialValue: model)
+        Task { await model.startIfNeeded() }
+    }
 
     var body: some Scene {
         // `Window`, not `WindowGroup`: one main window. `openWindow(id:)` then
@@ -101,9 +120,8 @@ struct VitalsApp: App {
             MenuBarContent(model: model)
         } label: {
             MenuBarLabel(store: model.store)
-                // The menu-bar label is on screen for the app's whole life,
-                // window or not, so it's where the engine starts. See
-                // `AppModel.startIfNeeded()`.
+                // Backup trigger, not the primary one — `VitalsApp.init`
+                // already started this. See `AppModel.startIfNeeded()`.
                 .task { await model.startIfNeeded() }
         }
         .menuBarExtraStyle(.window)
@@ -125,6 +143,9 @@ private struct MainWindowContent: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
+        // Backup trigger, not the primary one — `VitalsApp.init` already
+        // started this. See `AppModel.startIfNeeded()`.
+        .task { await model.startIfNeeded() }
         .onAppear { NSApp.setActivationPolicy(AppLifecycle.activationPolicy(mainWindowOpen: true)) }
         .onDisappear { NSApp.setActivationPolicy(AppLifecycle.activationPolicy(mainWindowOpen: false)) }
     }
