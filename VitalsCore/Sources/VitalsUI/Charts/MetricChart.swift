@@ -53,6 +53,7 @@ public struct MetricChart: View {
     private let showsAxisMaximum: Bool
     private let glow: Vitals.Chart.Glow
     private let minimumHeight: CGFloat
+    private let trailingHeadroom: CGFloat
 
     /// - Parameter series: **Order is load-bearing.** In stacked area mode the
     ///   first series is the base band and every later one accumulates on top of
@@ -86,13 +87,36 @@ public struct MetricChart: View {
     ///   `.frame(height:)` smaller than the floor cannot shrink the chart,
     ///   and with no clipping anywhere in the stack the overflow bleeds into
     ///   whatever the caller placed below it.
+    /// - Parameter trailingHeadroom: extra width reserved on the plot's
+    ///   trailing edge, in `.area` style only. Defaults to `0`, which is the
+    ///   exact prior geometry for every existing embedder. In `.endpoints`
+    ///   spacing the last sample always plots at the plot rect's own
+    ///   `maxX`, so the live dot's halo (`liveDotHaloRadius`) is centred
+    ///   exactly on that edge — `Canvas` rasterises into a buffer sized to
+    ///   its own `size`, so the half of the halo past that edge has no
+    ///   pixels to paint into no matter what an *outer* view does; a
+    ///   `.clipped()`, a wider `.clipShape`, or no clipping at all are all
+    ///   indistinguishable from the pixels out here (verified empirically:
+    ///   a 100pt clip-shape outset and no clip at all both reproduce the
+    ///   identical half-circle). A nonzero value insets the plot rect's
+    ///   trailing edge by that much, the same way `topHeadroom` already
+    ///   insets the top — pulling the last sample, and its dot, that far
+    ///   inside the chart's own bounds instead. This intentionally does
+    ///   *not* go through `ChartGeometry.insetForHeadroom`, which insets
+    ///   only vertically on purpose (see its doc comment): the crosshair
+    ///   reads the outer, un-inset `rect`, so a shared horizontal inset
+    ///   would put the renderer and the crosshair's sample math at odds.
+    ///   That is only safe here because the one caller that passes a
+    ///   nonzero value — the menu-bar dropdown's compact sparkline — also
+    ///   disables hit-testing entirely, so its crosshair can never engage.
     public init(
         series: [ChartSeries],
         style: ChartStyle,
         colors: [Color],
         showsAxisMaximum: Bool,
         glow: Vitals.Chart.Glow = Vitals.Chart.glow,
-        minimumHeight: CGFloat = Vitals.Metrics.chartHeight
+        minimumHeight: CGFloat = Vitals.Metrics.chartHeight,
+        trailingHeadroom: CGFloat = 0
     ) {
         self.series = series
         self.style = style
@@ -100,6 +124,7 @@ public struct MetricChart: View {
         self.showsAxisMaximum = showsAxisMaximum
         self.glow = glow
         self.minimumHeight = minimumHeight
+        self.trailingHeadroom = trailingHeadroom
     }
 
     @State private var hoverX: CGFloat?
@@ -162,7 +187,18 @@ public struct MetricChart: View {
                     // render for a defect that is barely visible in
                     // practice — see the chart-headroom report for the
                     // pixel-level comparison this was based on.
-                    let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
+                    let verticallyInsetRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
+                    // `insetForHeadroom` only ever touches the vertical extent
+                    // (see its doc comment and `trailingHeadroom`'s above) —
+                    // the trailing inset, when requested, is applied here
+                    // instead, directly on this view's own plot rect only.
+                    let plotRect = trailingHeadroom > 0
+                        ? CGRect(
+                            x: verticallyInsetRect.minX, y: verticallyInsetRect.minY,
+                            width: max(verticallyInsetRect.width - trailingHeadroom, 0),
+                            height: verticallyInsetRect.height
+                        )
+                        : verticallyInsetRect
                     drawGridlines(in: &context, rect: plotRect)
                     drawAreas(
                         bands,
