@@ -80,7 +80,7 @@ public enum ProcessMenu {
             "“\(name)” couldn’t be quit because it has already exited."
         case .notPermitted:
             "“\(name)” couldn’t be quit because you don’t have permission."
-        case .notSignallable:
+        case .notSignallable, .systemCritical:
             "“\(name)” is a system process and can’t be quit."
         case .quitRequestNotSent:
             "“\(name)” couldn’t be asked to quit. Try Force Quit."

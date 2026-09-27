@@ -20,6 +20,10 @@ public enum ProcessControlError: Error, Equatable, Sendable {
     /// `-1` is every process the user owns. Refused before any identity check
     /// or signal.
     case notSignallable
+    /// pid 1: `launchd`, a single real process that nobody should signal —
+    /// killing it panics the machine. Refused as policy, before any identity
+    /// check or signal, whatever the caller's privileges.
+    case systemCritical
     /// `NSRunningApplication.terminate()` returned false: the quit request
     /// could not be sent. Its own case rather than `.failed(errno: 0)`, since
     /// there is no errno and `0` would be an invented one.
@@ -55,6 +59,9 @@ public enum ProcessControl {
         // See ProcessControlError.notSignallable: kill(2) treats pid 0 as
         // "this process's own group", not kernel_task.
         guard identity.pid > 0 else { throw .notSignallable }
+        // See ProcessControlError.systemCritical: never launchd, even with
+        // privileges that would let the kernel allow it.
+        guard identity.pid != 1 else { throw .systemCritical }
 
         guard ProcessSampler.identity(of: identity.pid) == identity else {
             throw .exited

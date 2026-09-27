@@ -86,6 +86,8 @@ struct ProcessMenuTests {
                 == "“sleep” couldn’t be quit because you don’t have permission.")
         #expect(ProcessMenu.failureMessage(.notSignallable, name: "kernel_task")
                 == "“kernel_task” is a system process and can’t be quit.")
+        #expect(ProcessMenu.failureMessage(.systemCritical, name: "launchd")
+                == "“launchd” is a system process and can’t be quit.")
         #expect(ProcessMenu.failureMessage(.quitRequestNotSent, name: "Safari")
                 == "“Safari” couldn’t be asked to quit. Try Force Quit.")
         #expect(ProcessMenu.failureMessage(.failed(errno: EINVAL), name: "sleep")
