@@ -107,8 +107,7 @@ public struct MenuBarPanel: View {
             // one number (`MetricChart.liveDotHaloRadius`) in one place, and
             // keeps the renderer and `MetricChart`'s own crosshair plotting
             // against the exact same rect — see `MetricChart.plotRect`'s
-            // doc comment. Safe to ask for here because this sparkline's
-            // hit-testing is off below, so its crosshair never engages.
+            // doc comment.
             reservesTrailingLiveDotRoom: true
         )
         .frame(height: Self.sparklineHeight)

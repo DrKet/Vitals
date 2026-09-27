@@ -388,9 +388,7 @@ struct ChartGeometryTests {
     /// `ChartSeries`; on a freshly empty store it is present but carries no
     /// values, so a looser `!series.isEmpty` would still be true and would
     /// reserve a chart band (drawing faint gridlines) for a reading that was
-    /// never taken. This was previously two separate tests — one on
-    /// `MenuBarPanel.hasChartData`, one implicit in `MetricTile`'s own
-    /// inline check — now one test on the one shared helper both call.
+    /// never taken.
     @Test("hasPlottableValues mirrors the never-fabricate rule: no series, or series with no values, is not chart data")
     func hasPlottableValuesMatchesEmptinessRule() {
         #expect([ChartSeries]().hasPlottableValues == false)

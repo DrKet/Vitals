@@ -133,9 +133,7 @@ public struct MetricChart: View {
     ///
     /// Internal rather than private so `MetricChartTests` can assert
     /// `plotRect`'s inset against this exact value, rather than a second
-    /// copy of the number living in the test file (as it used to, and as
-    /// `MenuBarPanel` used to before it switched to
-    /// `reservesTrailingLiveDotRoom`).
+    /// copy of the number living in the test file.
     static let liveDotHaloRadius: CGFloat = 9
     private static let liveDotRadius: CGFloat = 3
 
@@ -177,24 +175,24 @@ public struct MetricChart: View {
 
     public var body: some View {
         GeometryReader { proxy in
-            // Shared with the `Canvas` below via the same function, applied
-            // to the same conceptual rect (`proxy.size` and the `Canvas`
-            // closure's own `size` are the same size, just reached through
-            // two different SwiftUI APIs) — see `plotRect`'s doc comment.
+            // The one plot rect: computed here from the `GeometryReader`'s
+            // `proxy.size` and captured by the `Canvas` closure below, rather
+            // than recomputed from that closure's own `size` — `proxy.size`
+            // and the `Canvas` closure's `size` are the same size, so a
+            // second call to `plotRect` would just be a second copy of this
+            // same value. Sharing the one binding is what keeps the renderer
+            // and the crosshair (via `crosshair(in: rect)` below) from ever
+            // seeing different rects — see `plotRect`'s doc comment.
             let rect = Self.plotRect(
                 in: CGRect(origin: .zero, size: proxy.size),
                 reservesTrailingLiveDotRoom: reservesTrailingLiveDotRoom
             )
 
-            Canvas { context, size in
-                let canvasRect = Self.plotRect(
-                    in: CGRect(origin: .zero, size: size),
-                    reservesTrailingLiveDotRoom: reservesTrailingLiveDotRoom
-                )
+            Canvas { context, _ in
                 let bands = resolvedBands()
 
                 guard !bands.isEmpty else {
-                    drawGridlines(in: &context, rect: canvasRect)
+                    drawGridlines(in: &context, rect: rect)
                     return
                 }
                 // All series on one chart share a unit — see `unit(for:)` —
@@ -207,7 +205,7 @@ public struct MetricChart: View {
                     // Gridlines are drawn against the *same* inset rect as the
                     // data, not the raw canvas: they mark fractions of the
                     // value scale, and that scale now lives inside
-                    // `plotRect`. Drawing them against `canvasRect` instead
+                    // `plotRect`. Drawing them against `rect` instead
                     // would leave the 50% line, say, not actually passing
                     // through the chart's own 50%-height data.
                     let topHeadroom = ChartGeometry.headroom(
@@ -232,10 +230,10 @@ public struct MetricChart: View {
                     // render for a defect that is barely visible in
                     // practice — see the chart-headroom report for the
                     // pixel-level comparison this was based on.
-                    // `canvasRect` already carries the trailing inset, if any
+                    // `rect` already carries the trailing inset, if any
                     // (see `plotRect`'s doc comment above) — this only adds
                     // the vertical headroom on top of it.
-                    let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
+                    let plotRect = ChartGeometry.insetForHeadroom(rect, top: topHeadroom)
                     drawGridlines(in: &context, rect: plotRect)
                     drawAreas(
                         bands,
@@ -257,9 +255,9 @@ public struct MetricChart: View {
                     // make two bars of equal height represent different
                     // readings. `scale.lower` is deliberately not threaded in
                     // here — only the area path floats.
-                    drawGridlines(in: &context, rect: canvasRect)
-                    drawHistogram(bands, bound: scale.upper, in: &context, rect: canvasRect)
-                    drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: canvasRect)
+                    drawGridlines(in: &context, rect: rect)
+                    drawHistogram(bands, bound: scale.upper, in: &context, rect: rect)
+                    drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: rect)
                 }
             }
             .overlay { crosshair(in: rect) }

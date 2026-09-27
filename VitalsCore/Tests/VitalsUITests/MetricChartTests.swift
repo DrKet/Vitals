@@ -407,7 +407,11 @@ struct MetricChartTests {
         let on = MetricChart.plotRect(in: outer, reservesTrailingLiveDotRoom: true)
         #expect(on.minX == outer.minX)
         #expect(on.height == outer.height)
-        #expect(on.maxX == outer.maxX - MetricChart.liveDotHaloRadius)
+        // Computed (`outer.maxX - haloRadius`) against another computed value
+        // (`on.maxX`, derived from a separately-computed width) — not a bare
+        // passthrough like `minX`/`height` above, so this needs a tolerance,
+        // never exact float `==` (AGENTS.md).
+        #expect(abs(on.maxX - (outer.maxX - MetricChart.liveDotHaloRadius)) < 1e-9)
     }
 
     /// The renderer plots the last sample at the plot rect's own `maxX` (see
@@ -421,16 +425,19 @@ struct MetricChartTests {
     /// crosshair are provably looking at the same geometry, not two
     /// independently-computed rects that happen to agree today.
     @Test("the crosshair's sample math against plotRect's output lands where the renderer actually plots the last sample")
-    func plotRectKeepsCrosshairAndRendererInAgreement() {
+    func plotRectKeepsCrosshairAndRendererInAgreement() throws {
         let outer = CGRect(x: 0, y: 0, width: 300, height: 28)
         let count = 4
 
         let off = MetricChart.plotRect(in: outer, reservesTrailingLiveDotRoom: false)
-        let xOff = ChartGeometry.sampleX(at: count - 1, in: off, count: count, spacing: .endpoints)
-        #expect(xOff == outer.maxX)
+        let xOff = try #require(ChartGeometry.sampleX(at: count - 1, in: off, count: count, spacing: .endpoints))
+        // `xOff` reaches `outer.maxX` via `sampleX`'s own multiply-then-divide
+        // arithmetic, a different path than `outer.maxX` itself — a tolerance
+        // comparison, not exact float `==` (AGENTS.md).
+        #expect(abs(xOff - outer.maxX) < 1e-9)
 
         let on = MetricChart.plotRect(in: outer, reservesTrailingLiveDotRoom: true)
-        let xOn = ChartGeometry.sampleX(at: count - 1, in: on, count: count, spacing: .endpoints)
-        #expect(xOn == outer.maxX - MetricChart.liveDotHaloRadius)
+        let xOn = try #require(ChartGeometry.sampleX(at: count - 1, in: on, count: count, spacing: .endpoints))
+        #expect(abs(xOn - (outer.maxX - MetricChart.liveDotHaloRadius)) < 1e-9)
     }
 }

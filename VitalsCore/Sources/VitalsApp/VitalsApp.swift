@@ -36,8 +36,10 @@ final class AppModel {
     /// need to cancel and restart it.
     private var warmSampling: Task<Void, Never>?
     /// Set synchronously, before `startIfNeeded()`'s first suspension point,
-    /// so a second call — from a second view's `.task`, or a re-run of the
-    /// same one — can't start a second engine on top of the first.
+    /// so a second call — `VitalsApp.init` is the primary caller; the
+    /// menu-bar label's and the main window's own
+    /// `.task { await model.startIfNeeded() }` are backups, in case either
+    /// one runs too — can't start a second engine on top of the first.
     private var didStart = false
 
     /// Starts the engine exactly once, however many times this is called.
@@ -90,9 +92,9 @@ struct VitalsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model: AppModel
 
-    /// SwiftUI calls an `App`'s `init` exactly once per process — the one
-    /// truly guaranteed-once entry point, unlike any view's `.task` (see
-    /// `AppModel.startIfNeeded()`). `AppModel.init` itself stays
+    /// Runs once, from `main()` — unlike any view's `.task`, which SwiftUI
+    /// gives no documented guarantee to run at all on every kind of view
+    /// (see `AppModel.startIfNeeded()`). `AppModel.init` itself stays
     /// side-effect free; starting the engine is this call, explicitly.
     init() {
         let model = AppModel()
@@ -119,12 +121,26 @@ struct VitalsApp: App {
         MenuBarExtra {
             MenuBarContent(model: model)
         } label: {
-            MenuBarLabel(store: model.store)
-                // Backup trigger, not the primary one — `VitalsApp.init`
-                // already started this. See `AppModel.startIfNeeded()`.
-                .task { await model.startIfNeeded() }
+            MenuBarLabelContent(model: model)
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// Wraps `MenuBarLabel` so it reads `model.store` inside its own `body`
+/// rather than `VitalsApp.body` reading it directly (see `AppModel.store`'s
+/// `@Observable` tracking) — that is what makes the label repaint through
+/// ordinary SwiftUI view observation as the store's readings change, instead
+/// of depending on the scene's own `body` re-running, which `MenuBarExtra`
+/// gives no guarantee about.
+private struct MenuBarLabelContent: View {
+    let model: AppModel
+
+    var body: some View {
+        MenuBarLabel(store: model.store)
+            // Backup trigger, not the primary one — `VitalsApp.init`
+            // already started this. See `AppModel.startIfNeeded()`.
+            .task { await model.startIfNeeded() }
     }
 }
 
@@ -154,6 +170,13 @@ private struct MainWindowContent: View {
 private struct MenuBarContent: View {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
+    // `.window`-style `MenuBarExtra` panels can stay open after a button
+    // action instead of dismissing themselves the way a `.menu` one does.
+    // Calling this at the end of `showMainWindow()` is what closes the
+    // dropdown once the window is actually on screen — confirmed against the
+    // running app by the owner's own live check, not by a render test (no
+    // render harness drives a real `MenuBarExtra` panel's dismissal).
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         if let store = model.store {
@@ -167,8 +190,14 @@ private struct MenuBarContent: View {
                 onQuit: { NSApp.terminate(nil) }
             )
         } else {
+            // No store yet means no `MenuBarPanel`, so "Open Vitals" is the
+            // only way back to the main window from here — it shows the
+            // startup error (or the loading state) instead of leaving Quit
+            // as the sole option in an accessory app with no Dock icon to
+            // click back to.
             VStack(alignment: .leading, spacing: 10) {
                 Text(model.startupError ?? "Starting…")
+                Button("Open Vitals", action: showMainWindow)
                 Button("Quit Vitals") { NSApp.terminate(nil) }
             }
             .padding(12)
@@ -180,5 +209,6 @@ private struct MenuBarContent: View {
         NSApp.setActivationPolicy(AppLifecycle.activationPolicy(mainWindowOpen: true))
         openWindow(id: MainWindow.id)
         NSApp.activate()
+        dismiss()
     }
 }

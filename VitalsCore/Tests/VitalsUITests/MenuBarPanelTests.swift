@@ -64,6 +64,33 @@ struct MenuBarPanelTests {
         }
     }
 
+    /// Every row the dropdown shows must actually be one of the series
+    /// `MetricsStore.keepWarmSeries` samples for the app's whole lifetime —
+    /// otherwise the row would sit empty until something else happened to
+    /// subscribe to it. The map from a row's tile id to its `SeriesKey` lives
+    /// here, in the test, rather than in production code that has no other
+    /// use for it.
+    @Test("every row is one of the series kept warm for the app's whole lifetime")
+    func everyRowIsKeptWarm() {
+        let seriesKey: [String: SeriesKey] = [
+            "cpu": .cpu,
+            "memory": .memory,
+            "gpu": .gpu,
+            "storage": .diskIO,
+            "network": .network,
+        ]
+        for id in MenuBarPanel.rowIDs {
+            let key = seriesKey[id]
+            #expect(key != nil, "no SeriesKey mapping for row \"\(id)\"")
+            if let key {
+                #expect(
+                    MetricsStore.keepWarmSeries.contains(key),
+                    "row \"\(id)\" maps to \(key), which MetricsStore.keepWarmSeries does not keep warm"
+                )
+            }
+        }
+    }
+
     /// Each row's sparkline paints in its own subsystem's accent — probed in
     /// its *own* row's band only. Probing the whole panel (as this test
     /// originally did) can't tell two rows with swapped accents apart, since
@@ -88,16 +115,6 @@ struct MenuBarPanelTests {
     /// system chrome with no Vitals-declared size either, so those are
     /// measured the same way rather than guessed. See
     /// `measuredDividerHeight`/`measuredFooterHeight`.
-    ///
-    /// Verified against the fixed values this replaced (CPU 88–94pt, Memory
-    /// 140–150pt, GPU 194–206pt, Storage 248–262pt, Network 304–318pt, each
-    /// independently measured off a real render by scanning
-    /// `menubar-panel-live.png`): the derived first-row chart top lands at
-    /// 70.5pt against a pinned-and-verified 70pt, and the derived ~56pt
-    /// row-to-row step accounts for the small, consistent gap between the
-    /// old literals (chosen 54pt apart) and the four real measured bands
-    /// (54–56pt apart) — both numbers agree to within a point, well inside
-    /// each band's margin.
     @Test("with live data, every row's sparkline paints its own accent, in its own row")
     func everyRowPaintsItsAccent() async throws {
         let store = try await liveStore()

@@ -78,12 +78,8 @@ extension Array where Element == ChartSeries {
     /// A series can be present with an empty `values` array (nothing sampled
     /// yet), and an array containing only such series has nothing worth
     /// drawing. `MetricTile` and `MenuBarPanel`'s dropdown rows both gate
-    /// their chart on this, so an unmeasured reading never reserves space
-    /// for a chart that would draw nothing but gridlines — the two used to
-    /// carry separate copies of this same rule (one as `!series.isEmpty`,
-    /// which is the bug this predicate exists to avoid reintroducing; the
-    /// other as an inline `series.contains(where:)`) until both were pointed
-    /// at this one.
+    /// their chart on this one shared rule, so an unmeasured reading never
+    /// reserves space for a chart that would draw nothing but gridlines.
     var hasPlottableValues: Bool {
         contains(where: { !$0.values.isEmpty })
     }
