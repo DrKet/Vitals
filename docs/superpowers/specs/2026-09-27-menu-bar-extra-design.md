@@ -160,8 +160,8 @@ the SDK and a live app:
   from or left running in the menu bar in — leaving `.onAppear` never firing
   and the bundle's default `.regular` activation policy stuck with a Dock
   icon and nothing to show for it.
-- **The engine starts from `App.init`**, the one call SwiftUI runs exactly
-  once per process, with idempotent `.task { await model.startIfNeeded() }`
+- **The engine starts from `App.init`**, which runs once, from `main()`,
+  with idempotent `.task { await model.startIfNeeded() }`
   calls on both the menu-bar label and the main window as backups — not the
   trigger this depends on. See `AppModel.startIfNeeded()`.
 - **`MetricChart(minimumHeight:)` and `reservesTrailingLiveDotRoom`** exist

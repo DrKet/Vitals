@@ -92,11 +92,9 @@ struct MenuBarPanelTests {
     }
 
     /// Each row's sparkline paints in its own subsystem's accent — probed in
-    /// its *own* row's band only. Probing the whole panel (as this test
-    /// originally did) can't tell two rows with swapped accents apart, since
-    /// every hue is still present somewhere in the panel either way; proved
-    /// red below by reversing `MenuBarPanel.rowIDs`' rendering order, then
-    /// restored.
+    /// its *own* row's band only. A whole-panel probe can't tell two rows with
+    /// swapped accents apart, since every hue is still present somewhere in
+    /// the panel either way; reversing the rows' rendering order fails this.
     ///
     /// The GPU and Network accents are ~0.04 apart in hue, so the tolerance
     /// stays tight — the default 0.05 would let one pass for the other.
@@ -247,21 +245,19 @@ struct MenuBarPanelTests {
     /// its own 28pt frame directly, independent of the rest of the panel's
     /// layout.
     ///
-    /// Probes from y=28 exactly — the frame's own bottom edge, not y=32 as
-    /// this test originally did; that 4pt gap meant removing `.clipped()`
-    /// alone could still pass.
+    /// Probes from y=28 exactly — the frame's own bottom edge, leaving no gap
+    /// for a bleed to hide in.
     ///
-    /// It still does: with `minimumHeight` correctly passed, `MetricChart`'s
+    /// With `minimumHeight` correctly passed, `MetricChart`'s
     /// `Canvas` already rasterises into a buffer sized to exactly this 28pt
     /// frame, and `Canvas` cannot paint outside its own raster no matter what
     /// an outer view does or doesn't clip — verified directly against this
     /// probe (nothing above alpha 0 past y=27.5pt either way). So
     /// `.clipped()` is inert here now; it is kept only as cheap defense in
     /// depth. What this test actually guards is the real mechanism —
-    /// `sparkline` passing `minimumHeight: Self.sparklineHeight` — proved red
-    /// by temporarily omitting that argument (reverting to `MetricChart`'s
-    /// 132pt default): this probe then failed at y=28 exactly as it should.
-    /// Restored; green again.
+    /// `sparkline` passing `minimumHeight: Self.sparklineHeight`: without it
+    /// the chart falls back to `MetricChart`'s 132pt floor and this probe
+    /// fails at y=28.
     @Test("a compact sparkline paints nothing outside its own frame")
     func compactChartStaysInItsFrame() throws {
         let series = [ChartSeries(name: "CPU", values: [0.2, 0.9, 0.4, 0.8],

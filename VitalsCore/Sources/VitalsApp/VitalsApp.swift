@@ -173,9 +173,9 @@ private struct MenuBarContent: View {
     // `.window`-style `MenuBarExtra` panels can stay open after a button
     // action instead of dismissing themselves the way a `.menu` one does.
     // Calling this at the end of `showMainWindow()` is what closes the
-    // dropdown once the window is actually on screen — confirmed against the
-    // running app by the owner's own live check, not by a render test (no
-    // render harness drives a real `MenuBarExtra` panel's dismissal).
+    // dropdown once the window is actually on screen. Only a live run can
+    // confirm it (no render harness drives a real `MenuBarExtra` panel's
+    // dismissal); it is on the owner's live-check list.
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
