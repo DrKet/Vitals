@@ -5,8 +5,9 @@ import SystemMetrics
 import Testing
 
 /// Every test here signals only a `/bin/sleep` it spawned itself. The one
-/// exception targets pid 1 to prove EPERM handling, and is disabled when
-/// running as root — where it would really signal launchd.
+/// exception targets a root daemon to prove EPERM handling, and is disabled
+/// when running as root — where it would really kill it. (The pid 0 and pid 1
+/// tests are refused before `kill` runs, so they are safe as any user.)
 @MainActor
 @Suite("Process control")
 struct ProcessControlTests {
@@ -89,13 +90,28 @@ struct ProcessControlTests {
         }
     }
 
+    /// Targets a live root daemon (not pid 1, which is refused before `kill`
+    /// ever runs). Force Quit, so the path is a bare `kill` with no
+    /// `NSRunningApplication` lookup in between.
     @Test("signalling another user's process reports not permitted",
-          .enabled(if: getuid() != 0, "as root this would really signal launchd"))
+          .enabled(if: getuid() != 0, "as root this would really kill a system daemon"))
     func otherUsersProcessIsNotPermitted() throws {
-        let launchd = try #require(ProcessSampler.identity(of: 1))
+        let rootDaemon = try #require(
+            ProcessSampler.snapshot().first { $0.userID == 0 && $0.pid > 1 }
+        )
 
         #expect(throws: ProcessControlError.notPermitted) {
-            try ProcessControl.perform(.quit, on: launchd)
+            try ProcessControl.perform(.forceQuit, on: rootDaemon.identity)
+        }
+    }
+
+    /// Policy, not permissions: refused before `kill`, so this is safe to run
+    /// as any user — including root, where the kernel would otherwise allow it.
+    @Test("pid 1 (launchd) is refused before anything is signalled")
+    func pidOneIsRefused() throws {
+        let launchd = try #require(ProcessSampler.identity(of: 1))
+        #expect(throws: ProcessControlError.systemCritical) {
+            try ProcessControl.perform(.forceQuit, on: launchd)
         }
     }
 

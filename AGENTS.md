@@ -226,7 +226,8 @@ to be a different page.
   caller's own process group, and a negative pid a whole group.
   `ProcessControl` refuses pid ≤ 0 before anything else; `KERN_PROC_PID` with
   pid 0 happily returns `kernel_task`, so an identity check alone does not
-  catch it.
+  catch it. It also refuses pid 1 (`launchd`, `.systemCritical`) as policy,
+  so the rule holds even for a caller the kernel would allow.
 - `PROC_FLAG_TRANSLATED` does not exist in the SDK — use `P_TRANSLATED` on
   `kinfo_proc.kp_proc.p_flag`.
 - Distinguish `ESRCH` from `EPERM` when walking processes, or every root process
@@ -300,9 +301,8 @@ Known gaps, if you're looking for something to pick up:
   Force Quit, on your own processes only. Suspend/Resume, renice, Sample,
   Spindump and Inspect are still to come; acting on root's or other users'
   processes needs the privileged helper. Add signal-based actions to
-  `ProcessControl`, and keep every one of them behind its identity re-check.
-  `ProcessControl` refuses pid ≤ 0 but relies on the kernel's EPERM for pid 1
-  — add an explicit pid-1 refusal there before any privileged path exists.
+  `ProcessControl`, and keep every one of them behind its pid ≤ 1 refusals
+  and its identity re-check.
 - `ProcessComparator.compareValues` has a NaN/transitivity edge. Unreachable
   today, because nothing feeds it a NaN.
 

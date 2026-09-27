@@ -260,3 +260,8 @@ actions, and acting on processes that belong to root or another user. The
   nothing safe to signal.
 - `VitalsApp` gets `ProcessControl` transitively, through `VitalsUI`, not as
   a direct package dependency.
+- `ProcessControlError.systemCritical` (follow-up, 2026-09-26) — pid 1
+  (`launchd`) is refused inside `ProcessControl` as policy, right after the
+  pid ≤ 0 check, rather than relying on the kernel's EPERM, which a future
+  privileged caller would not get. The EPERM test (Testing, above: "pid 1
+  throws `.notPermitted`") now targets a live root daemon with pid > 1.
