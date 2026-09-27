@@ -1,5 +1,7 @@
 import MetricsEngine
+import ProcessControl
 import SwiftUI
+import SystemMetrics
 
 /// Adapts an optional numeric field into something `Comparable`, purely so
 /// `TableColumn(_:value:content:)` — which requires `V: Comparable` to
@@ -116,6 +118,19 @@ public struct ProcessesPage: View {
     /// directly, so the guard is applied on every read.
     @State private var selected: ProcessIdentity?
 
+    /// The Quit / Force Quit awaiting confirmation. Holds the identity captured
+    /// at right-click; `ProcessControl.perform` re-checks it on confirm, so an
+    /// alert left open while the process exits cannot act on a recycled pid.
+    ///
+    /// Not `private`: `ProcessesPage+ContextMenu.swift` sets this from the
+    /// menu's Quit… / Force Quit… actions. Still module-internal — nothing
+    /// outside `VitalsUI` can see it.
+    @State var pendingAction: PendingProcessAction?
+
+    /// A failed action's explanation, shown in its own alert. Never silent.
+    /// Not `private`, for the same reason as `pendingAction` above.
+    @State var failureMessage: String?
+
     public init(store: MetricsStore) {
         self.init(store: store, initialFilter: "")
     }
@@ -172,9 +187,39 @@ public struct ProcessesPage: View {
                     .font(Vitals.Typography.label)
                     .foregroundStyle(.secondary)
             }
-            content(rows: rows, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum, selection: selection)
+            content(rows: rows, all: all, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum, selection: selection)
         }
         .padding(Vitals.Metrics.contentPadding)
+        .alert(
+            ProcessMenu.confirmationTitle,
+            isPresented: Binding(
+                get: { pendingAction != nil },
+                set: { if !$0 { pendingAction = nil } }
+            ),
+            presenting: pendingAction
+        ) { pending in
+            // The item the user chose is the default button, so Return
+            // confirms exactly what they asked for.
+            Button("Force Quit", role: .destructive) { perform(.forceQuit, on: pending) }
+                .keyboardShortcut(pending.action == .forceQuit ? .defaultAction : nil)
+            Button("Cancel", role: .cancel) {}
+            Button("Quit") { perform(.quit, on: pending) }
+                .keyboardShortcut(pending.action == .quit ? .defaultAction : nil)
+        } message: { pending in
+            Text(ProcessMenu.confirmationMessage(name: pending.name, pid: pending.identity.pid))
+        }
+        .alert(
+            ProcessMenu.failureTitle,
+            isPresented: Binding(
+                get: { failureMessage != nil },
+                set: { if !$0 { failureMessage = nil } }
+            ),
+            presenting: failureMessage
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { message in
+            Text(message)
+        }
         .task { await store.stream(.processes) }
         .onAppear {
             resort(filtered: filtered)
@@ -251,7 +296,7 @@ public struct ProcessesPage: View {
 
     @ViewBuilder
     private func content(
-        rows: [ProcessRow], cpuMaximum: Double?, memoryMaximum: Double?,
+        rows: [ProcessRow], all: [ProcessRow], cpuMaximum: Double?, memoryMaximum: Double?,
         selection: Binding<pid_t?>
     ) -> some View {
         if store.processes == nil {
@@ -264,7 +309,7 @@ public struct ProcessesPage: View {
             // that blames a filter which was never applied.
             message("No process matches \u{201C}\(filter)\u{201D}.")
         } else {
-            table(rows: rows, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum, selection: selection)
+            table(rows: rows, all: all, cpuMaximum: cpuMaximum, memoryMaximum: memoryMaximum, selection: selection)
         }
     }
 
@@ -278,7 +323,7 @@ public struct ProcessesPage: View {
     }
 
     private func table(
-        rows: [ProcessRow], cpuMaximum: Double?, memoryMaximum: Double?,
+        rows: [ProcessRow], all: [ProcessRow], cpuMaximum: Double?, memoryMaximum: Double?,
         selection: Binding<pid_t?>
     ) -> some View {
         Table(rows, selection: selection, sortOrder: $sortOrder, columnCustomization: $columns) {
@@ -343,6 +388,13 @@ public struct ProcessesPage: View {
             }
             .customizationID("architecture")
             .defaultVisibility(.hidden)
+        }
+        .contextMenu(forSelectionType: pid_t.self) { pids in
+            // Single selection: the set is the right-clicked row, or empty
+            // when the click landed below the last row (no menu then).
+            if let pid = pids.first {
+                processMenu(for: pid, in: all)
+            }
         }
         .monospacedDigit()
     }

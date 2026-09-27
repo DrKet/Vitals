@@ -19,7 +19,7 @@ struct ProcessSortTests {
         architecture: ProcessArchitecture = .native
     ) -> ProcessRow {
         ProcessRow(
-            pid: pid, name: name, userName: user, cpuFraction: cpu,
+            pid: pid, name: name, userName: user, userID: 501, cpuFraction: cpu,
             memoryBytes: memory, threadCount: threads, cpuTimeSeconds: cpuTime,
             diskReadBytes: diskRead, diskWrittenBytes: diskWrite, architecture: architecture,
             startTimeSeconds: 1_700_000_000

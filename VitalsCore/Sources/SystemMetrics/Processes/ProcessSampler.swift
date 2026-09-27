@@ -4,7 +4,39 @@ import Foundation
 public enum ProcessSampler {
 
     public static func snapshot() -> [ProcessSnapshot] {
-        kernelProcesses().compactMap(detail(for:))
+        let enumerated = kernelProcesses()
+        let read = enumerated.compactMap { process in detail(for: process).map { (process, $0) } }
+
+        // Re-checked AFTER every rusage/taskinfo read, in one sysctl: a process
+        // can exit mid-scan, and a zombie's rusage reads back zeroed. Zombie
+        // state is one-way, so a process still alive and still the same
+        // process now was alive when its counters were read. (One
+        // KERN_PROC_ALL instead of a KERN_PROC_PID per process: ~0.1 ms vs
+        // ~7 ms per tick.)
+        return stillAlive(read, after: kernelProcesses())
+    }
+
+    /// Keeps only reads whose process is still present, not a zombie, and
+    /// still the same process (raw start-time match) in `after` — see
+    /// `snapshot()` for why this runs after every counter read.
+    ///
+    /// An empty `after` (the re-read itself failed) drops every read — never
+    /// falls back to `read` unfiltered, which would reintroduce zeroed
+    /// zombies.
+    static func stillAlive(
+        _ read: [(kinfo_proc, ProcessSnapshot)], after: [kinfo_proc]
+    ) -> [ProcessSnapshot] {
+        var afterByPID: [pid_t: kinfo_proc] = [:]
+        for process in after { afterByPID[process.kp_proc.p_pid] = process }
+
+        return read.compactMap { enumeratedProcess, snapshot in
+            guard let current = afterByPID[snapshot.pid],
+                  !isZombie(current),
+                  current.kp_proc.p_starttime.tv_sec == enumeratedProcess.kp_proc.p_starttime.tv_sec,
+                  current.kp_proc.p_starttime.tv_usec == enumeratedProcess.kp_proc.p_starttime.tv_usec
+            else { return nil }
+            return snapshot
+        }
     }
 
     /// Every process on the system, via `KERN_PROC_ALL`.
@@ -28,6 +60,12 @@ public enum ProcessSampler {
     private static func detail(for process: kinfo_proc) -> ProcessSnapshot? {
         let pid = process.kp_proc.p_pid
         guard pid > 0 else { return nil }
+
+        // Cheap fast path: already a zombie at enumeration time. `snapshot()`'s
+        // single post-read re-check (one KERN_PROC_ALL, after every detail
+        // read) is what closes the race for a process that becomes a zombie
+        // between enumeration and here.
+        guard !isZombie(process) else { return nil }
 
         errno = 0
         var usage = rusage_info_v4()
@@ -86,11 +124,68 @@ public enum ProcessSampler {
             diskBytesRead: usageResult == 0 ? usage.ri_diskio_bytesread : nil,
             diskBytesWritten: usageResult == 0 ? usage.ri_diskio_byteswritten : nil,
             architecture: architecture(of: process),
-            // p_starttime is a timeval (integer seconds + microseconds); this
-            // is the process's identity anchor, not a displayed value.
-            startTimeSeconds: Double(process.kp_proc.p_starttime.tv_sec)
-                + Double(process.kp_proc.p_starttime.tv_usec) / 1_000_000
+            startTimeSeconds: startTimeSeconds(of: process)
         )
+    }
+
+    /// The identity of one process, read afresh from the kernel — `nil` when
+    /// no process has that pid.
+    ///
+    /// This is what `ProcessControl` checks immediately before signalling, so
+    /// it must produce exactly what `snapshot()` produced for the same
+    /// process. Both go through `startTimeSeconds(of:)`; never convert
+    /// `p_starttime` anywhere else. A zombie has exited, so it has no
+    /// identity either.
+    public static func identity(of pid: pid_t) -> ProcessIdentity? {
+        guard let process = kernelProcess(pid: pid), !isZombie(process) else { return nil }
+        return ProcessIdentity(pid: pid, startTimeSeconds: startTimeSeconds(of: process))
+    }
+
+    /// The executable's path (`proc_pidpath`), or `nil` when it cannot be
+    /// read — the process exited, or it belongs to another user and the
+    /// kernel declines to say.
+    public static func executablePath(of pid: pid_t) -> String? {
+        // `PROC_PIDPATHINFO_MAXSIZE` (from `sys/proc_info.h`) is unavailable in
+        // this SDK ("structure not supported"), so its own definition —
+        // `4 * MAXPATHLEN` — is inlined here instead.
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    /// One process via `KERN_PROC_PID`. For a pid with no process the call
+    /// still succeeds but reports a zero length, which is what the length
+    /// check catches.
+    ///
+    /// Internal (not private) so tests can observe a zombie's state.
+    static func kernelProcess(pid: pid_t) -> kinfo_proc? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var process = kinfo_proc()
+        var length = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, u_int(mib.count), &process, &length, nil, 0) == 0,
+              length == MemoryLayout<kinfo_proc>.stride else { return nil }
+        return process
+    }
+
+    /// A process that has exited but not yet been reaped by its parent.
+    /// It still appears in `KERN_PROC_ALL`, and `proc_pid_rusage` on it
+    /// succeeds with every counter zeroed — including a 0-byte footprint the
+    /// process never had. It has exited: treat it exactly as gone.
+    static func isZombie(_ process: kinfo_proc) -> Bool {
+        Int32(process.kp_proc.p_stat) == SZOMB
+    }
+
+    /// `p_starttime` (a timeval: integer seconds + microseconds) as seconds
+    /// since the epoch. The process's identity anchor, not a displayed value.
+    ///
+    /// The ONE place this conversion is written. `ProcessIdentity` compares
+    /// the result exactly, so a second hand-written copy that rounded even
+    /// slightly differently could make a live process fail its own identity
+    /// check.
+    static func startTimeSeconds(of process: kinfo_proc) -> Double {
+        Double(process.kp_proc.p_starttime.tv_sec)
+            + Double(process.kp_proc.p_starttime.tv_usec) / 1_000_000
     }
 
     /// `P_TRANSLATED` (from `sys/proc.h`) marks a process running under Rosetta.

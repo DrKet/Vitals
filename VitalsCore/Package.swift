@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "SystemMetrics", targets: ["SystemMetrics"]),
         .library(name: "MetricsEngine", targets: ["MetricsEngine"]),
+        .library(name: "ProcessControl", targets: ["ProcessControl"]),
         .library(name: "VitalsUI", targets: ["VitalsUI"]),
         .executable(name: "vitals-dump", targets: ["vitals-dump"]),
         .executable(name: "VitalsApp", targets: ["VitalsApp"]),
@@ -22,8 +23,13 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .target(
+            name: "ProcessControl",
+            dependencies: ["SystemMetrics"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .target(
             name: "VitalsUI",
-            dependencies: ["SystemMetrics", "MetricsEngine"],
+            dependencies: ["SystemMetrics", "MetricsEngine", "ProcessControl"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(
@@ -44,6 +50,10 @@ let package = Package(
         .testTarget(
             name: "MetricsEngineTests",
             dependencies: ["MetricsEngine"]
+        ),
+        .testTarget(
+            name: "ProcessControlTests",
+            dependencies: ["ProcessControl", "SystemMetrics"]
         ),
         .testTarget(
             name: "VitalsUITests",

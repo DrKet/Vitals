@@ -41,6 +41,8 @@ VitalsCore/                     Swift package root — all code lives here
   Sources/
     SystemMetrics/              Mach/sysctl/IOKit sampling. No UI, no engine.
     MetricsEngine/              Actor scheduling samplers on cadences.
+    ProcessControl/             Identity-checked Quit / Force Quit. Depends on
+                                SystemMetrics only; the one module that acts.
     VitalsUI/                   SwiftUI views, charts, design tokens.
       Charts/                   Pure chart maths + the Canvas renderer.
       Components/               Reusable pieces (StatRow, MetricTile, …).
@@ -139,7 +141,7 @@ tests is this, not a bug in whatever test happened to be running.
 Two things this is *not*, both of which were suspected at the time: it is not
 the `system_profiler` subprocess, and it is not machine load. Load produces a
 different and unmistakable signature — `waitUntil` timeouts recorded at
-`MetricsStoreTests.swift:563`, with the suite still reporting a normal
+`MetricsStoreTests.swift:618`, with the suite still reporting a normal
 pass/fail summary. Signal 11 kills the run with no summary line at all.
 
 ## Testing the UI — read this before writing a render test
@@ -214,6 +216,17 @@ to be a different page.
 
 - `host_page_size()` ≠ `vm_kernel_page_size`. The first is process-local; using
   it for kernel page counts gives a 4× error under Rosetta.
+- **Zombies read back as zeroes.** A process that has exited but not been
+  reaped still appears in `KERN_PROC_ALL`, and `proc_pid_rusage` on it
+  succeeds with a 0-byte footprint and zero CPU time. `ProcessSampler` skips
+  `SZOMB` processes — re-checked *after* the rusage read, since a process can
+  exit mid-scan — and gives them no identity. The intermittent `ProcessTests`
+  "footprint … never zero" failure was this, not load.
+- **`kill(2)` pid 0 is not `kernel_task`.** `kill(0, sig)` signals the
+  caller's own process group, and a negative pid a whole group.
+  `ProcessControl` refuses pid ≤ 0 before anything else; `KERN_PROC_PID` with
+  pid 0 happily returns `kernel_task`, so an identity check alone does not
+  catch it.
 - `PROC_FLAG_TRANSLATED` does not exist in the SDK — use `P_TRANSLATED` on
   `kinfo_proc.kp_proc.p_flag`.
 - Distinguish `ESRCH` from `EPERM` when walking processes, or every root process
@@ -254,8 +267,10 @@ to be a different page.
 ## Current state
 
 Complete: the metrics foundation, the UI shell, the Overview (tiles for all
-five series), the Processes table, the CPU, Memory, GPU, Storage, Network,
-Sensors and Battery pages, and a distributable `.app` bundle (v0.1.0).
+five series), the Processes table (with selection and a context menu: Copy
+PID/Name, Reveal in Finder, confirmed Quit / Force Quit), the CPU, Memory,
+GPU, Storage, Network, Sensors and Battery pages, and a distributable `.app`
+bundle (v0.1.0).
 
 The Sensors page shows temperatures only, and the reason matters if you are
 thinking of adding fans.
@@ -281,8 +296,13 @@ History pages.
 
 Known gaps, if you're looking for something to pick up:
 
-- The Processes table has no `selection:` binding. Every deferred slice of
-  that milestone — context menu, inspector, tree view — needs one first.
+- The Processes context menu covers Copy PID/Name, Reveal in Finder, Quit and
+  Force Quit, on your own processes only. Suspend/Resume, renice, Sample,
+  Spindump and Inspect are still to come; acting on root's or other users'
+  processes needs the privileged helper. Add signal-based actions to
+  `ProcessControl`, and keep every one of them behind its identity re-check.
+  `ProcessControl` refuses pid ≤ 0 but relies on the kernel's EPERM for pid 1
+  — add an explicit pid-1 refusal there before any privileged path exists.
 - `ProcessComparator.compareValues` has a NaN/transitivity edge. Unreachable
   today, because nothing feeds it a NaN.
 

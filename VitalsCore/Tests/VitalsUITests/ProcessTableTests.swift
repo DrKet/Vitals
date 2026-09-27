@@ -10,7 +10,7 @@ struct ProcessTableTests {
 
     private func row(_ pid: pid_t, name: String = "p", cpu: Double? = 0, memory: UInt64? = 0) -> ProcessRow {
         ProcessRow(
-            pid: pid, name: name, userName: "u", cpuFraction: cpu, memoryBytes: memory,
+            pid: pid, name: name, userName: "u", userID: 501, cpuFraction: cpu, memoryBytes: memory,
             threadCount: nil, cpuTimeSeconds: nil, diskReadBytes: nil,
             diskWrittenBytes: nil, architecture: .native, startTimeSeconds: 1_700_000_000
         )
@@ -18,7 +18,7 @@ struct ProcessTableTests {
 
     private func row(_ pid: pid_t, startTime: Double, name: String = "p") -> ProcessRow {
         ProcessRow(
-            pid: pid, name: name, userName: "u", cpuFraction: 0, memoryBytes: 0,
+            pid: pid, name: name, userName: "u", userID: 501, cpuFraction: 0, memoryBytes: 0,
             threadCount: nil, cpuTimeSeconds: nil, diskReadBytes: nil,
             diskWrittenBytes: nil, architecture: .native, startTimeSeconds: startTime
         )
