@@ -11,84 +11,8 @@ public struct OverviewPage: View {
         self.store = store
     }
 
-    /// One tile's worth of state, so the grid can lay them out generically.
-    private struct Tile: Identifiable {
-        let id: String
-        let label: String
-        let value: String?
-        let accent: Color
-        let fraction: Double?
-        let series: [ChartSeries]
-    }
-
-    private var tiles: [Tile] {
-        Self.tileOrder(hasBattery: store.profile?.hasBattery == true).compactMap(tile(for:))
-    }
-
-    private func tile(for id: String) -> Tile? {
-        switch id {
-        case "cpu":
-            return Tile(
-                id: "cpu", label: "CPU",
-                value: store.cpu.map { "\(Int(($0.total * 100).rounded()))%" },
-                accent: Vitals.Palette.cpu,
-                fraction: store.cpu?.total,
-                series: cpuSeries
-            )
-        case "memory":
-            return Tile(
-                id: "memory", label: "Memory",
-                value: store.memory.map { Vitals.formatKnownByteCountInGigabytes($0.used) },
-                accent: Vitals.Palette.memory,
-                fraction: Self.memoryFraction(
-                    usedBytes: store.memory?.used,
-                    totalBytes: store.profile?.memory.totalBytes
-                ),
-                series: memorySeries
-            )
-        case "gpu":
-            return Tile(
-                id: "gpu", label: "GPU",
-                value: Self.gpuTileValue(
-                    sample: store.gpu?.first,
-                    gpuCount: store.profile?.gpus.count ?? 0,
-                    sampleCount: store.gpu?.count ?? 0
-                ),
-                accent: Vitals.Palette.gpu,
-                fraction: Self.gpuTileFraction(
-                    sample: store.gpu?.first,
-                    gpuCount: store.profile?.gpus.count ?? 0,
-                    sampleCount: store.gpu?.count ?? 0
-                ),
-                series: gpuSeries
-            )
-        case "storage":
-            return Tile(
-                id: "storage", label: "Storage",
-                value: StoragePage.primaryValue(store.diskIO),
-                accent: Vitals.Palette.storage,
-                fraction: nil,
-                series: storageSeries
-            )
-        case "network":
-            return Tile(
-                id: "network", label: "Network",
-                value: Self.networkTileValue(store.network),
-                accent: Vitals.Palette.network,
-                fraction: nil,
-                series: networkSeries
-            )
-        case "battery":
-            return Tile(
-                id: "battery", label: "Battery",
-                value: store.battery.map { "\($0.chargePercent)%" },
-                accent: Vitals.Palette.battery,
-                fraction: store.battery.map { Double($0.chargePercent) / 100 },
-                series: batterySeries
-            )
-        default:
-            return nil
-        }
+    private var tiles: [OverviewTile] {
+        OverviewTiles.tiles(ids: Self.tileOrder(hasBattery: store.profile?.hasBattery == true), store: store)
     }
 
     public var body: some View {
@@ -127,27 +51,6 @@ public struct OverviewPage: View {
             guard store.profile?.hasBattery == true else { return }
             await store.stream(.battery)
         }
-    }
-
-    private var cpuSeries: [ChartSeries] {
-        [
-            ChartSeries(
-                name: "CPU",
-                values: store.cpuHistory.map(\.sample.total),
-                timestamps: store.cpuHistory.map(\.timestamp)
-            )
-        ]
-    }
-
-    private var memorySeries: [ChartSeries] {
-        guard let total = store.profile?.memory.totalBytes, total > 0 else { return [] }
-        return [
-            ChartSeries(
-                name: "Used",
-                values: store.memoryHistory.map { Double($0.sample.used) / Double(total) },
-                timestamps: store.memoryHistory.map(\.timestamp)
-            )
-        ]
     }
 
     // MARK: GPU
@@ -193,14 +96,6 @@ public struct OverviewPage: View {
         )
     }
 
-    private var gpuSeries: [ChartSeries] {
-        Self.gpuTileSeries(
-            history: store.gpuHistory,
-            gpuCount: store.profile?.gpus.count ?? 0,
-            sampleCount: store.gpu?.count ?? 0
-        )
-    }
-
     // MARK: Memory
 
     /// The Memory tile's bar value: used over total, or `nil` when there is no
@@ -222,10 +117,6 @@ public struct OverviewPage: View {
         StoragePage.totalThroughputSeries(history: history)
     }
 
-    private var storageSeries: [ChartSeries] {
-        Self.storageTileSeries(history: store.diskIOHistory)
-    }
-
     // MARK: Network
 
     /// Same primary as `NetworkPage`, including the lo0-only → nil gate so a
@@ -244,26 +135,6 @@ public struct OverviewPage: View {
     /// routes through `totalThroughputSeries`, not `throughputSeries`.
     static func networkTileSeries(history: [Timestamped<[String: NetworkThroughput]>]) -> [ChartSeries] {
         NetworkPage.totalThroughputSeries(history: history)
-    }
-
-    private var networkSeries: [ChartSeries] {
-        Self.networkTileSeries(history: store.networkHistory)
-    }
-
-    // MARK: Battery
-
-    /// The Battery tile's spark: charge over time as a fraction, matching the
-    /// tile's own percentage headline and its bar. Timestamps travel alongside
-    /// so the chart breaks over the gaps that subscription-driven sampling
-    /// leaves, exactly as every other tile series does.
-    private var batterySeries: [ChartSeries] {
-        [
-            ChartSeries(
-                name: "Charge",
-                values: store.batteryHistory.map { Double($0.sample.chargePercent) / 100 },
-                timestamps: store.batteryHistory.map(\.timestamp)
-            )
-        ]
     }
 
     // MARK: Tile ordering

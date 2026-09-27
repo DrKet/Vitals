@@ -52,6 +52,8 @@ public struct MetricChart: View {
     private let colors: [Color]
     private let showsAxisMaximum: Bool
     private let glow: Vitals.Chart.Glow
+    private let minimumHeight: CGFloat
+    private let reservesTrailingLiveDotRoom: Bool
 
     /// - Parameter series: **Order is load-bearing.** In stacked area mode the
     ///   first series is the base band and every later one accumulates on top of
@@ -76,18 +78,46 @@ public struct MetricChart: View {
     ///   it gets a harmless flourish, not the silent correctness bug a
     ///   defaulted `showsAxisMaximum` would reintroduce. Every chart in the app,
     ///   Overview tiles included, draws the house `Vitals.Chart.glow`.
+    /// - Parameter minimumHeight: the floor `body` reserves via
+    ///   `.frame(minHeight:maxHeight: .infinity)`. Defaults to
+    ///   `Vitals.Metrics.chartHeight` (132pt) — every existing hardware-page
+    ///   and Overview-tile chart keeps that floor unchanged. A compact
+    ///   embedder that truly needs less, such as the menu-bar dropdown's
+    ///   28pt sparkline, passes a smaller value here; without this, an outer
+    ///   `.frame(height:)` smaller than the floor cannot shrink the chart,
+    ///   and with no clipping anywhere in the stack the overflow bleeds into
+    ///   whatever the caller placed below it.
+    /// - Parameter reservesTrailingLiveDotRoom: whether the plotting rect —
+    ///   shared, via `plotRect(in:reservesTrailingLiveDotRoom:)`, by both the
+    ///   renderer and the crosshair, so they can never disagree about where
+    ///   a sample sits (see that function's doc comment) — insets its own
+    ///   trailing edge by `liveDotHaloRadius`. Defaults to `false`, the exact
+    ///   prior geometry for every existing embedder. In `.endpoints` spacing
+    ///   the last sample always plots at the plot rect's own `maxX`, so the
+    ///   live dot's halo is centred exactly on that edge when this is off —
+    ///   `Canvas` rasterises into a buffer sized to its own `size`, so the
+    ///   half of the halo past that edge has no pixels to paint into no
+    ///   matter what an *outer* view does (verified empirically: a 100pt
+    ///   clip-shape outset and no clip at all both reproduce the identical
+    ///   half-circle). `true` pulls the last sample, and its dot, that far
+    ///   inside the chart's own bounds instead — currently only the
+    ///   menu-bar dropdown's compact sparkline asks for this.
     public init(
         series: [ChartSeries],
         style: ChartStyle,
         colors: [Color],
         showsAxisMaximum: Bool,
-        glow: Vitals.Chart.Glow = Vitals.Chart.glow
+        glow: Vitals.Chart.Glow = Vitals.Chart.glow,
+        minimumHeight: CGFloat = Vitals.Metrics.chartHeight,
+        reservesTrailingLiveDotRoom: Bool = false
     ) {
         self.series = series
         self.style = style
         self.colors = colors
         self.showsAxisMaximum = showsAxisMaximum
         self.glow = glow
+        self.minimumHeight = minimumHeight
+        self.reservesTrailingLiveDotRoom = reservesTrailingLiveDotRoom
     }
 
     @State private var hoverX: CGFloat?
@@ -100,19 +130,69 @@ public struct MetricChart: View {
     /// The live dot's outer halo radius (see `drawAreas`). Also fed to
     /// `ChartGeometry.headroom`: if the newest sample is the peak, the dot
     /// needs the same clearance the stroke and the smoothing curve do.
-    private static let liveDotHaloRadius: CGFloat = 9
+    ///
+    /// Internal rather than private so `MetricChartTests` can assert
+    /// `plotRect`'s inset against this exact value, rather than a second
+    /// copy of the number living in the test file.
+    static let liveDotHaloRadius: CGFloat = 9
     private static let liveDotRadius: CGFloat = 3
+
+    /// The horizontal extent to plot samples against — and the one the
+    /// crosshair maps hits against too, via `crosshair(in:)`'s `rect`
+    /// parameter, since `body` computes both from this same function. That
+    /// is what keeps them from ever disagreeing about where a sample sits,
+    /// the same guarantee `ChartGeometry.sampleX` gives on its own (see its
+    /// doc comment) — this is the analogous single source of truth for the
+    /// one thing `sampleX` does not itself decide: how wide the rect it is
+    /// evaluated against actually is.
+    ///
+    /// Only the horizontal extent ever changes here; `minY`/`height` pass
+    /// through untouched — the same contract `ChartGeometry.insetForHeadroom`
+    /// has, on the opposite axis (see its doc comment). That function still
+    /// only insets vertically; this one only insets horizontally, and only
+    /// when asked. They compose (`body` applies this first, then
+    /// `insetForHeadroom` for the `.area` case's top headroom).
+    ///
+    /// `reservesTrailingLiveDotRoom` insets the trailing edge by
+    /// `liveDotHaloRadius`, so the live dot centred on the last sample (see
+    /// `drawAreas`) sits fully inside the chart's own bounds instead of
+    /// having half its halo cut off by `Canvas`'s own raster bounds — a hard
+    /// limit no outer clip can recover from (`Canvas` rasterises into a
+    /// buffer sized to its own frame). `false`, the default every existing
+    /// call site still passes, keeps the exact prior geometry: the last
+    /// sample sits exactly at the trailing edge.
+    ///
+    /// Internal, not private: exercised directly by `MetricChartTests` to
+    /// prove the renderer and the crosshair can never see different rects.
+    static func plotRect(in rect: CGRect, reservesTrailingLiveDotRoom: Bool) -> CGRect {
+        guard reservesTrailingLiveDotRoom else { return rect }
+        return CGRect(
+            x: rect.minX, y: rect.minY,
+            width: max(rect.width - Self.liveDotHaloRadius, 0),
+            height: rect.height
+        )
+    }
 
     public var body: some View {
         GeometryReader { proxy in
-            let rect = CGRect(origin: .zero, size: proxy.size)
+            // The one plot rect: computed here from the `GeometryReader`'s
+            // `proxy.size` and captured by the `Canvas` closure below, rather
+            // than recomputed from that closure's own `size` — `proxy.size`
+            // and the `Canvas` closure's `size` are the same size, so a
+            // second call to `plotRect` would just be a second copy of this
+            // same value. Sharing the one binding is what keeps the renderer
+            // and the crosshair (via `crosshair(in: rect)` below) from ever
+            // seeing different rects — see `plotRect`'s doc comment.
+            let rect = Self.plotRect(
+                in: CGRect(origin: .zero, size: proxy.size),
+                reservesTrailingLiveDotRoom: reservesTrailingLiveDotRoom
+            )
 
-            Canvas { context, size in
-                let canvasRect = CGRect(origin: .zero, size: size)
+            Canvas { context, _ in
                 let bands = resolvedBands()
 
                 guard !bands.isEmpty else {
-                    drawGridlines(in: &context, rect: canvasRect)
+                    drawGridlines(in: &context, rect: rect)
                     return
                 }
                 // All series on one chart share a unit — see `unit(for:)` —
@@ -125,7 +205,7 @@ public struct MetricChart: View {
                     // Gridlines are drawn against the *same* inset rect as the
                     // data, not the raw canvas: they mark fractions of the
                     // value scale, and that scale now lives inside
-                    // `plotRect`. Drawing them against `canvasRect` instead
+                    // `plotRect`. Drawing them against `rect` instead
                     // would leave the 50% line, say, not actually passing
                     // through the chart's own 50%-height data.
                     let topHeadroom = ChartGeometry.headroom(
@@ -150,7 +230,10 @@ public struct MetricChart: View {
                     // render for a defect that is barely visible in
                     // practice — see the chart-headroom report for the
                     // pixel-level comparison this was based on.
-                    let plotRect = ChartGeometry.insetForHeadroom(canvasRect, top: topHeadroom)
+                    // `rect` already carries the trailing inset, if any
+                    // (see `plotRect`'s doc comment above) — this only adds
+                    // the vertical headroom on top of it.
+                    let plotRect = ChartGeometry.insetForHeadroom(rect, top: topHeadroom)
                     drawGridlines(in: &context, rect: plotRect)
                     drawAreas(
                         bands,
@@ -172,9 +255,9 @@ public struct MetricChart: View {
                     // make two bars of equal height represent different
                     // readings. `scale.lower` is deliberately not threaded in
                     // here — only the area path floats.
-                    drawGridlines(in: &context, rect: canvasRect)
-                    drawHistogram(bands, bound: scale.upper, in: &context, rect: canvasRect)
-                    drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: canvasRect)
+                    drawGridlines(in: &context, rect: rect)
+                    drawHistogram(bands, bound: scale.upper, in: &context, rect: rect)
+                    drawAxisMaximum(bands, unit: chartUnit, in: &context, rect: rect)
                 }
             }
             .overlay { crosshair(in: rect) }
@@ -187,7 +270,7 @@ public struct MetricChart: View {
         }
         // A floor, not a fixed size: the chart claims leftover vertical space
         // so a tall tile shows more history rather than more emptiness.
-        .frame(minHeight: Vitals.Metrics.chartHeight, maxHeight: .infinity)
+        .frame(minHeight: minimumHeight, maxHeight: .infinity)
     }
 
     @ViewBuilder

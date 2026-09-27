@@ -119,8 +119,10 @@ public final class MetricsStore {
     public static let keepWarmSeries: Set<SeriesKey> = [.cpu, .memory, .gpu, .network, .diskIO]
 
     /// Subscribes to every series in `keepWarmSeries` and keeps them sampling
-    /// until cancelled. Call once from the app's root view; the subscriptions
-    /// then live for the whole session.
+    /// until cancelled. Started once by `AppModel.startIfNeeded()`, for the
+    /// app's whole lifetime — with or without a window open — not by any
+    /// view; see that function and the menu-bar exception to
+    /// "subscription-driven sampling" in AGENTS.md.
     ///
     /// Each child runs `stream(_:)`, which loops until its subscription ends,
     /// so this never returns on its own — cancelling the caller cancels the

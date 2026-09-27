@@ -4,66 +4,211 @@ import SwiftUI
 import SystemMetrics
 import VitalsUI
 
-/// Quits when the window closes — this is a single-window utility, and a
-/// lingering invisible process is a real failure mode this project has hit.
+/// Keeps Vitals running when its window closes: the menu-bar item carries it
+/// from then on, and the Dock icon goes with the window (`AppLifecycle`).
+/// Quit is explicit — the dropdown's Quit Vitals, or ⌘Q.
 ///
-/// The activation policy that used to live here is now automatic: AppKit
-/// defaults a bundled `.app`'s activation policy to `.regular` on its own.
-/// `Info.plist`'s role is only the *absence* of `LSUIElement` /
-/// `LSBackgroundOnly` — either would opt back out of that default.
-///
-/// That default only applies to a real bundle. Running the raw executable
-/// outside one — `swift run VitalsApp`, or the binary under `.build/`
-/// directly — still launches background-only with zero windows; this is the
-/// trap Task 4 found and the one the next person will hit again if they reach
-/// for `swift run` out of habit. Use `scripts/build-app.sh && open
-/// build/Vitals.app` instead. `scripts/verify-app.sh` is what actually proves
-/// a window appears.
+/// A windowless Vitals is intended now, and present in the menu bar. The
+/// trap to still watch for is different: running the raw executable
+/// outside a bundle — `swift run VitalsApp`, or the binary under `.build/`
+/// — launches background-only with zero windows *and no menu-bar item*. Use
+/// `scripts/build-app.sh && open build/Vitals.app`; `scripts/verify-app.sh`
+/// is what proves a window appears.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
     }
 }
 
-@main
-struct VitalsApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var store: MetricsStore?
-    @State private var startupError: String?
-    /// Set synchronously before the first suspension point, so a second window
-    /// opening mid-launch cannot run startup a second time.
-    @State private var didStart = false
+/// State both scenes share, created once for the app's lifetime: the store
+/// (and so every series' history), warm sampling, and which page the window
+/// shows. Held here rather than in the window so closing and reopening the
+/// window never rebuilds it.
+@MainActor
+@Observable
+final class AppModel {
+    private(set) var store: MetricsStore?
+    private(set) var startupError: String?
+    var selection: SidebarSection = .overview
+    /// Runs for the app's whole lifetime, with or without a window. The
+    /// handle is kept — not just fired and forgotten — for the planned
+    /// "throttle sampling while the dropdown is closed" slice, which will
+    /// need to cancel and restart it.
+    private var warmSampling: Task<Void, Never>?
+    /// Set synchronously, before `startIfNeeded()`'s first suspension point,
+    /// so a second call — `VitalsApp.init` is the primary caller; the
+    /// menu-bar label's and the main window's own
+    /// `.task { await model.startIfNeeded() }` are backups, in case either
+    /// one runs too — can't start a second engine on top of the first.
+    private var didStart = false
 
-    var body: some Scene {
-        WindowGroup("Vitals") {
-            Group {
-                if let store {
-                    AppShell(store: store)
-                } else if let startupError {
-                    Text(startupError)
-                        .padding()
-                } else {
-                    ProgressView()
-                }
-            }
-            .frame(minWidth: 900, minHeight: 600)
-            .task { await start() }
-        }
-        .windowStyle(.hiddenTitleBar)
-    }
-
-    private func start() async {
+    /// Starts the engine exactly once, however many times this is called.
+    /// `VitalsApp.init` is the primary trigger — SwiftUI calls it exactly
+    /// once per process, so it can't fail to run the way a view's `.task`
+    /// might: it's undocumented whether SwiftUI runs lifecycle modifiers on
+    /// a status-item label at all, or whether it runs if the item is
+    /// disallowed or hidden. The menu-bar label's and the main window's own
+    /// `.task { await model.startIfNeeded() }` are idempotent backups, not
+    /// the trigger this depends on — `didStart` below is what makes any
+    /// number of callers, in any order, safe.
+    func startIfNeeded() async {
         guard !didStart else { return }
         didStart = true
         do {
-            let profile = try HardwareProfile.detect()
+            // `HardwareProfile.detect()` is synchronous and shells out to
+            // `system_profiler` (`waitUntilExit`); running that on the main
+            // actor would block the app's very first frame. Detached keeps
+            // launch responsive; the result is only ever touched back on
+            // the main actor below. `.userInitiated`: a detached task does
+            // not inherit the caller's priority, and this holds one pool
+            // thread for `system_profiler`'s whole run — acceptable once,
+            // at launch, but not worth risking at a background priority
+            // that could get starved behind other work.
+            let profile = try await Task.detached(priority: .userInitiated) {
+                try HardwareProfile.detect()
+            }.value
             let engine = MetricsEngine()
             await StandardSamplers.registerAll(on: engine)
-            store = MetricsStore(engine: engine, profile: profile)
+            let store = MetricsStore(engine: engine, profile: profile)
+            self.store = store
+            // The menu-bar readout and dropdown show exactly the kept-warm
+            // series, so they sample for as long as the app runs — with or
+            // without a window. See `MetricsStore.keepWarm()`.
+            warmSampling = Task { await store.keepWarm() }
         } catch {
             // Surfaced rather than swallowed: if the machine cannot describe its
             // own hardware, saying so beats an empty window.
             startupError = "Could not read this machine's hardware: \(error)"
         }
+    }
+}
+
+enum MainWindow {
+    static let id = "main"
+}
+
+@main
+struct VitalsApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @State private var model: AppModel
+
+    /// Runs once, from `main()` — unlike any view's `.task`, which SwiftUI
+    /// gives no documented guarantee to run at all on every kind of view
+    /// (see `AppModel.startIfNeeded()`). `AppModel.init` itself stays
+    /// side-effect free; starting the engine is this call, explicitly.
+    init() {
+        let model = AppModel()
+        _model = State(initialValue: model)
+        Task { await model.startIfNeeded() }
+    }
+
+    var body: some Scene {
+        // `Window`, not `WindowGroup`: one main window. `openWindow(id:)` then
+        // brings that window back instead of opening a second one.
+        Window("Vitals", id: MainWindow.id) {
+            MainWindowContent(model: model)
+        }
+        .windowStyle(.hiddenTitleBar)
+        // Vitals can now quit with its window closed (`AppDelegate` above),
+        // so without this, SwiftUI state restoration could relaunch straight
+        // into that state: no window, so `.onAppear` never fires, and the
+        // bundle's default `.regular` activation policy is left stuck with a
+        // Dock icon and nothing to show for it. Pin the window open on every
+        // launch instead — `AppLifecycle` still owns the accessory/regular
+        // decision from then on, as the window opens and closes.
+        .defaultLaunchBehavior(.presented)
+
+        MenuBarExtra {
+            MenuBarContent(model: model)
+        } label: {
+            MenuBarLabelContent(model: model)
+        }
+        .menuBarExtraStyle(.window)
+    }
+}
+
+/// Wraps `MenuBarLabel` so it reads `model.store` inside its own `body`
+/// rather than `VitalsApp.body` reading it directly (see `AppModel.store`'s
+/// `@Observable` tracking) — that is what makes the label repaint through
+/// ordinary SwiftUI view observation as the store's readings change, instead
+/// of depending on the scene's own `body` re-running, which `MenuBarExtra`
+/// gives no guarantee about.
+private struct MenuBarLabelContent: View {
+    let model: AppModel
+
+    var body: some View {
+        MenuBarLabel(store: model.store)
+            // Backup trigger, not the primary one — `VitalsApp.init`
+            // already started this. See `AppModel.startIfNeeded()`.
+            .task { await model.startIfNeeded() }
+    }
+}
+
+private struct MainWindowContent: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        Group {
+            if let store = model.store {
+                AppShell(store: store, selection: $model.selection)
+            } else if let startupError = model.startupError {
+                Text(startupError)
+                    .padding()
+            } else {
+                ProgressView()
+            }
+        }
+        .frame(minWidth: 900, minHeight: 600)
+        // Backup trigger, not the primary one — `VitalsApp.init` already
+        // started this. See `AppModel.startIfNeeded()`.
+        .task { await model.startIfNeeded() }
+        .onAppear { NSApp.setActivationPolicy(AppLifecycle.activationPolicy(mainWindowOpen: true)) }
+        .onDisappear { NSApp.setActivationPolicy(AppLifecycle.activationPolicy(mainWindowOpen: false)) }
+    }
+}
+
+private struct MenuBarContent: View {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+    // `.window`-style `MenuBarExtra` panels can stay open after a button
+    // action instead of dismissing themselves the way a `.menu` one does.
+    // Calling this at the end of `showMainWindow()` is what closes the
+    // dropdown once the window is actually on screen. Only a live run can
+    // confirm it (no render harness drives a real `MenuBarExtra` panel's
+    // dismissal); it is on the owner's live-check list.
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        if let store = model.store {
+            MenuBarPanel(
+                store: store,
+                onOpenPage: { section in
+                    model.selection = section
+                    showMainWindow()
+                },
+                onOpenVitals: showMainWindow,
+                onQuit: { NSApp.terminate(nil) }
+            )
+        } else {
+            // No store yet means no `MenuBarPanel`, so "Open Vitals" is the
+            // only way back to the main window from here — it shows the
+            // startup error (or the loading state) instead of leaving Quit
+            // as the sole option in an accessory app with no Dock icon to
+            // click back to.
+            VStack(alignment: .leading, spacing: 10) {
+                Text(model.startupError ?? "Starting…")
+                Button("Open Vitals", action: showMainWindow)
+                Button("Quit Vitals") { NSApp.terminate(nil) }
+            }
+            .padding(12)
+            .frame(width: MenuBarPanel.width)
+        }
+    }
+
+    private func showMainWindow() {
+        NSApp.setActivationPolicy(AppLifecycle.activationPolicy(mainWindowOpen: true))
+        openWindow(id: MainWindow.id)
+        NSApp.activate()
+        dismiss()
     }
 }

@@ -71,6 +71,20 @@ public struct ChartSeries: Sendable, Equatable {
     }
 }
 
+extension Array where Element == ChartSeries {
+    /// Whether this array actually has anything to plot: at least one series
+    /// with at least one value — not merely a non-empty array of series.
+    ///
+    /// A series can be present with an empty `values` array (nothing sampled
+    /// yet), and an array containing only such series has nothing worth
+    /// drawing. `MetricTile` and `MenuBarPanel`'s dropdown rows both gate
+    /// their chart on this one shared rule, so an unmeasured reading never
+    /// reserves space for a chart that would draw nothing but gridlines.
+    var hasPlottableValues: Bool {
+        contains(where: { !$0.values.isEmpty })
+    }
+}
+
 /// How samples are distributed across a chart's width.
 ///
 /// The two render styles genuinely differ, and the crosshair must use the same
