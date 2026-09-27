@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import SystemMetrics
@@ -73,33 +74,40 @@ struct MenuBarPanelTests {
     /// The GPU and Network accents are ~0.04 apart in hue, so the tolerance
     /// stays tight — the default 0.05 would let one pass for the other.
     ///
-    /// `rowBand(_:)` below gives each row's own y-range. These are pinned,
-    /// not computed live, but they were not guessed: derived by rendering
-    /// `menubar-panel-live.png` and scanning it (a one-off, throwaway
-    /// script, not part of this suite) for each accent's clearly-visible
-    /// extent — alpha > 30, saturation spread > 16/255, hue within 0.015 of
-    /// the target, at columns spread across the row's width but short of the
-    /// live dot's halo near the trailing edge, which is a different colour
-    /// story (opacity 0.18, blended with white) and not representative of
-    /// the row's own band. That scan found five clean, non-overlapping
-    /// bands roughly 54pt apart (consistent with the row layout: 12pt
-    /// padding, then repeating units of a ~13pt label line + 4pt spacing +
-    /// 28pt chart + 10pt row spacing): CPU 88–94pt, Memory 140–150pt, GPU
-    /// 194–206pt, Storage 248–262pt, Network 304–318pt. Each constant below
-    /// is a 40pt window centred on one of those, which comfortably contains
-    /// its own measured band with margin to spare and leaves a 14pt gap to
-    /// its neighbours on both sides — safe even if a row's exact position
-    /// drifts a few points with a future layout tweak.
+    /// `rowBand(index:)` below gives each row's own y-range, *derived* from
+    /// `MenuBarPanel`'s own named layout constants (`padding`,
+    /// `rowInnerSpacing`, `rowSpacing`, `sparklineHeight`) plus one quantity
+    /// this codebase does not declare anywhere as a constant — the actual
+    /// rendered height of one line of `Vitals.Typography.label` (system
+    /// font, size 11, weight medium) — measured once, directly, with the
+    /// same `NSHostingView` machinery `renderPNG` uses (see
+    /// `measuredLabelLineHeight`), not guessed. `body`'s panel is naturally
+    /// shorter than `panelSize.height` (420pt) and SwiftUI centres it, so
+    /// getting the first row's absolute top right also means knowing the
+    /// footer's natural height — the `Divider()` and the button row are
+    /// system chrome with no Vitals-declared size either, so those are
+    /// measured the same way rather than guessed. See
+    /// `measuredDividerHeight`/`measuredFooterHeight`.
+    ///
+    /// Verified against the fixed values this replaced (CPU 88–94pt, Memory
+    /// 140–150pt, GPU 194–206pt, Storage 248–262pt, Network 304–318pt, each
+    /// independently measured off a real render by scanning
+    /// `menubar-panel-live.png`): the derived first-row chart top lands at
+    /// 70.5pt against a pinned-and-verified 70pt, and the derived ~56pt
+    /// row-to-row step accounts for the small, consistent gap between the
+    /// old literals (chosen 54pt apart) and the four real measured bands
+    /// (54–56pt apart) — both numbers agree to within a point, well inside
+    /// each band's margin.
     @Test("with live data, every row's sparkline paints its own accent, in its own row")
     func everyRowPaintsItsAccent() async throws {
         let store = try await liveStore()
         let rendered = try renderPNG(panel(store), size: Self.panelSize, named: "menubar-panel-live")
         let rows: [(accent: Color, band: CGRect)] = [
-            (Vitals.Palette.cpu, Self.rowBand(top: 70)),
-            (Vitals.Palette.memory, Self.rowBand(top: 124)),
-            (Vitals.Palette.gpu, Self.rowBand(top: 178)),
-            (Vitals.Palette.storage, Self.rowBand(top: 232)),
-            (Vitals.Palette.network, Self.rowBand(top: 286)),
+            (Vitals.Palette.cpu, Self.rowBand(index: 0)),
+            (Vitals.Palette.memory, Self.rowBand(index: 1)),
+            (Vitals.Palette.gpu, Self.rowBand(index: 2)),
+            (Vitals.Palette.storage, Self.rowBand(index: 3)),
+            (Vitals.Palette.network, Self.rowBand(index: 4)),
         ]
         for (accent, band) in rows {
             #expect(
@@ -109,11 +117,82 @@ struct MenuBarPanelTests {
         }
     }
 
-    /// A 40pt-tall, full-width probe band starting at `top`. See
-    /// `everyRowPaintsItsAccent`'s doc comment for where the five `top`
-    /// values (70, 124, 178, 232, 286) come from.
-    private static func rowBand(top: CGFloat) -> CGRect {
-        CGRect(x: 0, y: top, width: MenuBarPanel.width, height: 40)
+    /// One line of `Vitals.Typography.label`'s actual rendered height.
+    /// Measured, not guessed: this codebase declares no line-height token
+    /// for it, and a system font's line height is resolved by AppKit at
+    /// render time, not something Vitals states anywhere as a number.
+    private static let measuredLabelLineHeight: CGFloat = {
+        let hosting = NSHostingView(rootView: Text("Ag").font(Vitals.Typography.label))
+        hosting.frame = NSRect(origin: .zero, size: CGSize(width: 200, height: 100))
+        return hosting.fittingSize.height
+    }()
+
+    /// `Divider()`'s actual rendered thickness — system chrome with no
+    /// Vitals-declared size, needed (with `measuredFooterHeight`) to derive
+    /// the panel's total natural height, and so where SwiftUI centres it
+    /// within `panelSize`.
+    private static let measuredDividerHeight: CGFloat = {
+        let hosting = NSHostingView(rootView: Divider())
+        hosting.frame = NSRect(origin: .zero, size: CGSize(width: 200, height: 100))
+        return hosting.fittingSize.height
+    }()
+
+    /// The footer `HStack { Button; Spacer; Button }`'s actual rendered
+    /// height — dominated by the default button style's own chrome, again
+    /// not a Vitals-declared size.
+    private static let measuredFooterHeight: CGFloat = {
+        let footer = HStack {
+            Button("Open Vitals") {}
+            Spacer()
+            Button("Quit Vitals") {}
+        }
+        let hosting = NSHostingView(rootView: footer)
+        hosting.frame = NSRect(origin: .zero, size: CGSize(width: 200, height: 100))
+        return hosting.fittingSize.height
+    }()
+
+    /// One row's own content height: its label line, `rowInnerSpacing`, and
+    /// its chart — the same stack `row(_:)` builds.
+    private static var rowContentHeight: CGFloat {
+        measuredLabelLineHeight + MenuBarPanel.rowInnerSpacing + MenuBarPanel.sparklineHeight
+    }
+
+    /// The vertical distance from one row's chart top to the next.
+    private static var rowStep: CGFloat { rowContentHeight + MenuBarPanel.rowSpacing }
+
+    /// The panel's own natural (unconstrained) height: `body`'s outer
+    /// `VStack` — every row, the divider, the footer, all `MenuBarPanel.rowSpacing`
+    /// gaps between them — plus `body`'s own `.padding(MenuBarPanel.padding)`.
+    private static var naturalPanelHeight: CGFloat {
+        let rowCount = MenuBarPanel.rowIDs.count
+        let childCount = rowCount + 2 // + Divider + footer HStack
+        let content = CGFloat(rowCount) * rowContentHeight
+            + measuredDividerHeight + measuredFooterHeight
+            + CGFloat(childCount - 1) * MenuBarPanel.rowSpacing
+        return content + 2 * MenuBarPanel.padding
+    }
+
+    /// `body`'s content is naturally shorter than `panelSize.height`, and a
+    /// `.frame(width:)` with no matching height constraint centres its child
+    /// by default — this is that offset.
+    private static var contentCenteringOffset: CGFloat {
+        (panelSize.height - naturalPanelHeight) / 2
+    }
+
+    /// The first row's chart's own top: past the centring offset, the
+    /// panel's padding, and the first row's own label line and inner
+    /// spacing.
+    private static var firstRowChartTop: CGFloat {
+        contentCenteringOffset + MenuBarPanel.padding + measuredLabelLineHeight + MenuBarPanel.rowInnerSpacing
+    }
+
+    /// A full-width probe band around row `index`'s chart: 6pt of margin
+    /// above and below its own `sparklineHeight`, comfortably inside the
+    /// ~16pt gap `rowStep - (sparklineHeight + 12)` leaves to its neighbours
+    /// on both sides without reaching into them.
+    private static func rowBand(index: Int) -> CGRect {
+        let top = firstRowChartTop + CGFloat(index) * rowStep - 6
+        return CGRect(x: 0, y: top, width: MenuBarPanel.width, height: MenuBarPanel.sparklineHeight + 12)
     }
 
     /// Nothing measured must paint nothing: no zero-height bars or flat
@@ -141,20 +220,6 @@ struct MenuBarPanelTests {
         #expect(try regionHasContent(in: live, region: labelRect))
     }
 
-    /// `row(_:)` must reserve a chart band only when there is real chart
-    /// data — the same rule `MetricTile` uses (`series.contains(where: {
-    /// !$0.values.isEmpty })`, `MetricTile.swift` ~line 50), not the looser
-    /// `!series.isEmpty`. The CPU tile's series is always exactly one
-    /// `ChartSeries`, so on a freshly empty store it is present but carries
-    /// no values — `!series.isEmpty` would still be true and the CPU row
-    /// would reserve a chart (drawing faint gridlines) for a reading that
-    /// was never taken.
-    @Test("hasChartData mirrors MetricTile's emptiness rule: no series, or series with no values, is not chart data")
-    func hasChartDataMatchesMetricTileRule() {
-        #expect(MenuBarPanel.hasChartData([]) == false)
-        #expect(MenuBarPanel.hasChartData([ChartSeries(name: "CPU", values: [], timestamps: [])]) == false)
-        #expect(MenuBarPanel.hasChartData([ChartSeries(name: "CPU", values: [0.4], timestamps: [1000])]) == true)
-    }
 
     /// `MetricChart` floors its own height at `Vitals.Metrics.chartHeight`
     /// (132pt) so a full hardware-page chart never collapses. A compact

@@ -387,4 +387,50 @@ struct MetricChartTests {
             threshold: 0.2
         ))
     }
+
+    // MARK: plotRect
+
+    /// `plotRect(in:reservesTrailingLiveDotRoom:)` is the one function `body`
+    /// uses to compute both the renderer's `canvasRect` and the rect it hands
+    /// `crosshair(in:)` — so a pure check on the function itself is enough to
+    /// prove the two can never disagree, without needing to render anything.
+    /// See its doc comment on `MetricChart` for the full reasoning (mirrors
+    /// `ChartGeometry.sampleX` being the one source of truth for where a
+    /// sample sits, but for how wide the rect it is evaluated against is).
+    @Test("plotRect insets the trailing edge by the live dot's own halo radius when reserving room for it, exactly, and leaves the rect untouched otherwise")
+    func plotRectReservesTrailingLiveDotRoomExactly() {
+        let outer = CGRect(x: 0, y: 0, width: 300, height: 28)
+
+        let off = MetricChart.plotRect(in: outer, reservesTrailingLiveDotRoom: false)
+        #expect(off == outer)
+
+        let on = MetricChart.plotRect(in: outer, reservesTrailingLiveDotRoom: true)
+        #expect(on.minX == outer.minX)
+        #expect(on.height == outer.height)
+        #expect(on.maxX == outer.maxX - MetricChart.liveDotHaloRadius)
+    }
+
+    /// The renderer plots the last sample at the plot rect's own `maxX` (see
+    /// `ChartGeometry.points`, `.endpoints` spacing); the crosshair maps a
+    /// hover position to a sample index via `ChartGeometry.sampleX` on
+    /// whatever rect it is given. Both now come from the *same* `plotRect`
+    /// call inside `body`, so evaluating `sampleX` on `plotRect`'s own output
+    /// — exactly what the crosshair does — proves the last sample's x sits
+    /// `liveDotHaloRadius` inside the outer trailing edge when reserving
+    /// room, and exactly at the edge otherwise: the renderer and the
+    /// crosshair are provably looking at the same geometry, not two
+    /// independently-computed rects that happen to agree today.
+    @Test("the crosshair's sample math against plotRect's output lands where the renderer actually plots the last sample")
+    func plotRectKeepsCrosshairAndRendererInAgreement() {
+        let outer = CGRect(x: 0, y: 0, width: 300, height: 28)
+        let count = 4
+
+        let off = MetricChart.plotRect(in: outer, reservesTrailingLiveDotRoom: false)
+        let xOff = ChartGeometry.sampleX(at: count - 1, in: off, count: count, spacing: .endpoints)
+        #expect(xOff == outer.maxX)
+
+        let on = MetricChart.plotRect(in: outer, reservesTrailingLiveDotRoom: true)
+        let xOn = ChartGeometry.sampleX(at: count - 1, in: on, count: count, spacing: .endpoints)
+        #expect(xOn == outer.maxX - MetricChart.liveDotHaloRadius)
+    }
 }

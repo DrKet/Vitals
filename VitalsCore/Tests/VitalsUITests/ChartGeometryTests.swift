@@ -379,4 +379,22 @@ struct ChartGeometryTests {
     func temperatureFormatting() {
         #expect(ChartUnit.temperature.formatted(38.82) == "38.8 °C")
     }
+
+    // MARK: hasPlottableValues
+
+    /// `MetricTile` and `MenuBarPanel`'s dropdown rows both gate their chart
+    /// on this one predicate instead of each carrying its own copy — see its
+    /// doc comment. The CPU tile's/row's series is always exactly one
+    /// `ChartSeries`; on a freshly empty store it is present but carries no
+    /// values, so a looser `!series.isEmpty` would still be true and would
+    /// reserve a chart band (drawing faint gridlines) for a reading that was
+    /// never taken. This was previously two separate tests — one on
+    /// `MenuBarPanel.hasChartData`, one implicit in `MetricTile`'s own
+    /// inline check — now one test on the one shared helper both call.
+    @Test("hasPlottableValues mirrors the never-fabricate rule: no series, or series with no values, is not chart data")
+    func hasPlottableValuesMatchesEmptinessRule() {
+        #expect([ChartSeries]().hasPlottableValues == false)
+        #expect([ChartSeries(name: "CPU", values: [])].hasPlottableValues == false)
+        #expect([ChartSeries(name: "CPU", values: [0.4])].hasPlottableValues == true)
+    }
 }

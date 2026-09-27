@@ -13,6 +13,17 @@ public struct MenuBarPanel: View {
     /// subscription of its own filled it.
     static let rowIDs = OverviewPage.tileOrder(hasBattery: false)
 
+    /// Layout constants `body` and `row(_:)` actually lay out with — named,
+    /// not inline literals, so `MenuBarPanelTests` can derive each row's
+    /// probe band from the same numbers the layout uses instead of a second,
+    /// hand-pinned copy that could silently drift from it.
+    static let padding: CGFloat = 12
+    /// Spacing inside one `row(_:)`, between its label line and its chart.
+    static let rowInnerSpacing: CGFloat = 4
+    /// Spacing in `body`'s outer `VStack`, between rows and before/after the
+    /// footer divider.
+    static let rowSpacing: CGFloat = 10
+
     private let store: MetricsStore
     private let onOpenPage: (SidebarSection) -> Void
     private let onOpenVitals: () -> Void
@@ -31,7 +42,7 @@ public struct MenuBarPanel: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Self.rowSpacing) {
             ForEach(OverviewTiles.tiles(ids: Self.rowIDs, store: store)) { tile in
                 Button {
                     if let section = SidebarSection(rawValue: tile.id) { onOpenPage(section) }
@@ -47,12 +58,12 @@ public struct MenuBarPanel: View {
                 Button("Quit Vitals", action: onQuit)
             }
         }
-        .padding(12)
+        .padding(Self.padding)
         .frame(width: Self.width)
     }
 
     private func row(_ tile: OverviewTile) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Self.rowInnerSpacing) {
             HStack {
                 Text(tile.label).font(Vitals.Typography.label)
                 Spacer()
@@ -60,40 +71,23 @@ public struct MenuBarPanel: View {
                     .font(Vitals.Typography.label)
                     .monospacedDigit()
             }
-            if Self.hasChartData(tile.series) {
+            if tile.series.hasPlottableValues {
                 Self.sparkline(series: tile.series, accent: tile.accent)
             }
         }
         .contentShape(Rectangle())
     }
 
-    /// The same emptiness rule `MetricTile` uses (`MetricTile.swift`, ~line
-    /// 50: `series.contains(where: { !$0.values.isEmpty })`), not the looser
-    /// `!series.isEmpty`. The CPU tile's series is always exactly one
-    /// `ChartSeries` — on a freshly empty store it is present but carries no
-    /// values, so `!series.isEmpty` alone would still be true and `row(_:)`
-    /// would reserve a chart band (drawing faint gridlines) for a reading
-    /// that was never taken. A single predicate shared with `MetricTile`
-    /// would be the more natural home for this, but this fix is scoped to
-    /// `MenuBarPanel.swift` and its test, so the rule is duplicated here
-    /// rather than touching `MetricTile.swift`.
-    static func hasChartData(_ series: [ChartSeries]) -> Bool {
-        series.contains(where: { !$0.values.isEmpty })
-    }
-
     /// The height every row's chart is given. `MetricChart` itself floors at
     /// `Vitals.Metrics.chartHeight` (132pt) unless told otherwise — passed
     /// here as `minimumHeight` so the dropdown actually gets a 28pt
-    /// sparkline instead of a 132pt chart silently overflowing its row.
-    /// `.clipped()` is the second half of that: it stops the glow bloom from
-    /// bleeding into the next row.
+    /// sparkline instead of a 132pt chart silently overflowing its row. That
+    /// alone is the fix for the bleed into the row below: `Canvas` already
+    /// bounds its own drawing to whatever frame it is actually given, so
+    /// once `minimumHeight` and this `.frame(height:)` agree, there is
+    /// nothing left for a clip to do. `.clipped()` below is kept anyway as
+    /// defence in depth, not because it is load-bearing today.
     static let sparklineHeight: CGFloat = 28
-
-    /// Mirrors `MetricChart`'s own private `liveDotHaloRadius` (`MetricChart.swift`,
-    /// 9pt) — duplicated rather than referenced because that constant is not
-    /// exposed, and exposing it is out of this fix's scope. If the halo's
-    /// radius there ever changes, this should follow.
-    private static let liveDotHaloRadius: CGFloat = 9
 
     static func sparkline(series: [ChartSeries], accent: Color) -> some View {
         MetricChart(
@@ -108,17 +102,21 @@ public struct MenuBarPanel: View {
             // half that falls past that edge; only insetting the plot
             // itself, inside `MetricChart`, actually works (verified: a
             // 100pt clip-shape outset and no clip at all rendered
-            // byte-identical, both still cutting the dot in half). Safe to
-            // ask for here because this sparkline's hit-testing is off
-            // below, so its crosshair — the one thing a trailing inset could
-            // otherwise put out of step with — never engages.
-            trailingHeadroom: Self.liveDotHaloRadius
+            // byte-identical, both still cutting the dot in half). Asking
+            // for it by name rather than passing a copied radius keeps the
+            // one number (`MetricChart.liveDotHaloRadius`) in one place, and
+            // keeps the renderer and `MetricChart`'s own crosshair plotting
+            // against the exact same rect — see `MetricChart.plotRect`'s
+            // doc comment. Safe to ask for here because this sparkline's
+            // hit-testing is off below, so its crosshair never engages.
+            reservesTrailingLiveDotRoom: true
         )
         .frame(height: Self.sparklineHeight)
-        // Clips vertically to this frame — the fix for the chart bleeding
-        // into the row below. Nothing to cut off horizontally any more: the
-        // `trailingHeadroom` above already keeps the live dot's halo inside
-        // this same frame, so a plain `.clipped()` is enough on both axes.
+        // Nothing left for this to clip vertically (see `sparklineHeight`'s
+        // doc comment) or horizontally (the live dot's halo already fits
+        // inside this frame, via `reservesTrailingLiveDotRoom` above) — kept
+        // as defence in depth against a future regression in either, not
+        // because either bleed is real today.
         .clipped()
         // The row's own `.contentShape(Rectangle())` (see `row(_:)`) is what
         // makes the whole row clickable; without disabling hit-testing here,

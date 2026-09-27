@@ -47,7 +47,7 @@ public struct MetricTile: View {
                     ProportionBar(fraction: fraction, accent: accent)
                 }
 
-                if series.contains(where: { !$0.values.isEmpty }) {
+                if series.hasPlottableValues {
                     // The tile's own headline (`value` above) already states
                     // this reading — an axis-maximum label would restate it a
                     // second time in 11pt grey directly beneath it. See
