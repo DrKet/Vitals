@@ -57,7 +57,7 @@ struct ProcessControlTests {
     /// exactly like this: right pid, wrong start time. The action must be
     /// refused and the process must survive it.
     @Test("a right pid with the wrong start time is refused and the process survives")
-    func staleIdentityIsRefused() throws {
+    func staleIdentityIsRefused() async throws {
         let child = try Self.spawnSleep()
         defer { Self.reap(child) }
 
@@ -73,9 +73,12 @@ struct ProcessControlTests {
         // after `perform` could still see a wrongly-killed child alive. Watch
         // it for a while: SIGKILL takes effect well within this window, and a
         // killed child stops matching (a zombie has no identity).
+        // `Task.sleep`, not `usleep`: this suite is on the main actor, and a
+        // blocking sleep would hold it for the whole window, starving every
+        // other main-actor test running in parallel.
         for _ in 0..<25 {
             #expect(ProcessSampler.identity(of: real.pid) == real)
-            usleep(10_000)
+            try await Task.sleep(for: .milliseconds(10))
         }
     }
 
