@@ -139,10 +139,20 @@ before you trust a test run.** A nondeterministic signal 11 across unrelated
 tests is this, not a bug in whatever test happened to be running.
 
 Two things this is *not*, both of which were suspected at the time: it is not
-the `system_profiler` subprocess, and it is not machine load. Load produces a
-different and unmistakable signature — `waitUntil` timeouts recorded at
-`MetricsStoreTests.swift:618`, with the suite still reporting a normal
-pass/fail summary. Signal 11 kills the run with no summary line at all.
+the `system_profiler` subprocess, and it is not machine load. Signal 11 kills
+the run with no summary line at all; a `waitUntil` timeout (below) records an
+issue and still prints a normal pass/fail summary.
+
+**`waitUntil` timeouts are main-actor starvation, not load.** For a long time,
+intermittent "Condition not met within 10 s" failures in `MetricsStoreTests`
+were written off as a busy machine. Measured, each failing waiter had polled
+only 5–6 times, across one ~8 s gap in which the main actor never ran — the
+render probes, reading every pixel through `NSBitmapImageRep.colorAt` on the
+main actor (~5 s for one full-page pass). The probes now read bytes through
+`PixelGrid`, and `waitUntil` takes one last look after its deadline. If a
+timeout comes back, measure the gap between polls before blaming load: one
+multi-second gap means something synchronous is holding the main actor, and
+`sample <test-pid>` during the stall will name it.
 
 ## Testing the UI — read this before writing a render test
 
@@ -162,6 +172,11 @@ Three separate times, a class of render assertion turned out to prove nothing:
   the corner pixel at (0,0), and the panel's material fill always differs from
   that, so it returns true no matter what drew. Use `regionHasSaturatedColor`
   for anything inside a panel.
+
+Pixel probes read through `PixelGrid`, never `colorAt(x:y:)` in a loop: every
+render test runs on the main actor, and a per-pixel `NSColor` over a page-sized
+region blocks it for seconds, which starves every other main-actor test in the
+parallel suite.
 
 A test you have not seen fail is a test you have not verified. Break the code
 deliberately and confirm it goes red.
