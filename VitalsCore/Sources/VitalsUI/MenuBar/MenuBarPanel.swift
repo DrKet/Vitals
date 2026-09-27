@@ -61,15 +61,30 @@ public struct MenuBarPanel: View {
                     .monospacedDigit()
             }
             if !tile.series.isEmpty {
-                MetricChart(
-                    series: tile.series,
-                    style: .area(stacked: tile.series.count > 1),
-                    colors: [tile.accent],
-                    showsAxisMaximum: false
-                )
-                .frame(height: 28)
+                Self.sparkline(series: tile.series, accent: tile.accent)
             }
         }
         .contentShape(Rectangle())
+    }
+
+    /// The height every row's chart is given. `MetricChart` itself floors at
+    /// `Vitals.Metrics.chartHeight` (132pt) unless told otherwise — passed
+    /// here as `minimumHeight` so the dropdown actually gets a 28pt
+    /// sparkline instead of a 132pt chart silently overflowing its row.
+    /// `.clipped()` is the second half of that: it stops the glow bloom and
+    /// the live-dot halo, which can paint outside the chart's own plot rect,
+    /// from bleeding into the next row either.
+    static let sparklineHeight: CGFloat = 28
+
+    static func sparkline(series: [ChartSeries], accent: Color) -> some View {
+        MetricChart(
+            series: series,
+            style: .area(stacked: series.count > 1),
+            colors: [accent],
+            showsAxisMaximum: false,
+            minimumHeight: Self.sparklineHeight
+        )
+        .frame(height: Self.sparklineHeight)
+        .clipped()
     }
 }

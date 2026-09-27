@@ -95,6 +95,29 @@ struct MenuBarPanelTests {
         let store = try await liveStore()
         _ = try renderPNG(MenuBarLabel(store: store), size: CGSize(width: 160, height: 22), named: "menubar-label-live")
     }
+
+    /// `MetricChart` floors its own height at `Vitals.Metrics.chartHeight`
+    /// (132pt) so a full hardware-page chart never collapses. A compact
+    /// embedder like this dropdown asks for only 28pt — without a way to
+    /// override that floor, the chart still renders at 132pt and, with no
+    /// `.clipped()` anywhere in the stack, bleeds straight through whatever
+    /// the caller placed below it. This regression test pins the sparkline to
+    /// its own 28pt frame directly, independent of the rest of the panel's
+    /// layout.
+    @Test("a compact sparkline paints nothing outside its own frame")
+    func compactChartStaysInItsFrame() throws {
+        let series = [ChartSeries(name: "CPU", values: [0.2, 0.9, 0.4, 0.8],
+                                  timestamps: [1000, 1001, 1002, 1003])]
+        let row = VStack(spacing: 0) {
+            MenuBarPanel.sparkline(series: series, accent: Vitals.Palette.cpu)
+            Color.clear.frame(height: 60)
+        }
+        let rendered = try renderPNG(row, size: CGSize(width: 300, height: 88), named: "menubar-sparkline-bounds")
+        // The chart has the top 28pt; nothing it draws may reach the 60pt below.
+        #expect(try !regionHasSaturatedColor(in: rendered, region: CGRect(x: 0, y: 32, width: 300, height: 56)))
+        // Non-vacuous: it did paint inside its own frame.
+        #expect(try regionHasSaturatedColor(in: rendered, region: CGRect(x: 0, y: 0, width: 300, height: 28)))
+    }
 }
 
 /// A cycling CPU-busy value shared with a `@Sendable` sampler closure. Swift 6

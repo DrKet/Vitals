@@ -52,6 +52,7 @@ public struct MetricChart: View {
     private let colors: [Color]
     private let showsAxisMaximum: Bool
     private let glow: Vitals.Chart.Glow
+    private let minimumHeight: CGFloat
 
     /// - Parameter series: **Order is load-bearing.** In stacked area mode the
     ///   first series is the base band and every later one accumulates on top of
@@ -76,18 +77,29 @@ public struct MetricChart: View {
     ///   it gets a harmless flourish, not the silent correctness bug a
     ///   defaulted `showsAxisMaximum` would reintroduce. Every chart in the app,
     ///   Overview tiles included, draws the house `Vitals.Chart.glow`.
+    /// - Parameter minimumHeight: the floor `body` reserves via
+    ///   `.frame(minHeight:maxHeight: .infinity)`. Defaults to
+    ///   `Vitals.Metrics.chartHeight` (132pt) — every existing hardware-page
+    ///   and Overview-tile chart keeps that floor unchanged. A compact
+    ///   embedder that truly needs less, such as the menu-bar dropdown's
+    ///   28pt sparkline, passes a smaller value here; without this, an outer
+    ///   `.frame(height:)` smaller than the floor cannot shrink the chart,
+    ///   and with no clipping anywhere in the stack the overflow bleeds into
+    ///   whatever the caller placed below it.
     public init(
         series: [ChartSeries],
         style: ChartStyle,
         colors: [Color],
         showsAxisMaximum: Bool,
-        glow: Vitals.Chart.Glow = Vitals.Chart.glow
+        glow: Vitals.Chart.Glow = Vitals.Chart.glow,
+        minimumHeight: CGFloat = Vitals.Metrics.chartHeight
     ) {
         self.series = series
         self.style = style
         self.colors = colors
         self.showsAxisMaximum = showsAxisMaximum
         self.glow = glow
+        self.minimumHeight = minimumHeight
     }
 
     @State private var hoverX: CGFloat?
@@ -187,7 +199,7 @@ public struct MetricChart: View {
         }
         // A floor, not a fixed size: the chart claims leftover vertical space
         // so a tall tile shows more history rather than more emptiness.
-        .frame(minHeight: Vitals.Metrics.chartHeight, maxHeight: .infinity)
+        .frame(minHeight: minimumHeight, maxHeight: .infinity)
     }
 
     @ViewBuilder
