@@ -257,8 +257,10 @@ to be a different page.
   `swift run VitalsApp` and the raw `.build/` binary both still do this. A
   bundled `.app` gets AppKit's default `.regular` activation policy for free;
   `AppDelegate` no longer sets it (that line came out once the bundle existed
-  to provide it — see `VitalsApp.swift`). Outside a bundle the app runs with
-  **zero windows** and every "it launches" check is meaningless. Closing the
+  to provide it — see `VitalsApp.swift`) — the app now sets that policy
+  itself at runtime, as the main window opens and closes (`AppLifecycle`).
+  Outside a bundle the app runs with **zero windows** and every "it
+  launches" check is meaningless. Closing the
   window no longer quits a bundled Vitals — it keeps running in the menu bar
   (see `AppDelegate`). A windowless *bundled* Vitals is expected; one with no
   menu-bar item either is the unbundled trap above.

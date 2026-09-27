@@ -182,16 +182,21 @@ else
         if [ -z "$PID" ]; then
             fail "launched but no process at $VITALS_BIN ever appeared"
         else
+            # Named, not just counted: with a MenuBarExtra in the process too,
+            # a bare window count could be satisfied by its status-item panel
+            # rather than the main window this check exists to prove. "Vitals"
+            # is the `Window` scene's own title (`VitalsApp.swift`), so this
+            # counts only that one.
             WINDOWS=0
             for _ in $(seq 1 30); do
-                WINDOWS="$(osascript -e "tell application \"System Events\" to tell (first process whose unix id is $PID) to count windows" 2>/dev/null || echo 0)"
+                WINDOWS="$(osascript -e "tell application \"System Events\" to tell (first process whose unix id is $PID) to count (windows whose name is \"Vitals\")" 2>/dev/null || echo 0)"
                 [ "${WINDOWS:-0}" -ge 1 ] && break
                 sleep 1
             done
             if [ "${WINDOWS:-0}" -ge 1 ]; then
-                pass "launched and showed $WINDOWS window(s)"
+                pass "launched and showed $WINDOWS Vitals window(s)"
             else
-                fail "launched but never showed a window"
+                fail "launched but never showed a Vitals window"
             fi
 
             # Quit that PID specifically, then wait for it to actually exit —

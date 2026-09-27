@@ -8,8 +8,8 @@ import VitalsUI
 /// from then on, and the Dock icon goes with the window (`AppLifecycle`).
 /// Quit is explicit — the dropdown's Quit Vitals, or ⌘Q.
 ///
-/// A windowless Vitals is intended now, and always visible in the menu bar.
-/// The trap to still watch for is different: running the raw executable
+/// A windowless Vitals is intended now, and present in the menu bar. The
+/// trap to still watch for is different: running the raw executable
 /// outside a bundle — `swift run VitalsApp`, or the binary under `.build/`
 /// — launches background-only with zero windows *and no menu-bar item*. Use
 /// `scripts/build-app.sh && open build/Vitals.app`; `scripts/verify-app.sh`
@@ -30,15 +30,32 @@ final class AppModel {
     private(set) var store: MetricsStore?
     private(set) var startupError: String?
     var selection: SidebarSection = .overview
+    /// Runs for the app's whole lifetime, with or without a window. The
+    /// handle is kept — not just fired and forgotten — for the planned
+    /// "throttle sampling while the dropdown is closed" slice, which will
+    /// need to cancel and restart it.
     private var warmSampling: Task<Void, Never>?
+    /// Set synchronously, before `startIfNeeded()`'s first suspension point,
+    /// so a second call — from a second view's `.task`, or a re-run of the
+    /// same one — can't start a second engine on top of the first.
+    private var didStart = false
 
-    init() {
-        Task { await start() }
-    }
-
-    private func start() async {
+    /// Starts the engine exactly once. Called from the menu-bar label's
+    /// `.task` rather than from `init`: the label is the one thing on
+    /// screen for the app's entire life, with or without the main window,
+    /// so it's the one call site guaranteed to run at launch regardless of
+    /// window state — unlike a `.task` on the window's own content, which
+    /// wouldn't run at all if the window starts closed.
+    func startIfNeeded() async {
+        guard !didStart else { return }
+        didStart = true
         do {
-            let profile = try HardwareProfile.detect()
+            // `HardwareProfile.detect()` is synchronous and shells out to
+            // `system_profiler` (`waitUntilExit`); running that on the main
+            // actor would block the app's very first frame. Detached keeps
+            // launch responsive; the result is only ever touched back on
+            // the main actor below.
+            let profile = try await Task.detached { try HardwareProfile.detect() }.value
             let engine = MetricsEngine()
             await StandardSamplers.registerAll(on: engine)
             let store = MetricsStore(engine: engine, profile: profile)
@@ -71,11 +88,23 @@ struct VitalsApp: App {
             MainWindowContent(model: model)
         }
         .windowStyle(.hiddenTitleBar)
+        // Vitals can now quit with its window closed (`AppDelegate` above),
+        // so without this, SwiftUI state restoration could relaunch straight
+        // into that state: no window, so `.onAppear` never fires, and the
+        // bundle's default `.regular` activation policy is left stuck with a
+        // Dock icon and nothing to show for it. Pin the window open on every
+        // launch instead — `AppLifecycle` still owns the accessory/regular
+        // decision from then on, as the window opens and closes.
+        .defaultLaunchBehavior(.presented)
 
         MenuBarExtra {
             MenuBarContent(model: model)
         } label: {
             MenuBarLabel(store: model.store)
+                // The menu-bar label is on screen for the app's whole life,
+                // window or not, so it's where the engine starts. See
+                // `AppModel.startIfNeeded()`.
+                .task { await model.startIfNeeded() }
         }
         .menuBarExtraStyle(.window)
     }
