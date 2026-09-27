@@ -12,14 +12,25 @@ public enum ProcessSampler {
         // state is one-way, so a process still alive and still the same
         // process now was alive when its counters were read. (One
         // KERN_PROC_ALL instead of a KERN_PROC_PID per process: ~0.1 ms vs
-        // ~7 ms per tick.) If this re-read itself fails, there is nothing
-        // trustworthy to return — not the unfiltered reads, which would
-        // reintroduce zeroed zombies.
-        var after: [pid_t: kinfo_proc] = [:]
-        for process in kernelProcesses() { after[process.kp_proc.p_pid] = process }
+        // ~7 ms per tick.)
+        return stillAlive(read, after: kernelProcesses())
+    }
+
+    /// Keeps only reads whose process is still present, not a zombie, and
+    /// still the same process (raw start-time match) in `after` — see
+    /// `snapshot()` for why this runs after every counter read.
+    ///
+    /// An empty `after` (the re-read itself failed) drops every read — never
+    /// falls back to `read` unfiltered, which would reintroduce zeroed
+    /// zombies.
+    static func stillAlive(
+        _ read: [(kinfo_proc, ProcessSnapshot)], after: [kinfo_proc]
+    ) -> [ProcessSnapshot] {
+        var afterByPID: [pid_t: kinfo_proc] = [:]
+        for process in after { afterByPID[process.kp_proc.p_pid] = process }
 
         return read.compactMap { enumeratedProcess, snapshot in
-            guard let current = after[snapshot.pid],
+            guard let current = afterByPID[snapshot.pid],
                   !isZombie(current),
                   current.kp_proc.p_starttime.tv_sec == enumeratedProcess.kp_proc.p_starttime.tv_sec,
                   current.kp_proc.p_starttime.tv_usec == enumeratedProcess.kp_proc.p_starttime.tv_usec

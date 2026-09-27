@@ -67,8 +67,6 @@ struct ProcessControlTests {
             try ProcessControl.perform(.forceQuit, on: stale)
         }
         // Not `child.isRunning`: Foundation.Process updates it asynchronously.
-        // The kernel re-read is sound because `identity(of:)` returns nil for
-        // a zombie — a wrongly-killed, not-yet-reaped child fails this check.
         //
         // kill(2) returns before the target has exited, so one read straight
         // after `perform` could still see a wrongly-killed child alive. Watch

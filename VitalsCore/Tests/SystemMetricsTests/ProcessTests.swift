@@ -247,4 +247,95 @@ struct ProcessTests {
 
         #expect(ProcessSampler.identity(of: pid) == nil)
     }
+
+    // MARK: stillAlive — snapshot()'s post-read filter, in isolation
+
+    /// A hand-built `kinfo_proc` with only the fields `stillAlive` reads: pid,
+    /// raw process state, and raw start time. Nothing here goes through a
+    /// real sysctl — that is the point, so the filter can be driven by cases
+    /// a live kernel won't reliably produce on demand.
+    private func kinfoProcess(pid: pid_t, stat: Int32 = SRUN, startTime: timeval) -> kinfo_proc {
+        var process = kinfo_proc()
+        process.kp_proc.p_pid = pid
+        process.kp_proc.p_stat = Int8(stat)
+        process.kp_proc.p_starttime = startTime
+        return process
+    }
+
+    /// Regression coverage for the filter itself: before this, `snapshot()`'s
+    /// post-read re-check had no test that failed without it — the zombie
+    /// tests above pass via `detail(for:)`'s earlier fast path regardless of
+    /// what `stillAlive` does.
+    @Test("stillAlive keeps a live, unchanged process")
+    func stillAliveKeepsLiveUnchangedProcess() {
+        let startTime = timeval(tv_sec: 1_700_000_000, tv_usec: 0)
+        let enumerated = kinfoProcess(pid: 100, startTime: startTime)
+        let after = kinfoProcess(pid: 100, startTime: startTime)
+
+        let result = ProcessSampler.stillAlive(
+            [(enumerated, snapshot(pid: 100, cpuTime: 1.0))], after: [after]
+        )
+        #expect(result.map(\.pid) == [100])
+    }
+
+    @Test("stillAlive drops a process that is a zombie in the post-read")
+    func stillAliveDropsZombieInAfter() {
+        let startTime = timeval(tv_sec: 1_700_000_000, tv_usec: 0)
+        let enumerated = kinfoProcess(pid: 100, startTime: startTime)
+        let after = kinfoProcess(pid: 100, stat: SZOMB, startTime: startTime)
+
+        let result = ProcessSampler.stillAlive(
+            [(enumerated, snapshot(pid: 100, cpuTime: 1.0))], after: [after]
+        )
+        #expect(result.isEmpty)
+    }
+
+    @Test("stillAlive drops a process missing from the post-read")
+    func stillAliveDropsProcessMissingFromAfter() {
+        let startTime = timeval(tv_sec: 1_700_000_000, tv_usec: 0)
+        let enumerated = kinfoProcess(pid: 100, startTime: startTime)
+        // `after` is non-empty but has no entry for pid 100 — it exited and a
+        // different pid now occupies the table.
+        let after = kinfoProcess(pid: 999, startTime: startTime)
+
+        let result = ProcessSampler.stillAlive(
+            [(enumerated, snapshot(pid: 100, cpuTime: 1.0))], after: [after]
+        )
+        #expect(result.isEmpty)
+    }
+
+    @Test("stillAlive drops a process whose start time differs by microseconds")
+    func stillAliveDropsDifferingMicroseconds() {
+        let enumerated = kinfoProcess(pid: 100, startTime: timeval(tv_sec: 1_700_000_000, tv_usec: 0))
+        let after = kinfoProcess(pid: 100, startTime: timeval(tv_sec: 1_700_000_000, tv_usec: 1))
+
+        let result = ProcessSampler.stillAlive(
+            [(enumerated, snapshot(pid: 100, cpuTime: 1.0))], after: [after]
+        )
+        #expect(result.isEmpty)
+    }
+
+    @Test("stillAlive drops a process whose start time differs by seconds")
+    func stillAliveDropsDifferingSeconds() {
+        let enumerated = kinfoProcess(pid: 100, startTime: timeval(tv_sec: 1_700_000_000, tv_usec: 0))
+        let after = kinfoProcess(pid: 100, startTime: timeval(tv_sec: 1_700_000_001, tv_usec: 0))
+
+        let result = ProcessSampler.stillAlive(
+            [(enumerated, snapshot(pid: 100, cpuTime: 1.0))], after: [after]
+        )
+        #expect(result.isEmpty)
+    }
+
+    @Test("stillAlive drops everything when the post-read itself is empty")
+    func stillAliveWithEmptyAfterDropsEverything() {
+        let startTime = timeval(tv_sec: 1_700_000_000, tv_usec: 0)
+        let read = [
+            (kinfoProcess(pid: 100, startTime: startTime), snapshot(pid: 100, cpuTime: 1.0)),
+            (kinfoProcess(pid: 200, startTime: startTime), snapshot(pid: 200, cpuTime: 2.0)),
+        ]
+
+        // Never falls back to `read` unfiltered — a failed re-read sysctl
+        // must not resurrect zeroed zombies.
+        #expect(ProcessSampler.stillAlive(read, after: []).isEmpty)
+    }
 }
