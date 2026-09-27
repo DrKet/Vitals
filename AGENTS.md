@@ -173,10 +173,15 @@ Three separate times, a class of render assertion turned out to prove nothing:
   that, so it returns true no matter what drew. Use `regionHasSaturatedColor`
   for anything inside a panel.
 
-Pixel probes read through `PixelGrid`, never `colorAt(x:y:)` in a loop: every
-render test runs on the main actor, and a per-pixel `NSColor` over a page-sized
-region blocks it for seconds, which starves every other main-actor test in the
-parallel suite.
+Pixel probes read raw bytes — through `PixelGrid`, or directly in
+`isNotBlank`, which runs on the premultiplied in-memory capture — never
+`colorAt(x:y:)` in a loop. Every render test runs on the main actor, and a
+per-pixel `NSColor` over a page-sized region blocks it for seconds, starving
+every other main-actor test in the parallel suite. The one deliberate
+exception is `RenderHarnessTests.pixelGridMatchesColorAt`, whose small render
+uses `colorAt` as the reference `PixelGrid` is checked against. Likewise, no
+blocking sleep (`usleep`, `Thread.sleep`) in a main-actor test unless blocking
+the main actor *is* the test (`WaitUntilTests`) — use `Task.sleep`.
 
 A test you have not seen fail is a test you have not verified. Break the code
 deliberately and confirm it goes red.

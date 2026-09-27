@@ -92,6 +92,31 @@ struct RenderHarnessTests {
         #expect(found.redComponent > found.blueComponent)
     }
 
+    /// `PixelGrid` was verified against exactly one format — 8-bit RGBA,
+    /// straight alpha last, no other flags — and must refuse anything else
+    /// rather than read it on trust. Premultiplied and alpha-first are the
+    /// layouts a future harness change could plausibly produce. (Endianness
+    /// flags are not tested: AppKit drops them from an 8-bit-per-sample rep,
+    /// where byte order cannot matter, so no such rep can be built.)
+    @Test("PixelGrid refuses any bitmap format other than the one it was verified on")
+    func pixelGridRefusesOtherFormats() throws {
+        func rep(_ format: NSBitmapImageRep.Format) -> NSBitmapImageRep? {
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8,
+                samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .calibratedRGB, bitmapFormat: format, bytesPerRow: 16, bitsPerPixel: 32
+            )
+        }
+        let accepted = try #require(rep(.alphaNonpremultiplied))
+        _ = try PixelGrid(accepted)
+
+        let premultiplied = try #require(rep([]))
+        #expect(throws: (any Error).self) { try PixelGrid(premultiplied) }
+
+        let alphaFirst = try #require(rep([.alphaNonpremultiplied, .alphaFirst]))
+        #expect(throws: (any Error).self) { try PixelGrid(alphaFirst) }
+    }
+
     /// Pins `PixelGrid` — which every probe reads through — to the
     /// `NSBitmapImageRep.colorAt` the probes used before it, pixel by pixel.
     /// The render covers every hue sector (a full-spectrum gradient), neutral
@@ -149,6 +174,20 @@ struct RenderHarnessTests {
         }
         #expect(componentMismatches == 0)
         #expect(hueMismatches == 0)
+
+        // The fast row and column scans the extent probes use must find the
+        // same first saturated pixel as the per-pixel `spread` definition.
+        for spreadLimit in [0.0, 16.0 / 255.0, 100.0 / 255.0] as [CGFloat] {
+            let threshold = PixelGrid.SpreadThreshold(spreadLimit)
+            for y in 0..<grid.height {
+                let expected = (0..<grid.width).first { grid.spread($0, y) > spreadLimit }
+                #expect(grid.firstSaturatedX(inRow: y, 0..<grid.width, threshold) == expected)
+            }
+            for x in 0..<grid.width {
+                let expected = (0..<grid.height).first { grid.spread(x, $0) > spreadLimit }
+                #expect(grid.firstSaturatedY(inColumn: x, 0..<grid.height, threshold) == expected)
+            }
+        }
         // Non-vacuous: the gradient really did produce saturated pixels.
         #expect(huesCompared > grid.width * 10)
     }

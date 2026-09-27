@@ -156,8 +156,20 @@ struct PixelGrid {
 
     let width: Int
     let height: Int
-    private let bytes: [UInt8]
+    private let storage: Storage
     private let bytesPerRow: Int
+
+    /// The copied pixel bytes, read through a raw pointer: the probes run in
+    /// debug builds, where `Array`'s checked subscript made even byte reads
+    /// cost ~1 s per full-page scan. Owned here and freed with the grid.
+    private final class Storage {
+        let base: UnsafeMutablePointer<UInt8>
+        init(copying source: UnsafePointer<UInt8>, count: Int) {
+            base = .allocate(capacity: count)
+            base.initialize(from: source, count: count)
+        }
+        deinit { base.deallocate() }
+    }
     private let bitmap: NSBitmapImageRep
 
     init(_ image: RenderedImage) throws {
@@ -172,9 +184,9 @@ struct PixelGrid {
     init(_ bitmap: NSBitmapImageRep) throws {
         guard bitmap.bitsPerSample == 8, bitmap.samplesPerPixel == 4, bitmap.bitsPerPixel == 32,
               !bitmap.isPlanar, bitmap.hasAlpha,
-              !bitmap.bitmapFormat.contains(.alphaFirst),
-              !bitmap.bitmapFormat.contains(.floatingPointSamples),
-              bitmap.bitmapFormat.contains(.alphaNonpremultiplied),
+              // Exactly the verified format: straight alpha last, and no
+              // endianness, float or alpha-first flags on top of it.
+              bitmap.bitmapFormat == .alphaNonpremultiplied,
               let base = bitmap.bitmapData
         else {
             struct UnsupportedFormat: Error, CustomStringConvertible {
@@ -188,13 +200,14 @@ struct PixelGrid {
         self.width = bitmap.pixelsWide
         self.height = bitmap.pixelsHigh
         self.bytesPerRow = bitmap.bytesPerRow
-        self.bytes = Array(UnsafeBufferPointer(start: base, count: bitmap.bytesPerRow * bitmap.pixelsHigh))
+        self.storage = Storage(copying: base, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
         self.bitmap = bitmap
     }
 
     func pixel(_ x: Int, _ y: Int) -> Pixel {
-        let i = y * bytesPerRow + x * 4
-        return Pixel(r: bytes[i], g: bytes[i + 1], b: bytes[i + 2], a: bytes[i + 3])
+        precondition(x >= 0 && x < width && y >= 0 && y < height, "pixel (\(x), \(y)) outside \(width)x\(height)")
+        let p = storage.base + (y * bytesPerRow + x * 4)
+        return Pixel(r: p[0], g: p[1], b: p[2], a: p[3])
     }
 
     /// The pixel's components in `0...1`, computed exactly as `colorAt`
@@ -207,9 +220,68 @@ struct PixelGrid {
 
     /// `max(r, g, b) - min(r, g, b)` on the `0...1` components — the probes'
     /// saturation measure, with the same arithmetic as before.
+    ///
+    /// Max and min are taken on the bytes, then converted: `byte / 255` is
+    /// exact and monotonic, so this is bit-identical to converting first —
+    /// and it skips building the components on the hot path.
     func spread(_ x: Int, _ y: Int) -> CGFloat {
-        let c = components(x, y)
-        return max(c.r, c.g, c.b) - min(c.r, c.g, c.b)
+        precondition(x >= 0 && x < width && y >= 0 && y < height, "pixel (\(x), \(y)) outside \(width)x\(height)")
+        let p = storage.base + (y * bytesPerRow + x * 4)
+        let (r, g, b) = (p[0], p[1], p[2])
+        return CGFloat(max(r, g, b)) / 255 - CGFloat(min(r, g, b)) / 255
+    }
+
+    /// `spread(x, y) > limit`, answered in advance for every (max byte, min
+    /// byte) pair with the identical float expression — so a scan does integer
+    /// work and a lookup per pixel, and still gives bit-for-bit the answer the
+    /// per-pixel definition would.
+    struct SpreadThreshold {
+        fileprivate let exceeds: [Bool]   // index: maxByte * 256 + minByte
+
+        init(_ limit: CGFloat) {
+            var table = [Bool](repeating: false, count: 256 * 256)
+            for high in 0..<256 {
+                for low in 0...high {
+                    table[high * 256 + low] = CGFloat(high) / 255 - CGFloat(low) / 255 > limit
+                }
+            }
+            exceeds = table
+        }
+    }
+
+    /// The first `x` in `xs` on row `y` whose spread exceeds `threshold`, or
+    /// `nil`. The extent and first-colour probes' hot loop: most rows of a
+    /// page hold no colour and are read end to end, so this walks raw bytes
+    /// instead of calling `spread` per pixel.
+    func firstSaturatedX(inRow y: Int, _ xs: Range<Int>, _ threshold: SpreadThreshold) -> Int? {
+        precondition(y >= 0 && y < height && xs.lowerBound >= 0 && xs.upperBound <= width)
+        return threshold.exceeds.withUnsafeBufferPointer { table in
+            var p = storage.base + (y * bytesPerRow + xs.lowerBound * 4)
+            var x = xs.lowerBound
+            while x < xs.upperBound {
+                let (r, g, b) = (p[0], p[1], p[2])
+                if table[Int(max(r, g, b)) &* 256 &+ Int(min(r, g, b))] { return x }
+                p += 4
+                x += 1
+            }
+            return nil
+        }
+    }
+
+    /// The column twin of `firstSaturatedX(inRow:_:_:)`.
+    func firstSaturatedY(inColumn x: Int, _ ys: Range<Int>, _ threshold: SpreadThreshold) -> Int? {
+        precondition(x >= 0 && x < width && ys.lowerBound >= 0 && ys.upperBound <= height)
+        return threshold.exceeds.withUnsafeBufferPointer { table in
+            var p = storage.base + (ys.lowerBound * bytesPerRow + x * 4)
+            var y = ys.lowerBound
+            while y < ys.upperBound {
+                let (r, g, b) = (p[0], p[1], p[2])
+                if table[Int(max(r, g, b)) &* 256 &+ Int(min(r, g, b))] { return y }
+                p += bytesPerRow
+                y += 1
+            }
+            return nil
+        }
     }
 
     /// The pixel's hue in `NSColor.getHue`'s `0...1` space (0 for a grey).
@@ -502,10 +574,9 @@ func firstSaturatedColor(
     let grid = try PixelGrid(image)
     guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return nil }
 
+    let threshold = PixelGrid.SpreadThreshold(minimumSpread)
     for y in ys {
-        for x in xs where grid.spread(x, y) > minimumSpread {
-            return grid.color(x, y)
-        }
+        if let x = grid.firstSaturatedX(inRow: y, xs, threshold) { return grid.color(x, y) }
     }
     return nil
 }
@@ -646,16 +717,12 @@ func saturatedRowExtent(
     let grid = try PixelGrid(image)
     guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return nil }
 
+    let threshold = PixelGrid.SpreadThreshold(minimumSpread)
     var top: Int?
     var bottom: Int?
-    for y in ys {
-        for x in xs {
-            if grid.spread(x, y) > minimumSpread {
-                if top == nil { top = y }
-                bottom = y
-                break
-            }
-        }
+    for y in ys where grid.firstSaturatedX(inRow: y, xs, threshold) != nil {
+        if top == nil { top = y }
+        bottom = y
     }
 
     guard let top, let bottom else { return nil }
@@ -695,16 +762,12 @@ func saturatedColumnExtent(
     let grid = try PixelGrid(image)
     guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return nil }
 
+    let threshold = PixelGrid.SpreadThreshold(minimumSpread)
     var left: Int?
     var right: Int?
-    for x in xs {
-        for y in ys {
-            if grid.spread(x, y) > minimumSpread {
-                if left == nil { left = x }
-                right = x
-                break
-            }
-        }
+    for x in xs where grid.firstSaturatedY(inColumn: x, ys, threshold) != nil {
+        if left == nil { left = x }
+        right = x
     }
 
     guard let left, let right else { return nil }

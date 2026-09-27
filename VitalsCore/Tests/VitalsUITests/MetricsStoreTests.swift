@@ -611,12 +611,15 @@ struct WaitUntilTests {
     func checksOnceMoreAfterTheDeadline() async throws {
         let flag = Flag()
         // Runs as soon as the waiter's first poll suspends: holds the main
-        // actor well past the 20 ms deadline, then sets the flag.
+        // actor well past the 50 ms deadline, then sets the flag. The margins
+        // are wide on both sides: the deadline leaves room for the waiter to
+        // reach its first poll even on a busy machine, and the block is six
+        // times the deadline, so the waiter always wakes out of time.
         Task { @MainActor in
-            Self.blockCurrentThread(seconds: 0.1)
+            Self.blockCurrentThread(seconds: 0.3)
             flag.isSet = true
         }
-        try await waitUntil(timeout: .milliseconds(20)) { flag.isSet }
+        try await waitUntil(timeout: .milliseconds(50)) { flag.isSet }
     }
 
     /// A genuine synchronous block — the thing that starved the waiters —
