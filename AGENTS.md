@@ -258,7 +258,10 @@ to be a different page.
   bundled `.app` gets AppKit's default `.regular` activation policy for free;
   `AppDelegate` no longer sets it (that line came out once the bundle existed
   to provide it — see `VitalsApp.swift`). Outside a bundle the app runs with
-  **zero windows** and every "it launches" check is meaningless.
+  **zero windows** and every "it launches" check is meaningless. Closing the
+  window no longer quits a bundled Vitals — it keeps running in the menu bar
+  (see `AppDelegate`). A windowless *bundled* Vitals is expected; one with no
+  menu-bar item either is the unbundled trap above.
 - `AsyncStream.onTermination` does **not** fire on `break` out of a `for await`
   while the stream is still in scope. Drive teardown via task cancellation.
 - **There are two battery time estimates and they disagree.** The IORegistry's
@@ -290,8 +293,10 @@ to be a different page.
 Complete: the metrics foundation, the UI shell, the Overview (tiles for all
 five series), the Processes table (with selection and a context menu: Copy
 PID/Name, Reveal in Finder, confirmed Quit / Force Quit), the CPU, Memory,
-GPU, Storage, Network, Sensors and Battery pages, and a distributable `.app`
-bundle (v0.1.0).
+GPU, Storage, Network, Sensors and Battery pages, a distributable `.app`
+bundle (v0.1.0), and a menu-bar extra (CPU + memory readout, a five-row
+glance dropdown that opens pages; Vitals stays running in the menu bar when
+its window closes).
 
 The Sensors page shows temperatures only, and the reason matters if you are
 thinking of adding fans.
@@ -311,9 +316,10 @@ IOReport Energy Model channel, an unrelated API the spike never touched.
 `SensorReading.Kind` already models `.fanRPM` and `.powerWatts` for whenever
 those land.
 
-Not built yet: desktop widgets and the menu-bar extra; a privileged helper for
-per-process GPU, power and SMART health; and the Startup / Services / Users /
-History pages.
+Not built yet: desktop widgets; the menu-bar extra's later slices
+(configurable readouts, top processes, throttling while closed); a privileged
+helper for per-process GPU, power and SMART health; and the Startup /
+Services / Users / History pages.
 
 Known gaps, if you're looking for something to pick up:
 

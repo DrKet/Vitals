@@ -1,16 +1,30 @@
 import SwiftUI
 
 public struct AppShell: View {
-    @State private var selection: SidebarSection = .overview
+    @State private var localSelection: SidebarSection = .overview
+    private let externalSelection: Binding<SidebarSection>?
     private let store: MetricsStore
 
+    /// Owns its own selection — for callers with nothing else to drive it.
     public init(store: MetricsStore) {
         self.store = store
+        self.externalSelection = nil
+    }
+
+    /// Selection owned by the caller, so something outside the window (the
+    /// menu-bar dropdown) can choose which page it shows.
+    public init(store: MetricsStore, selection: Binding<SidebarSection>) {
+        self.store = store
+        self.externalSelection = selection
+    }
+
+    private var selection: Binding<SidebarSection> {
+        externalSelection ?? $localSelection
     }
 
     public var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: selection) {
                 ForEach(SidebarSection.groups(
                     hasBattery: store.profile?.hasBattery == true,
                     hasSensors: store.profile?.sensorsAvailable.isAvailable == true
@@ -29,17 +43,11 @@ public struct AppShell: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(Vitals.Metrics.contentPadding)
         }
-        // Keep the cheap fast chart series sampling for the whole session so
-        // switching to a hardware page shows a full graph immediately. The
-        // root view lives as long as the window, so this subscription does
-        // too; a page's own `.task { stream(_:) }` running alongside it is
-        // deduplicated by `MetricsStore.apply`. See `keepWarm()`.
-        .task { await store.keepWarm() }
     }
 
     @ViewBuilder
     private var detail: some View {
-        switch selection {
+        switch selection.wrappedValue {
         case .overview:
             OverviewPage(store: store)
         case .processes:
@@ -59,7 +67,7 @@ public struct AppShell: View {
         case .battery:
             BatteryPage(store: store)
         default:
-            NotYetBuilt(section: selection)
+            NotYetBuilt(section: selection.wrappedValue)
         }
     }
 }
