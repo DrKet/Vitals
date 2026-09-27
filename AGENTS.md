@@ -268,8 +268,9 @@ to be a different page.
 
 Complete: the metrics foundation, the UI shell, the Overview (tiles for all
 five series), the Processes table (with selection and a context menu: Copy
-PID/Name, Reveal in Finder, confirmed Quit / Force Quit), the CPU, Memory, GPU, Storage, Network,
-Sensors and Battery pages, and a distributable `.app` bundle (v0.1.0).
+PID/Name, Reveal in Finder, confirmed Quit / Force Quit), the CPU, Memory,
+GPU, Storage, Network, Sensors and Battery pages, and a distributable `.app`
+bundle (v0.1.0).
 
 The Sensors page shows temperatures only, and the reason matters if you are
 thinking of adding fans.
@@ -300,6 +301,8 @@ Known gaps, if you're looking for something to pick up:
   Spindump and Inspect are still to come; acting on root's or other users'
   processes needs the privileged helper. Add signal-based actions to
   `ProcessControl`, and keep every one of them behind its identity re-check.
+  `ProcessControl` refuses pid ≤ 0 but relies on the kernel's EPERM for pid 1
+  — add an explicit pid-1 refusal there before any privileged path exists.
 - `ProcessComparator.compareValues` has a NaN/transitivity edge. Unreachable
   today, because nothing feeds it a NaN.
 

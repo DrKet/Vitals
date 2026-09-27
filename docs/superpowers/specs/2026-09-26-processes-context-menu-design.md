@@ -247,3 +247,16 @@ No real application is quit at any point in testing.
 Suspend, Resume, renice, Sample Process, Spindump, Inspect, multi-select
 actions, and acting on processes that belong to root or another user. The
 `ProcessControl` target is where the signal-based ones will land.
+
+## Addendum (during implementation)
+
+- `ProcessControlError.notSignallable` — pid ≤ 0 is refused before anything
+  else, because `kill(2)` reads pid 0 as the caller's own process group and a
+  negative pid as a whole process group, and `KERN_PROC_PID` with pid 0
+  returns `kernel_task` — so the identity check alone would not catch it.
+- Zombies are skipped by the sampler, re-checked in one pass after the
+  rusage/taskinfo reads rather than per process, and given no identity: a
+  zombie's rusage reads back zeroed, so it has nothing real to report and
+  nothing safe to signal.
+- `VitalsApp` gets `ProcessControl` transitively, through `VitalsUI`, not as
+  a direct package dependency.
