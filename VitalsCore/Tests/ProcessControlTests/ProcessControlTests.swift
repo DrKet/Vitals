@@ -90,14 +90,17 @@ struct ProcessControlTests {
         }
     }
 
-    /// Targets a live root daemon (not pid 1, which is refused before `kill`
-    /// ever runs). Force Quit, so the path is a bare `kill` with no
-    /// `NSRunningApplication` lookup in between.
+    /// Targets a core root daemon (not pid 1, which is refused before `kill`
+    /// ever runs). Named rather than "any root process": an on-demand launchd
+    /// job could exit between the snapshot and the call and report `.exited`
+    /// instead; these three run for the whole session. Force Quit, so the path
+    /// is a bare `kill` with no `NSRunningApplication` lookup in between.
     @Test("signalling another user's process reports not permitted",
           .enabled(if: getuid() != 0, "as root this would really kill a system daemon"))
     func otherUsersProcessIsNotPermitted() throws {
+        let coreDaemons: Set<String> = ["logd", "configd", "notifyd"]
         let rootDaemon = try #require(
-            ProcessSampler.snapshot().first { $0.userID == 0 && $0.pid > 1 }
+            ProcessSampler.snapshot().first { $0.userID == 0 && coreDaemons.contains($0.name) }
         )
 
         #expect(throws: ProcessControlError.notPermitted) {
