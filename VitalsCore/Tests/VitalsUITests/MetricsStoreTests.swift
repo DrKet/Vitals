@@ -593,18 +593,56 @@ final class ValueBox: @unchecked Sendable {
     }
 }
 
+/// Tests of the polling helper itself.
+@MainActor
+@Suite("waitUntil")
+struct WaitUntilTests {
+
+    @MainActor
+    private final class Flag {
+        var isSet = false
+    }
+
+    /// A waiter the main actor starves past its own deadline must still look
+    /// once more before failing. This happened for real: the render probes
+    /// used to block the main actor for ~8 s, and waiters woke after their
+    /// deadline with the condition already true — and failed anyway.
+    @Test("a waiter starved past its deadline checks the condition once more before failing")
+    func checksOnceMoreAfterTheDeadline() async throws {
+        let flag = Flag()
+        // Runs as soon as the waiter's first poll suspends: holds the main
+        // actor well past the 20 ms deadline, then sets the flag.
+        Task { @MainActor in
+            Self.blockCurrentThread(seconds: 0.1)
+            flag.isSet = true
+        }
+        try await waitUntil(timeout: .milliseconds(20)) { flag.isSet }
+    }
+
+    /// A genuine synchronous block — the thing that starved the waiters —
+    /// which `Task.sleep` would not reproduce, since it suspends rather than
+    /// holding the actor.
+    private nonisolated static func blockCurrentThread(seconds: TimeInterval) {
+        Thread.sleep(forTimeInterval: seconds)
+    }
+}
+
 /// Polls a main-actor condition with a bounded timeout, so a regression fails
 /// rather than hanging.
 ///
 /// The deadline is deliberately generous. This is a soft wait for an async
 /// condition, not a performance assertion: the loop returns the instant the
 /// condition holds, so a longer deadline costs nothing on a passing run and
-/// only extends a genuine failure. At the previous two seconds, tests across
-/// unrelated suites timed out whenever the machine was busy — the whole suite
-/// runs its main-actor polls and its off-screen `NSWindow` renders in parallel,
-/// and they contend both with each other and with whatever else is running,
-/// including WindowServer. Those failures said nothing about the code under
-/// test; they said the box was loaded.
+/// only extends a genuine failure. The whole suite runs its main-actor polls
+/// and its off-screen `NSWindow` renders in parallel, on one main actor.
+///
+/// Timeouts here were long blamed on machine load; they were not. The render
+/// probes read pixels through `colorAt` and held the main actor for ~8 s at a
+/// stretch, so waiters woke past their deadline — often with the condition
+/// already true. The probes now read bytes (see `PixelGrid`), and the loop
+/// takes one last look after the deadline. If this times out again, measure
+/// the gap between polls before blaming load: a single multi-second gap means
+/// something is blocking the main actor.
 @MainActor
 func waitUntil(
     timeout: Duration = .seconds(10),
@@ -615,6 +653,10 @@ func waitUntil(
         if condition() { return }
         try await Task.sleep(for: .milliseconds(5))
     }
+    // One last look: a waiter the main actor held past its deadline wakes
+    // already out of time, and the condition may well have come true while it
+    // was held. See `WaitUntilTests`.
+    if condition() { return }
     Issue.record("Condition not met within \(timeout)")
 }
 
@@ -630,5 +672,7 @@ func waitUntilAsync(
         if await condition() { return }
         try await Task.sleep(for: .milliseconds(5))
     }
+    // One last look, for the same reason as `waitUntil`.
+    if await condition() { return }
     Issue.record("Condition not met within \(timeout)")
 }

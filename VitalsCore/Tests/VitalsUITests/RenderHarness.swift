@@ -65,7 +65,7 @@ func renderPNG(
     // A render that produced a uniformly blank image drew nothing. Asserting
     // only that the file exists would pass for a chart that silently failed to
     // paint, which is exactly the bug these tests exist to catch.
-    try #require(isNotBlank(bitmap), "\(name) rendered a uniformly blank image")
+    try #require(try isNotBlank(bitmap), "\(name) rendered a uniformly blank image")
 
     // Derived from the bitmap itself rather than assumed: `cacheDisplay`
     // inherits its pixel density from the window's `backingScaleFactor`
@@ -121,25 +121,133 @@ struct RenderedImage: Sendable {
 ///
 @MainActor
 func regionHasContent(in image: RenderedImage, region: CGRect) throws -> Bool {
-    let data = try Data(contentsOf: image.url)
-    guard let bitmap = NSBitmapImageRep(data: data) else {
-        struct DecodeFailure: Error {}
-        throw DecodeFailure()
-    }
+    let grid = try PixelGrid(image)
+    let background = grid.pixel(0, 0)
+    guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return false }
 
-    let background = bitmap.colorAt(x: 0, y: 0)
-    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
-    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
-    guard minX < maxX, minY < maxY else { return false }
-
-    for x in minX..<maxX {
-        for y in minY..<maxY {
-            if bitmap.colorAt(x: x, y: y) != background { return true }
+    for x in xs {
+        for y in ys {
+            if grid.pixel(x, y) != background { return true }
         }
     }
     return false
+}
+
+/// A decoded `renderPNG` image, read straight from its bytes.
+///
+/// Every probe in this file reads pixels through this rather than
+/// `NSBitmapImageRep.colorAt(x:y:)`, which builds an `NSColor` per pixel:
+/// one pass over a full-page render took ~5 s in a debug build. The probes
+/// run on the main actor, so a few of them back to back blocked it for ~8 s
+/// and starved every main-actor `waitUntil` in the parallel suite — the
+/// `MetricsStoreTests` failure long written off as machine load. Reading
+/// bytes is the same measurement at a fraction of the cost: for the format
+/// `renderPNG` writes, `colorAt` returns exactly `byte / 255` for every
+/// component (verified over every pixel of a full-page render, and pinned by
+/// `RenderHarnessTests.pixelGridMatchesColorAt`).
+///
+/// Accepts only that format — 8-bit, four interleaved samples, straight
+/// (unpremultiplied) alpha last — and throws on anything else rather than
+/// misreading it.
+struct PixelGrid {
+    struct Pixel: Equatable {
+        let r, g, b, a: UInt8
+    }
+
+    let width: Int
+    let height: Int
+    private let bytes: [UInt8]
+    private let bytesPerRow: Int
+    private let bitmap: NSBitmapImageRep
+
+    init(_ image: RenderedImage) throws {
+        let data = try Data(contentsOf: image.url)
+        guard let bitmap = NSBitmapImageRep(data: data) else {
+            struct DecodeFailure: Error {}
+            throw DecodeFailure()
+        }
+        try self.init(bitmap)
+    }
+
+    init(_ bitmap: NSBitmapImageRep) throws {
+        guard bitmap.bitsPerSample == 8, bitmap.samplesPerPixel == 4, bitmap.bitsPerPixel == 32,
+              !bitmap.isPlanar, bitmap.hasAlpha,
+              !bitmap.bitmapFormat.contains(.alphaFirst),
+              !bitmap.bitmapFormat.contains(.floatingPointSamples),
+              bitmap.bitmapFormat.contains(.alphaNonpremultiplied),
+              let base = bitmap.bitmapData
+        else {
+            struct UnsupportedFormat: Error, CustomStringConvertible {
+                let description: String
+            }
+            throw UnsupportedFormat(description:
+                "PixelGrid reads only 8-bit interleaved RGBA with straight alpha last; got "
+                    + "\(bitmap.bitsPerSample) bits/sample, \(bitmap.samplesPerPixel) samples, "
+                    + "format \(bitmap.bitmapFormat.rawValue), planar \(bitmap.isPlanar)")
+        }
+        self.width = bitmap.pixelsWide
+        self.height = bitmap.pixelsHigh
+        self.bytesPerRow = bitmap.bytesPerRow
+        self.bytes = Array(UnsafeBufferPointer(start: base, count: bitmap.bytesPerRow * bitmap.pixelsHigh))
+        self.bitmap = bitmap
+    }
+
+    func pixel(_ x: Int, _ y: Int) -> Pixel {
+        let i = y * bytesPerRow + x * 4
+        return Pixel(r: bytes[i], g: bytes[i + 1], b: bytes[i + 2], a: bytes[i + 3])
+    }
+
+    /// The pixel's components in `0...1`, computed exactly as `colorAt`
+    /// reports them (`byte / 255`), so the float arithmetic each probe does on
+    /// them is unchanged.
+    func components(_ x: Int, _ y: Int) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) {
+        let p = pixel(x, y)
+        return (CGFloat(p.r) / 255, CGFloat(p.g) / 255, CGFloat(p.b) / 255, CGFloat(p.a) / 255)
+    }
+
+    /// `max(r, g, b) - min(r, g, b)` on the `0...1` components — the probes'
+    /// saturation measure, with the same arithmetic as before.
+    func spread(_ x: Int, _ y: Int) -> CGFloat {
+        let c = components(x, y)
+        return max(c.r, c.g, c.b) - min(c.r, c.g, c.b)
+    }
+
+    /// The pixel's hue in `NSColor.getHue`'s `0...1` space (0 for a grey).
+    /// Which channel is the maximum is decided on the bytes, so there is no
+    /// float equality in the branch.
+    func hue(_ x: Int, _ y: Int) -> CGFloat {
+        let p = pixel(x, y)
+        let c = components(x, y)
+        let delta = max(c.r, c.g, c.b) - min(c.r, c.g, c.b)
+        guard delta > 0 else { return 0 }
+        var sector: CGFloat
+        if p.r >= p.g && p.r >= p.b {
+            sector = (c.g - c.b) / delta
+            if sector < 0 { sector += 6 }
+        } else if p.g >= p.b {
+            sector = (c.b - c.r) / delta + 2
+        } else {
+            sector = (c.r - c.g) / delta + 4
+        }
+        return sector / 6
+    }
+
+    /// The pixel as the exact `NSColor` `colorAt` returns — for the rare probe
+    /// that hands a colour back to its caller, read once, not per pixel.
+    func color(_ x: Int, _ y: Int) -> NSColor? {
+        bitmap.colorAt(x: x, y: y)
+    }
+
+    /// `region` (in points) converted to clamped pixel ranges at `scale`, or
+    /// `nil` when it covers no pixels. The same rounding every probe used.
+    func pixelRange(of region: CGRect, scale: CGFloat) -> (Range<Int>, Range<Int>)? {
+        let minX = max(Int((region.minX * scale).rounded(.down)), 0)
+        let maxX = min(Int((region.maxX * scale).rounded(.up)), width)
+        let minY = max(Int((region.minY * scale).rounded(.down)), 0)
+        let maxY = min(Int((region.maxY * scale).rounded(.up)), height)
+        guard minX < maxX, minY < maxY else { return nil }
+        return (minX..<maxX, minY..<maxY)
+    }
 }
 
 /// Offscreen, `glassSurface()` falls back to `.regularMaterial` painted as a
@@ -179,34 +287,22 @@ func renderedImagesDiffer(_ a: RenderedImage, _ b: RenderedImage, in region: CGR
         throw ScaleMismatch(a: a.scale, b: b.scale)
     }
 
-    let dataA = try Data(contentsOf: a.url)
-    let dataB = try Data(contentsOf: b.url)
-    guard let bitmapA = NSBitmapImageRep(data: dataA), let bitmapB = NSBitmapImageRep(data: dataB) else {
-        struct DecodeFailure: Error {}
-        throw DecodeFailure()
-    }
+    let gridA = try PixelGrid(a)
+    let gridB = try PixelGrid(b)
 
     let minX = max(Int((region.minX * a.scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * a.scale).rounded(.up)), min(bitmapA.pixelsWide, bitmapB.pixelsWide))
+    let maxX = min(Int((region.maxX * a.scale).rounded(.up)), min(gridA.width, gridB.width))
     let minY = max(Int((region.minY * a.scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * a.scale).rounded(.up)), min(bitmapA.pixelsHigh, bitmapB.pixelsHigh))
+    let maxY = min(Int((region.maxY * a.scale).rounded(.up)), min(gridA.height, gridB.height))
     guard minX < maxX, minY < maxY else { return false }
 
-    // A tolerance, not `!=`: these are 8-bit-quantized components decoded
-    // from a PNG, and this project has been bitten before by exact float
-    // comparison. Half a step below the smallest representable 8-bit
-    // difference (1/255) so two components that decode to the same byte
-    // never register as differing, while any real one-step change still does.
-    let tolerance: CGFloat = 0.5 / 255.0
+    // Byte comparison: these are 8-bit components decoded from a PNG, so two
+    // pixels differ in a component exactly when its bytes differ — the same
+    // answer the earlier half-a-step tolerance on `byte / 255` gave, with no
+    // float comparison at all.
     for x in minX..<maxX {
         for y in minY..<maxY {
-            guard let colorA = bitmapA.colorAt(x: x, y: y), let colorB = bitmapB.colorAt(x: x, y: y) else { continue }
-            if abs(colorA.redComponent - colorB.redComponent) > tolerance
-                || abs(colorA.greenComponent - colorB.greenComponent) > tolerance
-                || abs(colorA.blueComponent - colorB.blueComponent) > tolerance
-                || abs(colorA.alphaComponent - colorB.alphaComponent) > tolerance {
-                return true
-            }
+            if gridA.pixel(x, y) != gridB.pixel(x, y) { return true }
         }
     }
     return false
@@ -227,26 +323,49 @@ func renderedImagesDiffer(_ a: RenderedImage, _ b: RenderedImage, in region: CGR
 /// saturation to detect. Neither existing probe fits a low-contrast,
 /// non-saturated mark inside a material panel; this is the one that does,
 /// by taking the background as a parameter instead of assuming it.
+///
+/// `background` is compared as bytes, so it must be an exact 8-bit colour in
+/// the calibrated (Generic) RGB space `colorAt` reports in — as
+/// `glassPanelMaterialFallback` is. Anything else throws rather than silently
+/// matching nothing.
 @MainActor
 func regionHasContent(in image: RenderedImage, region: CGRect, differingFrom background: NSColor) throws -> Bool {
-    let data = try Data(contentsOf: image.url)
-    guard let bitmap = NSBitmapImageRep(data: data) else {
-        struct DecodeFailure: Error {}
-        throw DecodeFailure()
-    }
+    let grid = try PixelGrid(image)
+    let target = try PixelGrid.Pixel(exactly: background)
+    guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return false }
 
-    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
-    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
-    guard minX < maxX, minY < maxY else { return false }
-
-    for x in minX..<maxX {
-        for y in minY..<maxY {
-            if bitmap.colorAt(x: x, y: y) != background { return true }
+    for x in xs {
+        for y in ys {
+            if grid.pixel(x, y) != target { return true }
         }
     }
     return false
+}
+
+extension PixelGrid.Pixel {
+    /// `color` as bytes, when it is exactly representable as one — the
+    /// calibrated RGB space `colorAt` reports in, every component a whole
+    /// number of 255ths. Throws otherwise: rounding would quietly let a
+    /// colour that no pixel can equal "match" its neighbour.
+    init(exactly color: NSColor) throws {
+        struct NotAnExactByteColor: Error, CustomStringConvertible {
+            let color: NSColor
+            var description: String { "\(color) is not an exact 8-bit calibrated-RGB colour" }
+        }
+        guard let rgb = color.usingColorSpace(.genericRGB) else { throw NotAnExactByteColor(color: color) }
+        func byte(_ component: CGFloat) throws -> UInt8 {
+            let scaled = component * 255
+            let rounded = scaled.rounded()
+            guard abs(scaled - rounded) < 1e-6, (0...255).contains(rounded) else {
+                throw NotAnExactByteColor(color: color)
+            }
+            return UInt8(rounded)
+        }
+        self.init(
+            r: try byte(rgb.redComponent), g: try byte(rgb.greenComponent),
+            b: try byte(rgb.blueComponent), a: try byte(rgb.alphaComponent)
+        )
+    }
 }
 
 /// True when any pixel inside `region` is brighter than `threshold` (0...1).
@@ -273,22 +392,13 @@ func regionHasContent(in image: RenderedImage, region: CGRect, differingFrom bac
 /// — the only difference is what counts as "content".
 @MainActor
 func regionHasPixelBrighterThan(in image: RenderedImage, region: CGRect, threshold: CGFloat) throws -> Bool {
-    let data = try Data(contentsOf: image.url)
-    guard let bitmap = NSBitmapImageRep(data: data) else {
-        struct DecodeFailure: Error {}
-        throw DecodeFailure()
-    }
+    let grid = try PixelGrid(image)
+    guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return false }
 
-    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
-    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
-    guard minX < maxX, minY < maxY else { return false }
-
-    for x in minX..<maxX {
-        for y in minY..<maxY {
-            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
-            let brightness = max(color.redComponent, max(color.greenComponent, color.blueComponent)) * color.alphaComponent
+    for x in xs {
+        for y in ys {
+            let c = grid.components(x, y)
+            let brightness = max(c.r, max(c.g, c.b)) * c.a
             if brightness > threshold { return true }
         }
     }
@@ -389,23 +499,12 @@ func firstSaturatedColor(
     region: CGRect,
     minimumSpread: CGFloat = 16.0 / 255.0
 ) throws -> NSColor? {
-    let data = try Data(contentsOf: image.url)
-    guard let bitmap = NSBitmapImageRep(data: data) else {
-        struct DecodeFailure: Error {}
-        throw DecodeFailure()
-    }
+    let grid = try PixelGrid(image)
+    guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return nil }
 
-    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
-    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
-    guard minX < maxX, minY < maxY else { return nil }
-
-    for y in minY..<maxY {
-        for x in minX..<maxX {
-            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
-            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
-            if max(r, g, b) - min(r, g, b) > minimumSpread { return color }
+    for y in ys {
+        for x in xs where grid.spread(x, y) > minimumSpread {
+            return grid.color(x, y)
         }
     }
     return nil
@@ -465,26 +564,14 @@ func regionHasSaturatedColor(
     matchingHueOf hues: [CGFloat],
     tolerance: CGFloat = 0.05
 ) throws -> Bool {
-    let data = try Data(contentsOf: image.url)
-    guard let bitmap = NSBitmapImageRep(data: data) else {
-        struct DecodeFailure: Error {}
-        throw DecodeFailure()
-    }
+    let grid = try PixelGrid(image)
+    guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return false }
 
-    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
-    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
-    guard minX < maxX, minY < maxY else { return false }
+    for y in ys {
+        for x in xs {
+            guard grid.spread(x, y) > (16.0 / 255.0) else { continue }
 
-    for y in minY..<maxY {
-        for x in minX..<maxX {
-            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
-            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
-            guard max(r, g, b) - min(r, g, b) > (16.0 / 255.0) else { continue }
-
-            var pixelHue: CGFloat = 0, s: CGFloat = 0, br: CGFloat = 0, a: CGFloat = 0
-            color.getHue(&pixelHue, saturation: &s, brightness: &br, alpha: &a)
+            let pixelHue = grid.hue(x, y)
             let matches = hues.contains { candidate in
                 let raw = abs(candidate - pixelHue)
                 return min(raw, 1 - raw) <= tolerance
@@ -508,13 +595,29 @@ func regionHasSaturatedColor(
 /// exits on the first difference, so any render with real content anywhere
 /// returns near-instantly, and only a truly blank image pays the full cost
 /// (well under a second at the sizes these tests render).
-private func isNotBlank(_ bitmap: NSBitmapImageRep) -> Bool {
+///
+/// Reads raw bytes rather than `colorAt` (see `PixelGrid` for why), but not
+/// through `PixelGrid`: this runs on the in-memory capture, which is
+/// premultiplied, unlike the straight-alpha PNG the probes decode. "Is every
+/// pixel the same" is a byte question in either format, so no component maths
+/// is needed — only the pixel size and row stride.
+private func isNotBlank(_ bitmap: NSBitmapImageRep) throws -> Bool {
     guard bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0 else { return false }
+    guard !bitmap.isPlanar, bitmap.bitsPerPixel % 8 == 0, let base = bitmap.bitmapData else {
+        struct UnsupportedCapture: Error, CustomStringConvertible {
+            let description: String
+        }
+        throw UnsupportedCapture(description:
+            "isNotBlank needs an interleaved, byte-aligned capture; got \(bitmap.bitsPerPixel) bits/pixel, planar \(bitmap.isPlanar)")
+    }
 
-    let first = bitmap.colorAt(x: 0, y: 0)
-    for x in 0..<bitmap.pixelsWide {
-        for y in 0..<bitmap.pixelsHigh {
-            if bitmap.colorAt(x: x, y: y) != first { return true }
+    let pixelSize = bitmap.bitsPerPixel / 8
+    let firstPixel = UnsafeRawBufferPointer(start: base, count: pixelSize)
+    for y in 0..<bitmap.pixelsHigh {
+        let row = base + y * bitmap.bytesPerRow
+        for x in 0..<bitmap.pixelsWide {
+            let pixel = UnsafeRawBufferPointer(start: row + x * pixelSize, count: pixelSize)
+            if !pixel.elementsEqual(firstPixel) { return true }
         }
     }
     return false
@@ -540,25 +643,14 @@ func saturatedRowExtent(
     region: CGRect,
     minimumSpread: CGFloat = 16.0 / 255.0
 ) throws -> ClosedRange<CGFloat>? {
-    let data = try Data(contentsOf: image.url)
-    guard let bitmap = NSBitmapImageRep(data: data) else {
-        struct DecodeFailure: Error {}
-        throw DecodeFailure()
-    }
-
-    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
-    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
-    guard minX < maxX, minY < maxY else { return nil }
+    let grid = try PixelGrid(image)
+    guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return nil }
 
     var top: Int?
     var bottom: Int?
-    for y in minY..<maxY {
-        for x in minX..<maxX {
-            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
-            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
-            if max(r, g, b) - min(r, g, b) > minimumSpread {
+    for y in ys {
+        for x in xs {
+            if grid.spread(x, y) > minimumSpread {
                 if top == nil { top = y }
                 bottom = y
                 break
@@ -600,25 +692,14 @@ func saturatedColumnExtent(
     region: CGRect,
     minimumSpread: CGFloat = 16.0 / 255.0
 ) throws -> ClosedRange<CGFloat>? {
-    let data = try Data(contentsOf: image.url)
-    guard let bitmap = NSBitmapImageRep(data: data) else {
-        struct DecodeFailure: Error {}
-        throw DecodeFailure()
-    }
-
-    let minX = max(Int((region.minX * image.scale).rounded(.down)), 0)
-    let maxX = min(Int((region.maxX * image.scale).rounded(.up)), bitmap.pixelsWide)
-    let minY = max(Int((region.minY * image.scale).rounded(.down)), 0)
-    let maxY = min(Int((region.maxY * image.scale).rounded(.up)), bitmap.pixelsHigh)
-    guard minX < maxX, minY < maxY else { return nil }
+    let grid = try PixelGrid(image)
+    guard let (xs, ys) = grid.pixelRange(of: region, scale: image.scale) else { return nil }
 
     var left: Int?
     var right: Int?
-    for x in minX..<maxX {
-        for y in minY..<maxY {
-            guard let color = bitmap.colorAt(x: x, y: y) else { continue }
-            let (r, g, b) = (color.redComponent, color.greenComponent, color.blueComponent)
-            if max(r, g, b) - min(r, g, b) > minimumSpread {
+    for x in xs {
+        for y in ys {
+            if grid.spread(x, y) > minimumSpread {
                 if left == nil { left = x }
                 right = x
                 break

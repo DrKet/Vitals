@@ -91,4 +91,65 @@ struct RenderHarnessTests {
         let found = try #require(try firstSaturatedColor(in: rendered, region: orangeSide))
         #expect(found.redComponent > found.blueComponent)
     }
+
+    /// Pins `PixelGrid` — which every probe reads through — to the
+    /// `NSBitmapImageRep.colorAt` the probes used before it, pixel by pixel.
+    /// The render covers every hue sector (a full-spectrum gradient), neutral
+    /// greys, and partial alpha, so the component read, the alpha channel and
+    /// every branch of the hue formula are each exercised against the
+    /// reference rather than assumed equivalent.
+    @Test("PixelGrid reads exactly what colorAt reads, including hue, on every pixel")
+    func pixelGridMatchesColorAt() throws {
+        let size = CGSize(width: 180, height: 90)
+        let spectrum = VStack(spacing: 0) {
+            LinearGradient(
+                colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
+                startPoint: .leading, endPoint: .trailing
+            )
+            .frame(height: 40)
+            HStack(spacing: 0) {
+                Color(white: 0.14)
+                Color(white: 0.6)
+                Color.orange.opacity(0.35)
+            }
+            .frame(height: 50)
+        }
+        let rendered = try renderPNG(spectrum, size: size, named: "harness-pixelgrid-equivalence")
+        let bitmap = try #require(NSBitmapImageRep(data: try Data(contentsOf: rendered.url)))
+        let grid = try PixelGrid(rendered)
+
+        #expect(grid.width == bitmap.pixelsWide)
+        #expect(grid.height == bitmap.pixelsHigh)
+
+        var componentMismatches = 0
+        var hueMismatches = 0
+        var huesCompared = 0
+        for y in 0..<grid.height {
+            for x in 0..<grid.width {
+                let reference = try #require(bitmap.colorAt(x: x, y: y))
+                let components = grid.components(x, y)
+                if abs(components.r - reference.redComponent) > 1e-12
+                    || abs(components.g - reference.greenComponent) > 1e-12
+                    || abs(components.b - reference.blueComponent) > 1e-12
+                    || abs(components.a - reference.alphaComponent) > 1e-12 {
+                    componentMismatches += 1
+                }
+                guard grid.spread(x, y) > 0 else { continue }
+                var h: CGFloat = 0, s: CGFloat = 0, br: CGFloat = 0, a: CGFloat = 0
+                reference.getHue(&h, saturation: &s, brightness: &br, alpha: &a)
+                huesCompared += 1
+                // Circular: hue is an angle, so 0 and 1 are the same red.
+                // `getHue` maps a red whose green equals its blue to 1.0 —
+                // its own convention, even for an exact (1, 0, 0) — where
+                // `PixelGrid` reports 0.0; the one probe that consumes hue
+                // compares circularly, so the two agree wherever it matters.
+                let raw = abs(grid.hue(x, y) - h)
+                if min(raw, 1 - raw) > 1e-9 { hueMismatches += 1 }
+            }
+        }
+        #expect(componentMismatches == 0)
+        #expect(hueMismatches == 0)
+        // Non-vacuous: the gradient really did produce saturated pixels.
+        #expect(huesCompared > grid.width * 10)
+    }
 }
